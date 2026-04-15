@@ -6,7 +6,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="GlassHole Gallery"
+        android:label="Photos Sync"
         android:requestLegacyExternalStorage="true">
 
         <service

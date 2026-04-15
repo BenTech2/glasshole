@@ -7,7 +7,7 @@
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/ic_media_play"
-        android:label="GlassHole Stream"
+        android:label="Stream"
         android:theme="@android:style/Theme.DeviceDefault">
 
         <meta-data

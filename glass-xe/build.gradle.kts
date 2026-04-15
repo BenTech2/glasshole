@@ -11,14 +11,22 @@ android {
         applicationId = "com.glasshole.glassxe"
         minSdk = 19
         targetSdk = 19
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "0.2.0-alpha"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
         }
+    }
+
+    lint {
+        // Targeting API 19 is intentional — Glass XE runs KitKat and there
+        // is no newer SDK to move to. The release-blocking lint check is
+        // irrelevant here.
+        disable += "ExpiredTargetSdkVersion"
+        abortOnError = false
     }
 
     compileOptions {

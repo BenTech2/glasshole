@@ -81,6 +81,15 @@
             android:layout_height="wrap_content"
             android:text="Choose Notification Apps"
             android:textAllCaps="false"
+            android:layout_marginBottom="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/openPluginsButton"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Plugins"
+            android:textAllCaps="false"
             android:layout_marginBottom="16dp" />
 
         <!-- Glass Info Card -->
@@ -159,7 +168,7 @@
                 android:text="Connect" />
         </LinearLayout>
 
-        <!-- Plugins Card -->
+        <!-- Tools Card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -171,29 +180,11 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Plugins"
+                android:text="Tools"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="?attr/colorOnBackground"
                 android:layout_marginBottom="12dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/openNotesButton"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Open Notes"
-                android:textAllCaps="false"
-                android:layout_marginBottom="8dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/openCalcButton"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Open Calculator History"
-                android:textAllCaps="false"
-                android:layout_marginBottom="8dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/openDeviceButton"
@@ -201,15 +192,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Glass Settings"
-                android:textAllCaps="false"
-                android:layout_marginBottom="8dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/openGalleryButton"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Glass Gallery"
                 android:textAllCaps="false"
                 android:layout_marginBottom="8dp" />
 

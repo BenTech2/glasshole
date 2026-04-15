@@ -36,6 +36,8 @@ class BluetoothListenerService : Service() {
         val APP_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         private const val SERVICE_NAME = "GlassHole"
         private const val FOREGROUND_ID = 1
+
+        @Volatile var instance: BluetoothListenerService? = null
     }
 
     interface MessageListener {
@@ -71,6 +73,7 @@ class BluetoothListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         running = true
 
         @Suppress("DEPRECATION")
@@ -103,6 +106,7 @@ class BluetoothListenerService : Service() {
 
     override fun onDestroy() {
         running = false
+        instance = null
         PluginMessageReceiver.btService = null
         try { unregisterReceiver(packageReceiver) } catch (_: Exception) {}
         for ((_, conn) in pluginConnections) {
@@ -230,6 +234,30 @@ class BluetoothListenerService : Service() {
             Log.e(TAG, "Send plugin message failed: ${e.message}")
             false
         }
+    }
+
+    fun sendNotifAction(notifKey: String, actionId: String, replyText: String? = null): Boolean {
+        val os = outputStream ?: return false
+        return try {
+            val obj = JSONObject().apply {
+                put("key", notifKey)
+                put("id", actionId)
+                if (replyText != null) put("text", replyText)
+            }
+            val escaped = obj.toString().replace("\\", "\\\\").replace("\n", "\\n")
+            os.write("NOTIF_ACTION:$escaped\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+            Log.i(TAG, "NOTIF_ACTION sent: $actionId")
+            true
+        } catch (e: IOException) {
+            Log.e(TAG, "Send notif action failed: ${e.message}")
+            false
+        }
+    }
+
+    fun playStreamLocally(url: String) {
+        val payload = JSONObject().apply { put("url", url) }.toString()
+        routeToPlugin("stream", "PLAY_URL", payload)
     }
 
     private fun sendInfo() {
@@ -360,6 +388,14 @@ class BluetoothListenerService : Service() {
     }
 
     private fun routeToPlugin(pluginId: String, type: String, payload: String) {
+        // Base-app-owned settings (not routed to a plugin APK). Handled
+        // inline so these features work on a vanilla glasshole install
+        // without requiring any plugin package to be present.
+        if (pluginId == "base") {
+            handleBaseMessage(type, payload)
+            return
+        }
+
         // Primary: broadcast (EE1 uses broadcasts for plugin communication)
         val intent = Intent(GlassPluginConstants.ACTION_MESSAGE_FROM_PHONE).apply {
             putExtra(GlassPluginConstants.EXTRA_PLUGIN_ID, pluginId)
@@ -379,6 +415,30 @@ class BluetoothListenerService : Service() {
                 pluginCallbacks.remove(pluginId)
             }
         }
+    }
+
+    private fun handleBaseMessage(type: String, payload: String) {
+        when (type) {
+            "SET_AUTO_START" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", true)
+                } catch (_: Exception) { true }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_AUTO_START, enabled).apply()
+                Log.i(TAG, "Auto-start ${if (enabled) "enabled" else "disabled"}")
+                sendBaseStateToPhone()
+            }
+            "GET_STATE" -> sendBaseStateToPhone()
+            else -> Log.d(TAG, "Unknown base message: $type")
+        }
+    }
+
+    private fun sendBaseStateToPhone() {
+        val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        val json = JSONObject().apply {
+            put("autoStart", prefs.getBoolean(BaseSettings.KEY_AUTO_START, true))
+        }.toString()
+        sendPluginMessage("base", "STATE", json)
     }
 
     private fun notifyPluginsConnectionChanged(connected: Boolean) {
@@ -414,18 +474,28 @@ class BluetoothListenerService : Service() {
             val title = obj.optString("title", "")
             val text = obj.optString("text", "")
             val icon = obj.optString("icon", "")
+            val key = obj.optString("key", "")
+            val actions = obj.optJSONArray("actions")
+            val hasActions = actions != null && actions.length() > 0
 
-            // Try GDK timeline card first (text-only — icons not supported by
-            // the reflection path).
-            val cardBody = if (title.isNotEmpty() && text.isNotEmpty()) "$title\n$text"
-                           else if (title.isNotEmpty()) title else text
-            if (TimelineCard.insertText(this, cardBody, app.ifEmpty { null })) return
+            // GDK timeline cards are static — they can't host interactive
+            // actions. Only take the timeline path when we have nothing to
+            // interact with. Otherwise go straight to the full-screen Activity.
+            if (!hasActions) {
+                val cardBody = if (title.isNotEmpty() && text.isNotEmpty()) "$title\n$text"
+                               else if (title.isNotEmpty()) title else text
+                if (TimelineCard.insertText(this, cardBody, app.ifEmpty { null })) return
+            }
 
+            val picture = obj.optString("picture", "")
             val intent = Intent(this, NotificationDisplayActivity::class.java).apply {
                 putExtra("app", app)
                 putExtra("title", title)
                 putExtra("text", text)
                 putExtra("icon", icon)
+                putExtra("picture", picture)
+                putExtra("key", key)
+                if (hasActions) putExtra("actions", actions!!.toString())
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
             startActivity(intent)

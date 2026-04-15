@@ -22,10 +22,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.glasshole.phone.model.GlassInfo
 import com.glasshole.phone.plugin.PluginDiscovery
-import com.glasshole.phone.plugins.calc.CalcHistoryActivity
 import com.glasshole.phone.plugins.device.DeviceActivity
-import com.glasshole.phone.plugins.gallery.GalleryActivity
-import com.glasshole.phone.plugins.notes.NotesActivity
 import com.glasshole.phone.service.BridgeService
 import com.glasshole.phone.service.NotificationForwardingService
 import com.glasshole.phone.service.PluginHostService
@@ -35,6 +32,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PERMISSION_REQUEST = 1001
         private const val PREFS_NAME = "glasshole_prefs"
+        private const val PREF_LAST_DEVICE = "last_device_address"
+        private const val PREF_AUTO_CONNECT = "auto_connect_last"
     }
 
     private lateinit var statusText: TextView
@@ -46,10 +45,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var connectButton: Button
     private lateinit var notifAccessButton: Button
     private lateinit var notifAppsButton: Button
-    private lateinit var openNotesButton: Button
-    private lateinit var openCalcButton: Button
+    private lateinit var openPluginsButton: Button
     private lateinit var openDeviceButton: Button
-    private lateinit var openGalleryButton: Button
     private lateinit var openApkManagerButton: Button
     private lateinit var openDebugButton: Button
     private lateinit var themeToggle: ImageButton
@@ -145,17 +142,11 @@ class MainActivity : AppCompatActivity() {
         notifAppsButton.setOnClickListener {
             startActivity(Intent(this, NotificationAppsActivity::class.java))
         }
-        openNotesButton.setOnClickListener {
-            startActivity(Intent(this, NotesActivity::class.java))
-        }
-        openCalcButton.setOnClickListener {
-            startActivity(Intent(this, CalcHistoryActivity::class.java))
+        openPluginsButton.setOnClickListener {
+            startActivity(Intent(this, PluginsActivity::class.java))
         }
         openDeviceButton.setOnClickListener {
             startActivity(Intent(this, DeviceActivity::class.java))
-        }
-        openGalleryButton.setOnClickListener {
-            startActivity(Intent(this, GalleryActivity::class.java))
         }
         openApkManagerButton.setOnClickListener {
             startActivity(Intent(this, ApkManagerActivity::class.java))
@@ -208,17 +199,11 @@ class MainActivity : AppCompatActivity() {
         notifAppsButton.setOnClickListener {
             startActivity(Intent(this, NotificationAppsActivity::class.java))
         }
-        openNotesButton.setOnClickListener {
-            startActivity(Intent(this, NotesActivity::class.java))
-        }
-        openCalcButton.setOnClickListener {
-            startActivity(Intent(this, CalcHistoryActivity::class.java))
+        openPluginsButton.setOnClickListener {
+            startActivity(Intent(this, PluginsActivity::class.java))
         }
         openDeviceButton.setOnClickListener {
             startActivity(Intent(this, DeviceActivity::class.java))
-        }
-        openGalleryButton.setOnClickListener {
-            startActivity(Intent(this, GalleryActivity::class.java))
         }
         openApkManagerButton.setOnClickListener {
             startActivity(Intent(this, ApkManagerActivity::class.java))
@@ -239,10 +224,8 @@ class MainActivity : AppCompatActivity() {
         connectButton = findViewById(R.id.connectButton)
         notifAccessButton = findViewById(R.id.notifAccessButton)
         notifAppsButton = findViewById(R.id.notifAppsButton)
-        openNotesButton = findViewById(R.id.openNotesButton)
-        openCalcButton = findViewById(R.id.openCalcButton)
+        openPluginsButton = findViewById(R.id.openPluginsButton)
         openDeviceButton = findViewById(R.id.openDeviceButton)
-        openGalleryButton = findViewById(R.id.openGalleryButton)
         openApkManagerButton = findViewById(R.id.openApkManagerButton)
         openDebugButton = findViewById(R.id.openDebugButton)
         themeToggle = findViewById(R.id.themeToggle)
@@ -372,6 +355,21 @@ class MainActivity : AppCompatActivity() {
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         deviceSpinner.adapter = adapter
         log("Found ${pairedDevices.size} paired device(s)")
+
+        // Pre-select the last-connected device if it's still paired, and
+        // kick off an auto-reconnect once the BridgeService is ready.
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val lastAddr = prefs.getString(PREF_LAST_DEVICE, null)
+        if (!lastAddr.isNullOrEmpty()) {
+            val idx = pairedDevices.indexOfFirst { it.address == lastAddr }
+            if (idx >= 0) {
+                deviceSpinner.setSelection(idx)
+                if (prefs.getBoolean(PREF_AUTO_CONNECT, true) && !isConnected) {
+                    log("Auto-reconnecting to ${pairedDevices[idx].name ?: lastAddr}")
+                    deviceSpinner.post { if (!isConnected) connect() }
+                }
+            }
+        }
     }
 
     // --- Connection ---
@@ -388,6 +386,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         val device = pairedDevices[idx]
+        // Persist the selection before attempting — even if the connection
+        // fails, the app should remember the user's intent for next launch.
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(PREF_LAST_DEVICE, device.address)
+            .putBoolean(PREF_AUTO_CONNECT, true)
+            .apply()
+
         connectButton.isEnabled = false
         statusText.text = "Connecting..."
         statusText.setTextColor(0xFFFF9800.toInt())
@@ -407,6 +412,11 @@ class MainActivity : AppCompatActivity() {
         bridgeService?.disconnectBluetooth()
         isConnected = false
         updateConnectionUI(false)
+        // User explicitly disconnected — don't auto-reconnect on next launch.
+        // Preserve the remembered address so the spinner still pre-selects it.
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putBoolean(PREF_AUTO_CONNECT, false)
+            .apply()
     }
 
     private fun updateConnectionUI(connected: Boolean) {

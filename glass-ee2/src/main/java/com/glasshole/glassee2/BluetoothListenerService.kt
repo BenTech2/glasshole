@@ -38,6 +38,8 @@ class BluetoothListenerService : Service() {
         private const val CHANNEL_ID = "glasshole_bt"
         private const val NOTIF_CHANNEL_ID = "glasshole_forwarded"
         private var nextNotifId = 1000
+
+        @Volatile var instance: BluetoothListenerService? = null
     }
 
     interface MessageListener {
@@ -70,6 +72,7 @@ class BluetoothListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         running = true
 
         val nm = getSystemService(NotificationManager::class.java)
@@ -143,6 +146,7 @@ class BluetoothListenerService : Service() {
 
     override fun onDestroy() {
         running = false
+        instance = null
         PluginMessageReceiver.btService = null
         if (pluginHostBound) {
             try { unbindService(pluginHostConnection) } catch (_: Exception) {}
@@ -211,6 +215,77 @@ class BluetoothListenerService : Service() {
             Log.e(TAG, "Send plugin message failed: ${e.message}")
             false
         }
+    }
+
+    /** Send a notification action invocation back to the phone. */
+    fun sendNotifAction(notifKey: String, actionId: String, replyText: String? = null): Boolean {
+        val os = outputStream ?: return false
+        return try {
+            val obj = JSONObject().apply {
+                put("key", notifKey)
+                put("id", actionId)
+                if (replyText != null) put("text", replyText)
+            }
+            val escaped = obj.toString().replace("\\", "\\\\").replace("\n", "\\n")
+            os.write("NOTIF_ACTION:$escaped\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+            Log.i(TAG, "NOTIF_ACTION sent: $actionId")
+            true
+        } catch (e: IOException) {
+            Log.e(TAG, "Send notif action failed: ${e.message}")
+            false
+        }
+    }
+
+    /** Called by NotificationDisplayActivity when the user taps "Watch on Glass". */
+    fun playStreamLocally(url: String) {
+        val payload = JSONObject().apply { put("url", url) }.toString()
+        routeToPlugin("stream", "PLAY_URL", payload)
+    }
+
+    /**
+     * Handle settings owned by the base app itself (tilt-to-wake, etc.).
+     * These don't route through an external plugin APK so they work on a
+     * stock glasshole install.
+     */
+    private fun handleBaseMessage(type: String, payload: String) {
+        when (type) {
+            "SET_TILT_WAKE" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_TILT_WAKE, enabled).apply()
+                val svc = Intent(this, TiltWakeService::class.java)
+                try {
+                    if (enabled) startForegroundService(svc) else stopService(svc)
+                    Log.i(TAG, "Tilt wake ${if (enabled) "enabled" else "disabled"}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Tilt wake toggle failed: ${e.message}")
+                }
+                sendBaseStateToPhone()
+            }
+            "SET_AUTO_START" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", true)
+                } catch (_: Exception) { true }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_AUTO_START, enabled).apply()
+                Log.i(TAG, "Auto-start ${if (enabled) "enabled" else "disabled"}")
+                sendBaseStateToPhone()
+            }
+            "GET_STATE" -> sendBaseStateToPhone()
+            else -> Log.d(TAG, "Unknown base message: $type")
+        }
+    }
+
+    private fun sendBaseStateToPhone() {
+        val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        val json = JSONObject().apply {
+            put("tiltWake", prefs.getBoolean(BaseSettings.KEY_TILT_WAKE, false))
+            put("autoStart", prefs.getBoolean(BaseSettings.KEY_AUTO_START, true))
+        }.toString()
+        sendPluginMessage("base", "STATE", json)
     }
 
     private fun sendInfo() {
@@ -335,6 +410,14 @@ class BluetoothListenerService : Service() {
     }
 
     private fun routeToPlugin(pluginId: String, type: String, payload: String) {
+        // Base-app-owned settings (not routed to a plugin APK). Handled
+        // inline so these features work on a vanilla glasshole install
+        // without requiring any plugin package to be present.
+        if (pluginId == "base") {
+            handleBaseMessage(type, payload)
+            return
+        }
+
         val callback = pluginCallbacks[pluginId]
         if (callback != null) {
             try {
@@ -388,6 +471,11 @@ class BluetoothListenerService : Service() {
                 putExtra("title", obj.optString("title", ""))
                 putExtra("text", obj.optString("text", ""))
                 putExtra("icon", obj.optString("icon", ""))
+                putExtra("picture", obj.optString("picture", ""))
+                putExtra("key", obj.optString("key", ""))
+                if (obj.has("actions")) {
+                    putExtra("actions", obj.getJSONArray("actions").toString())
+                }
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
             startActivity(intent)

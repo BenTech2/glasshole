@@ -87,8 +87,53 @@
                 android:id="@+id/debugSendButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Send Test Notification"
+                android:text="Send Plain (no actions)"
                 android:textAllCaps="false" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/debugSendReplyButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="With reply action"
+                android:textAllCaps="false"
+                android:layout_marginTop="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/debugSendOpenOnDeviceButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="With Open on Phone"
+                android:textAllCaps="false"
+                android:layout_marginTop="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/debugSendStreamButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="With YouTube link (Watch on Glass)"
+                android:textAllCaps="false"
+                android:layout_marginTop="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/debugSendMultiButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="With multi-action (reply + open)"
+                android:textAllCaps="false"
+                android:layout_marginTop="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/debugSendImageButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="With image preview"
+                android:textAllCaps="false"
+                android:layout_marginTop="8dp" />
         </LinearLayout>
 
     </LinearLayout>
