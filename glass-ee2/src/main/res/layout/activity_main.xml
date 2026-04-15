@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#000000">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="GlassHole"
+        android:textSize="24sp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Waiting for phone..."
+        android:textSize="16sp"
+        android:textColor="#BBBBBB"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Last notification:"
+        android:textSize="14sp"
+        android:textColor="#888888"
+        android:layout_marginBottom="4dp" />
+
+    <ScrollView
+        android:id="@+id/messageScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:focusable="true"
+        android:focusableInTouchMode="true">
+
+        <TextView
+            android:id="@+id/lastMessageText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="(none)"
+            android:textSize="20sp"
+            android:textColor="#FFFFFF"
+            android:fontFamily="monospace" />
+    </ScrollView>
+
+    <TextView
+        android:id="@+id/hintText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Connect phone to start"
+        android:textSize="14sp"
+        android:textColor="#888888"
+        android:gravity="center"
+        android:paddingTop="8dp" />
+
+</LinearLayout>
