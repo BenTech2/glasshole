@@ -12,8 +12,8 @@ import android.util.Log
  * android:required="false"/>` in the manifest.
  *
  * We use reflection so the module still builds without the GDK jar on the
- * classpath and silently no-ops on devices that lack the timeline system
- * (e.g. glass clones, emulators, EE2).
+ * classpath and silently no-ops on devices that don't ship the timeline
+ * system (emulators, EE2, etc.).
  */
 object TimelineCard {
 

@@ -22,9 +22,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * Visual fallback used when the device lacks the GDK timeline APIs
- * (Glass XE clones like the Glass 2 OEM). Mimics the Glass card aesthetic
- * but with icon + app name up top and a larger headline below.
+ * Visual fallback used when the device lacks the GDK timeline APIs.
+ * Mimics the Glass card aesthetic but with icon + app name up top and a
+ * larger headline below.
  *
  * Accepts either:
  *  - structured extras: app, title, text, icon (base64 PNG)

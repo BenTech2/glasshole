@@ -12,8 +12,9 @@
         android:label="GlassHole"
         android:theme="@android:style/Theme.DeviceDefault">
 
-        <!-- Glass Development Kit — provides CardBuilder + TimelineManager on
-             Glass XE / EE1. Optional so the APK still installs on clones. -->
+        <!-- Glass Development Kit — provides CardBuilder + TimelineManager
+             on Glass XE / EE1. Optional so the APK still installs on devices
+             that don't ship the GDK jar. -->
         <uses-library
             android:name="com.google.android.glass"
             android:required="false" />

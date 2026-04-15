@@ -49,7 +49,7 @@ class NoteViewActivity : Activity() {
         // Use a GestureDetector to watch for a downward fling that closes
         // the note. Everything else falls through to the ScrollView, which
         // handles its own vertical drag-to-scroll natively — that way it
-        // works on EE2 (touchscreen) and the Glass 2 OEM clone alike.
+        // works on both EE2 (touchscreen) and EE1 (touchpad).
         val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(
                 e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float
@@ -73,10 +73,10 @@ class NoteViewActivity : Activity() {
             false
         }
 
-        // Glass XE-style touchpads (including the Glass 2 OEM cyttsp5 clone)
-        // emit ACTION_SCROLL on the horizontal or vertical axis rather than
-        // touch events. Route those to scrollBy directly here — ScrollView's
-        // own onGenericMotionEvent only handles a mouse wheel on VSCROLL.
+        // Glass EE1 / XE touchpads emit ACTION_SCROLL on the horizontal or
+        // vertical axis rather than touch events. Route those to scrollBy
+        // directly — ScrollView's own onGenericMotionEvent only handles a
+        // mouse wheel on VSCROLL.
         scrollView.setOnGenericMotionListener { _, event ->
             if (event?.action == MotionEvent.ACTION_SCROLL) {
                 val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
@@ -101,11 +101,11 @@ class NoteViewActivity : Activity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         resetAutoDismiss()
-        // Glass XE / clone touchpad gesture mapping:
-        //  - forward swipe = KEYCODE_TAB        → scroll down
+        // Glass EE1 / XE touchpad gesture mapping:
+        //  - forward swipe = KEYCODE_TAB          → scroll down
         //  - backward swipe = KEYCODE_TAB + SHIFT → scroll up
-        //  - tap           = KEYCODE_DPAD_CENTER → toggle page-scroll
-        //  - swipe down    = KEYCODE_BACK       → exit
+        //  - tap           = KEYCODE_DPAD_CENTER  → toggle page-scroll
+        //  - swipe down    = KEYCODE_BACK         → exit
         return when (keyCode) {
             KeyEvent.KEYCODE_TAB -> {
                 val up = event?.isShiftPressed == true
@@ -131,7 +131,7 @@ class NoteViewActivity : Activity() {
         }
     }
 
-    // The Glass 2 OEM cyttsp5 touchpad is SOURCE_TOUCHPAD and delivers raw
+    // The Glass EE1 cyttsp5 touchpad is SOURCE_TOUCHPAD and delivers raw
     // ACTION_DOWN / ACTION_MOVE / ACTION_UP events via onGenericMotionEvent
     // (not onTouchEvent), with regular X/Y coordinates. Track finger position
     // and map deltas to content scrolling. On ACTION_UP, if the total gesture
@@ -156,7 +156,7 @@ class NoteViewActivity : Activity() {
             }
         }
 
-        // Clone touchpad path: DOWN/MOVE/UP with raw x/y
+        // EE1 touchpad path: DOWN/MOVE/UP with raw x/y
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 lastPadX = event.x

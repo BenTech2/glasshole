@@ -17,8 +17,8 @@ back that Glass lost when Google killed the MyGlass app:
 - A debug console for sending test notifications and watching the BT pipe
 
 This is an alpha. It mostly works but it's been built and tested against
-a very specific hardware matrix (a Pixel 10 Pro Fold, a Glass 2 OEM
-Android 4.4 clone, and a Google Glass Enterprise Edition 2). Your mileage
+a very specific hardware matrix (a Pixel 10 Pro Fold, a Glass 2 OEM EE1
+running Android 4.4, and a Google Glass Enterprise Edition 2). Your mileage
 will vary.
 
 ---
@@ -59,7 +59,7 @@ will vary.
 |------------------------------------|-----------|-------|
 | Google Glass Enterprise Edition 2  | ✅ Tested | Android 8.1, main development target |
 | Google Glass Explorer Edition ("XE") | ⚠️ Untested on real hardware | Code paths exist, uses GDK timeline cards |
-| Google Glass Enterprise Edition 1  | ⚠️ Tested against a Glass 2 OEM clone running Android 4.4 | Works but GDK timeline calls fall back to a styled activity card |
+| Google Glass Enterprise Edition 1  | ✅ Tested | Android 4.4-era base, Glass 2 OEM hardware. GDK timeline calls fall back to a styled activity card when the GDK jar isn't present. |
 | Android phone (Android 11+)        | ✅ Tested | Pixel 10 Pro Fold (Android 14+). Any modern Android with Bluetooth should work. |
 | Android phone (Android 8–10)       | ❓ Unknown | `minSdk` is 24 (Android 7); probably fine, not tested |
 
@@ -112,7 +112,7 @@ version plus one phone APK. Install the phone APK once, then install
 ```
 glasshole-phone.apk                    (install on your Android phone)
 
-glasshole-glass-ee1-v0.1.0-alpha.zip   (for Glass Explorer / EE1 clones / Android 4.4 glass)
+glasshole-glass-ee1-v0.1.0-alpha.zip   (for Glass Enterprise Edition 1 / Android 4.4-era glass)
   ├── glasshole-base-ee1.apk           (base app — BT listener, plugin host, notification card UI)
   ├── plugin-notes.apk                 (notes dictation + timeline/card)
   ├── plugin-calc.apk                  (voice calculator)
@@ -381,12 +381,12 @@ plugin and the BT pipe:
   cached per-package on the phone so each app's icon is only encoded
   once per phone-app session, but on first delivery from a new app
   there's a slight delay for icon encoding.
-- **Glass EE1 clone quirks.** The Glass 2 OEM device I tested against
-  is a Chinese clone of Google Glass XE running Android 4.4.4. It
-  doesn't ship the real GDK `com.google.android.glass.jar`, so the
-  timeline-card integration falls back to a styled full-screen activity.
-  On real Google Glass XE that card will slot into the timeline
-  properly — I just haven't been able to verify that end-to-end.
+- **EE1 GDK fallback.** The EE1 I tested against doesn't ship the GDK
+  `com.google.android.glass.jar`, so the timeline-card integration
+  silently falls back to a styled full-screen activity that mimics the
+  Glass card aesthetic. On a real Google Glass Explorer Edition that
+  card should slot into the timeline properly via the GDK, but I
+  haven't been able to verify that end-to-end on a genuine XE unit.
 - **KDE Connect on EE2 crashes in a loop.** Unrelated to GlassHole but
   if you have KDE Connect installed on EE2 it will crash every time its
   LiveCardService tries to initialize (the GDK class exists as a stub
@@ -485,7 +485,7 @@ cd glasshole
 
 ```
 phone/                  Phone companion app — main UI, BT bridge, plugin host, all built-in plugins
-glass-ee1/              Base app for Glass Explorer / EE1 / Android 4.4 clones
+glass-ee1/              Base app for Glass Enterprise Edition 1 / Android 4.4-era glass
 glass-ee2/              Base app for Glass Enterprise Edition 2 (Android 8.1)
 glass-xe/               Base app for real Google Glass Explorer Edition
 glass-plugin-sdk/       Shared AIDL + base classes for glass plugin APKs
