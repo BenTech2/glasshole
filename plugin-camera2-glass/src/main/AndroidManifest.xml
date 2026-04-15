@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="true" />
+
+    <application
+        android:allowBackup="true"
+        android:label="Camera"
+        android:icon="@android:drawable/ic_menu_camera"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <meta-data
+            android:name="com.google.android.glass.TouchEnabledApplication"
+            android:value="true" />
+
+        <!-- Plugin service stub so glasshole base app discovers and counts us -->
+        <service
+            android:name=".Camera2PluginService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
+            </intent-filter>
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="camera2" />
+        </service>
+
+        <!--
+            Primary camera activity. High-priority intent filters so this
+            replaces the stock Glass camera for the standard capture entry
+            points: camera button, lockscreen shortcut, and third-party
+            "take a picture" intents.
+        -->
+        <activity
+            android:name=".CameraActivity"
+            android:label="Camera"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+            <!-- Launcher tile (Glass app drawer) -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.google.android.glass.category.DIRECTORY" />
+            </intent-filter>
+
+            <!-- Replace default camera — hardware camera key + camera-button intent -->
+            <intent-filter android:priority="1000">
+                <action android:name="android.media.action.STILL_IMAGE_CAMERA" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter android:priority="1000">
+                <action android:name="android.media.action.STILL_IMAGE_CAMERA_SECURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter android:priority="1000">
+                <action android:name="android.media.action.IMAGE_CAPTURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter android:priority="1000">
+                <action android:name="android.media.action.IMAGE_CAPTURE_SECURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter android:priority="1000">
+                <action android:name="android.media.action.VIDEO_CAPTURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.CAMERA_BUTTON" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

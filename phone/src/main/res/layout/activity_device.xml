@@ -151,6 +151,82 @@
                 android:max="7" />
         </LinearLayout>
 
+        <!-- Auto-start on boot -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Auto-start on boot"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/autoStartSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Starts GlassHole on the glass automatically after a reboot or reinstall. When off, you'll need to open the GlassHole tile manually to connect."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Tilt to Wake (EE2 only) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Tilt to wake"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/tiltWakeSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Wakes the glass display when you look up. Runs a background service on the glass — trades some battery life for the gesture. EE2 only."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
         <!-- Actions -->
         <LinearLayout
             android:layout_width="match_parent"

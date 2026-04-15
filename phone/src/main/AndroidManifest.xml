@@ -72,6 +72,25 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".PluginsActivity"
+            android:exported="false"
+            android:label="Plugins"
+            android:parentActivityName=".MainActivity" />
+
+        <!-- Invisible relay used to launch other apps from the NotificationListener
+             context. Android 14+ blocks background services from bringing other
+             apps' tasks to the foreground, but a visible activity can. -->
+        <activity
+            android:name=".LaunchRelayActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:finishOnTaskLaunch="true"
+            android:taskAffinity=""
+            android:documentLaunchMode="always"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity
             android:name=".plugins.notes.NotesActivity"
             android:exported="true"
             android:label="Notes"

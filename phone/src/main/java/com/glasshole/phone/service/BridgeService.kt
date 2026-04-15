@@ -37,6 +37,8 @@ class BridgeService : Service() {
         private const val HEARTBEAT_INTERVAL = 30_000L
         private const val RECONNECT_DELAY_INITIAL = 1_000L
         private const val RECONNECT_DELAY_MAX = 4_000L
+
+        @Volatile var instance: BridgeService? = null
     }
 
     inner class LocalBinder : Binder() {
@@ -83,6 +85,7 @@ class BridgeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -102,6 +105,7 @@ class BridgeService : Service() {
 
     override fun onDestroy() {
         running = false
+        instance = null
         autoReconnect = false
         reconnectThread?.interrupt()
         reconnectThread = null
@@ -359,6 +363,17 @@ class BridgeService : Service() {
                 log("Uninstall ${msg.pkg}: ${msg.status}")
                 onUninstallResult?.invoke(msg.pkg, msg.status)
             }
+            is DecodedMessage.NotifAction -> {
+                val listener = NotificationForwardingService.instance
+                val hasReply = msg.replyText != null
+                log("← NOTIF_ACTION key=${msg.notifKey.take(40)} id=${msg.actionId}${if (hasReply) " reply=\"${msg.replyText?.take(40)}\"" else ""}")
+                if (listener == null) {
+                    log("  listener not active — dropped")
+                } else {
+                    val ok = listener.invokeAction(msg.notifKey, msg.actionId, msg.replyText)
+                    log("  ${if (ok) "✓ fired" else "✗ FAILED (no pending action)"}")
+                }
+            }
             is DecodedMessage.Pong -> { /* heartbeat alive */ }
             is DecodedMessage.Unknown -> {
                 log("Glass: ${msg.raw}")
@@ -450,18 +465,10 @@ class BridgeService : Service() {
             log("Go to Settings > Notification access > enable GlassHole")
             return
         }
-        // Rich path carries the structured fields + an optional base64 app
-        // icon so the glass card can render it. Preferred over the text-only
-        // legacy path.
-        listener.onRichNotificationForGlass = { pkg, appName, title, text, iconBase64 ->
-            val json = org.json.JSONObject().apply {
-                put("pkg", pkg)
-                put("app", appName)
-                put("title", title)
-                put("text", text)
-                if (iconBase64 != null) put("icon", iconBase64)
-            }.toString()
-            log("Forwarding: $appName | $title | $text${if (iconBase64 != null) " (+icon)" else ""}")
+        // Actions-aware path — the listener builds the full JSON (app/title/
+        // text/icon/key/actions) and hands it to us ready to ship.
+        listener.onNotifWithActions = { json ->
+            log("Forwarding notification with actions (${json.length} B)")
             sendRaw(ProtocolCodec.encodeNotif(json))
         }
         log("Notification forwarding active")

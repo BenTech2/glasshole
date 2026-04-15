@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
         android:allowBackup="true"
-        android:label="GlassHole Notes"
+        android:label="Notes"
         android:icon="@android:drawable/ic_menu_edit"
         android:theme="@style/Theme.GlassHoleGlass">
 
@@ -21,7 +21,7 @@
 
         <activity
             android:name=".NotesMenuActivity"
-            android:label="GlassHole Notes"
+            android:label="Notes"
             android:exported="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>

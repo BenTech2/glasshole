@@ -12,6 +12,8 @@ package com.glasshole.phone.bt
  *   INSTALL_DATA:<base64chunk>                  - APK data chunk
  *   INSTALL_END / INSTALL_ACK:<status>          - Transfer complete
  *   PLUGIN:<pluginId>:<messageType>:<payload>   - Plugin message
+ *   NOTIF_ACTION:<json>                         - Invoke a notification action
+ *       json = {"key":"...","id":"...","text":"..."}
  */
 object ProtocolCodec {
 
@@ -67,6 +69,15 @@ object ProtocolCodec {
     fun encodeUninstallAck(pkg: String, status: String): String =
         "UNINSTALL_ACK:$pkg:$status\n"
 
+    fun encodeNotifAction(notifKey: String, actionId: String, replyText: String? = null): String {
+        val obj = org.json.JSONObject().apply {
+            put("key", notifKey)
+            put("id", actionId)
+            if (replyText != null) put("text", replyText)
+        }
+        return "NOTIF_ACTION:${escape(obj.toString())}\n"
+    }
+
     // --- Decoding ---
 
     fun decode(line: String): DecodedMessage {
@@ -106,6 +117,19 @@ object ProtocolCodec {
                 DecodedMessage.UninstallAck(rest[0], rest.getOrElse(1) { "" })
             }
             line.startsWith("UNINSTALL:") -> DecodedMessage.Uninstall(line.removePrefix("UNINSTALL:"))
+            line.startsWith("NOTIF_ACTION:") -> {
+                val json = unescape(line.removePrefix("NOTIF_ACTION:"))
+                try {
+                    val obj = org.json.JSONObject(json)
+                    DecodedMessage.NotifAction(
+                        notifKey = obj.optString("key"),
+                        actionId = obj.optString("id"),
+                        replyText = if (obj.has("text")) obj.optString("text") else null
+                    )
+                } catch (_: Exception) {
+                    DecodedMessage.Unknown(line)
+                }
+            }
             line == "PING" -> DecodedMessage.Ping
             line == "PONG" -> DecodedMessage.Pong
             line == "INFO_REQ" -> DecodedMessage.InfoReq
@@ -131,5 +155,10 @@ sealed class DecodedMessage {
     data class ListPackages(val json: String) : DecodedMessage()
     data class Uninstall(val pkg: String) : DecodedMessage()
     data class UninstallAck(val pkg: String, val status: String) : DecodedMessage()
+    data class NotifAction(
+        val notifKey: String,
+        val actionId: String,
+        val replyText: String?
+    ) : DecodedMessage()
     data class Unknown(val raw: String) : DecodedMessage()
 }
