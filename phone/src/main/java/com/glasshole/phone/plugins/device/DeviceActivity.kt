@@ -2,8 +2,10 @@ package com.glasshole.phone.plugins.device
 
 import android.content.Context
 import android.os.Bundle
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -14,6 +16,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 class DeviceActivity : AppCompatActivity() {
 
@@ -37,6 +40,11 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var syncTimeButton: Button
     private lateinit var refreshButton: Button
     private lateinit var statusText: TextView
+
+    private lateinit var timezoneCurrentText: TextView
+    private lateinit var timezoneSpinner: Spinner
+    private lateinit var timezoneApplyButton: Button
+    private val timezoneIds: List<String> = buildTimezoneList()
 
     // Timeout slider uses discrete steps (seconds)
     private val timeoutSteps = intArrayOf(15, 30, 60, 120, 300, 600, 1200, 1800)
@@ -62,6 +70,22 @@ class DeviceActivity : AppCompatActivity() {
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
         statusText = findViewById(R.id.statusText)
+
+        timezoneCurrentText = findViewById(R.id.timezoneCurrentText)
+        timezoneSpinner = findViewById(R.id.timezoneSpinner)
+        timezoneApplyButton = findViewById(R.id.timezoneApplyButton)
+        timezoneSpinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, timezoneIds
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        // Default selection = phone's current timezone
+        val phoneTz = TimeZone.getDefault().id
+        timezoneIds.indexOf(phoneTz).takeIf { it >= 0 }
+            ?.let { timezoneSpinner.setSelection(it) }
+        timezoneApplyButton.setOnClickListener {
+            val tz = timezoneIds.getOrNull(timezoneSpinner.selectedItemPosition) ?: return@setOnClickListener
+            val sent = DevicePlugin.instance?.setTimezone(tz) ?: false
+            toast(if (sent) "Timezone set: $tz" else "Glass not connected")
+        }
 
         timeoutSeek.max = timeoutSteps.size - 1
 
@@ -170,6 +194,15 @@ class DeviceActivity : AppCompatActivity() {
                 }
             }
         }
+        plugin.onTimezoneSetResult = { success, tz, method ->
+            runOnUiThread {
+                statusText.text = when {
+                    success && method.isNotEmpty() -> "Timezone $tz set via $method"
+                    success -> "Timezone $tz set"
+                    else -> "Timezone change failed (needs root or signed system app)"
+                }
+            }
+        }
         plugin.latestState?.let(::renderState)
         plugin.requestState()
     }
@@ -178,6 +211,7 @@ class DeviceActivity : AppCompatActivity() {
         super.onStop()
         DevicePlugin.instance?.onStateChanged = null
         DevicePlugin.instance?.onTimeSyncResult = null
+        DevicePlugin.instance?.onTimezoneSetResult = null
     }
 
     private fun renderState(state: DeviceState) {
@@ -214,7 +248,21 @@ class DeviceActivity : AppCompatActivity() {
         timeoutSeek.progress = closestIndex
         timeoutLabel.text = "Screen timeout: ${formatTimeout(timeoutSteps[closestIndex])}"
 
+        timezoneCurrentText.text = if (state.timezone.isNotEmpty()) {
+            "Current on glass: ${state.timezone}"
+        } else "Current on glass: --"
+
         statusText.text = "Connected"
+    }
+
+    // IANA timezone IDs for the spinner. Filters out Java's 3-letter aliases
+    // (EST, PST, …) and the SystemV legacy zones to keep the list readable,
+    // always keeps UTC + GMT pinned at the top.
+    private fun buildTimezoneList(): List<String> {
+        val all = TimeZone.getAvailableIDs()
+            .filter { it.contains('/') && !it.startsWith("SystemV/") }
+            .sorted()
+        return listOf("UTC", "GMT") + all
     }
 
     private fun formatTimeout(seconds: Int): String {

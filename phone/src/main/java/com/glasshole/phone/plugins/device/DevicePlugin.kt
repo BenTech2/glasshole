@@ -17,7 +17,8 @@ data class DeviceState(
     val timeoutMs: Int,
     val battery: Int,
     val charging: Boolean,
-    val glassTimeMillis: Long
+    val glassTimeMillis: Long,
+    val timezone: String
 )
 
 class DevicePlugin : PhonePlugin {
@@ -44,6 +45,9 @@ class DevicePlugin : PhonePlugin {
     // Activity subscribes for time-sync result
     var onTimeSyncResult: ((success: Boolean, method: String) -> Unit)? = null
 
+    // Activity subscribes for timezone-set result
+    var onTimezoneSetResult: ((success: Boolean, tz: String, method: String) -> Unit)? = null
+
     override fun onCreate(context: Context, sender: PluginSender) {
         this.sender = sender
         instance = this
@@ -57,6 +61,7 @@ class DevicePlugin : PhonePlugin {
         when (message.type) {
             "STATE" -> handleState(message.payload)
             "TIME_SET_ACK" -> handleTimeSetAck(message.payload)
+            "TIMEZONE_ACK" -> handleTimezoneAck(message.payload)
             else -> Log.d(TAG, "Unknown message: ${message.type}")
         }
     }
@@ -81,7 +86,8 @@ class DevicePlugin : PhonePlugin {
                 timeoutMs = json.optInt("timeout", 60_000),
                 battery = json.optInt("battery", -1),
                 charging = json.optBoolean("charging", false),
-                glassTimeMillis = json.optLong("currentTimeMillis", 0L)
+                glassTimeMillis = json.optLong("currentTimeMillis", 0L),
+                timezone = json.optString("timezone", "")
             )
             latestState = state
             onStateChanged?.invoke(state)
@@ -97,6 +103,17 @@ class DevicePlugin : PhonePlugin {
             val method = json.optString("method", "")
             Log.i(TAG, "Time sync ack: success=$success method=$method")
             onTimeSyncResult?.invoke(success, method)
+        } catch (_: Exception) {}
+    }
+
+    private fun handleTimezoneAck(payload: String) {
+        try {
+            val json = JSONObject(payload)
+            val success = json.optBoolean("success", false)
+            val tz = json.optString("tz", "")
+            val method = json.optString("method", "")
+            Log.i(TAG, "Timezone set ack: success=$success tz=$tz method=$method")
+            onTimezoneSetResult?.invoke(success, tz, method)
         } catch (_: Exception) {}
     }
 
@@ -132,5 +149,10 @@ class DevicePlugin : PhonePlugin {
             put("tz", TimeZone.getDefault().id)
         }.toString()
         return sender(PluginMessage("SET_TIME", json))
+    }
+
+    fun setTimezone(tz: String): Boolean {
+        val json = JSONObject().apply { put("tz", tz) }.toString()
+        return sender(PluginMessage("SET_TIMEZONE", json))
     }
 }

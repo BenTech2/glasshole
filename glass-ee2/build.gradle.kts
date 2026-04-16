@@ -11,13 +11,14 @@ android {
         applicationId = "com.glasshole.glassee2"
         minSdk = 27 // Glass EE2 runs Android 8.1 (API 27)
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0-alpha"
+        versionCode = 3
+        versionName = "0.3.0-alpha"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

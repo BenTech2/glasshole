@@ -19,7 +19,8 @@
             android:name=".MainActivity"
             android:label="GlassHole"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

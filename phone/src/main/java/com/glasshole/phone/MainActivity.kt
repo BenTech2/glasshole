@@ -21,7 +21,6 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.glasshole.phone.model.GlassInfo
-import com.glasshole.phone.plugin.PluginDiscovery
 import com.glasshole.phone.plugins.device.DeviceActivity
 import com.glasshole.phone.service.BridgeService
 import com.glasshole.phone.service.NotificationForwardingService
@@ -34,6 +33,11 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS_NAME = "glasshole_prefs"
         private const val PREF_LAST_DEVICE = "last_device_address"
         private const val PREF_AUTO_CONNECT = "auto_connect_last"
+
+        private val CORE_PLUGIN_PACKAGES = setOf(
+            "com.glasshole.plugin.device.glass",
+            "com.glasshole.plugin.gallery.glass"
+        )
     }
 
     private lateinit var statusText: TextView
@@ -45,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var connectButton: Button
     private lateinit var notifAccessButton: Button
     private lateinit var notifAppsButton: Button
+    private lateinit var openGalleryButton: Button
     private lateinit var openPluginsButton: Button
     private lateinit var openDeviceButton: Button
     private lateinit var openApkManagerButton: Button
@@ -70,10 +75,20 @@ class MainActivity : AppCompatActivity() {
             bridgeService?.onLog = { msg -> runOnUiThread { log(msg) } }
             bridgeService?.onConnectionChanged = { connected ->
                 isConnected = connected
-                runOnUiThread { updateConnectionUI(connected) }
+                runOnUiThread {
+                    updateConnectionUI(connected)
+                    refreshPluginCount()
+                }
             }
             bridgeService?.onGlassInfo = { info ->
                 runOnUiThread { updateGlassInfo(info) }
+            }
+            bridgeService?.onPackageList = { json ->
+                runOnUiThread { handlePackageListForCount(json) }
+            }
+            // Kick an initial list request if the glass is already connected.
+            if (bridgeService?.isConnected == true) {
+                bridgeService?.requestPackageList()
             }
 
             // Wire plugin router from host service
@@ -110,7 +125,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            updatePluginCount()
+            refreshPluginCount()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -142,6 +157,9 @@ class MainActivity : AppCompatActivity() {
         notifAppsButton.setOnClickListener {
             startActivity(Intent(this, NotificationAppsActivity::class.java))
         }
+        openGalleryButton.setOnClickListener {
+            startActivity(Intent(this, com.glasshole.phone.plugins.gallery.GalleryActivity::class.java))
+        }
         openPluginsButton.setOnClickListener {
             startActivity(Intent(this, PluginsActivity::class.java))
         }
@@ -171,7 +189,12 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateNotifAccessStatus()
-        updatePluginCount()
+        // Re-install our onPackageList callback — ApkManager / Plugins screens
+        // may have overwritten it while they were in front.
+        bridgeService?.onPackageList = { json ->
+            runOnUiThread { handlePackageListForCount(json) }
+        }
+        refreshPluginCount()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -199,6 +222,9 @@ class MainActivity : AppCompatActivity() {
         notifAppsButton.setOnClickListener {
             startActivity(Intent(this, NotificationAppsActivity::class.java))
         }
+        openGalleryButton.setOnClickListener {
+            startActivity(Intent(this, com.glasshole.phone.plugins.gallery.GalleryActivity::class.java))
+        }
         openPluginsButton.setOnClickListener {
             startActivity(Intent(this, PluginsActivity::class.java))
         }
@@ -224,6 +250,7 @@ class MainActivity : AppCompatActivity() {
         connectButton = findViewById(R.id.connectButton)
         notifAccessButton = findViewById(R.id.notifAccessButton)
         notifAppsButton = findViewById(R.id.notifAppsButton)
+        openGalleryButton = findViewById(R.id.openGalleryButton)
         openPluginsButton = findViewById(R.id.openPluginsButton)
         openDeviceButton = findViewById(R.id.openDeviceButton)
         openApkManagerButton = findViewById(R.id.openApkManagerButton)
@@ -301,10 +328,33 @@ class MainActivity : AppCompatActivity() {
     }
 
     // --- Plugins ---
+    //
+    // Plugins live on the glass. We count them off the LIST_PACKAGES response
+    // using the same filter as PluginsActivity: packages matching
+    // com.glasshole.plugin.* minus the core set (device / stream / photo-sync
+    // gallery). When the glass isn't connected or we haven't received a list
+    // yet, the counter shows a neutral dash.
 
-    private fun updatePluginCount() {
-        val plugins = PluginDiscovery.discoverPlugins(this)
-        pluginCountText.text = "Plugins: ${plugins.size} installed"
+    private fun refreshPluginCount() {
+        if (bridgeService?.isConnected == true) {
+            bridgeService?.requestPackageList()
+        } else {
+            pluginCountText.text = "Plugins: —"
+        }
+    }
+
+    private fun handlePackageListForCount(json: String) {
+        var count = 0
+        try {
+            val arr = org.json.JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val pkg = arr.getJSONObject(i).optString("pkg")
+                if (!pkg.startsWith("com.glasshole.plugin.")) continue
+                if (pkg in CORE_PLUGIN_PACKAGES) continue
+                count++
+            }
+        } catch (_: Exception) { /* leave count at 0 */ }
+        pluginCountText.text = "Plugins: $count installed"
     }
 
     // --- Permissions ---

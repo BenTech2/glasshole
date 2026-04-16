@@ -29,13 +29,38 @@ import java.io.ByteArrayOutputStream
 
 class ApkManagerActivity : AppCompatActivity() {
 
+    private enum class AppKind { BASE, CORE, PLUGIN, OTHER }
+
     private data class PackageRow(
         val pkg: String,
         val label: String,
         val version: String,
         val system: Boolean,
-        val glasshole: Boolean
-    )
+        val kind: AppKind
+    ) {
+        val isGlasshole get() = kind != AppKind.OTHER
+    }
+
+    companion object {
+        private val BASE_PACKAGES = setOf(
+            "com.glasshole.glassxe",
+            "com.glasshole.glassee1",
+            "com.glasshole.glassee2"
+        )
+        // Plugin IDs that back core functionality, matched by their package name.
+        private val CORE_PLUGIN_PACKAGES = setOf(
+            "com.glasshole.plugin.device.glass",
+            "com.glasshole.plugin.gallery.glass"
+        )
+
+        private fun classify(pkg: String): AppKind = when {
+            pkg in BASE_PACKAGES -> AppKind.BASE
+            pkg in CORE_PLUGIN_PACKAGES -> AppKind.CORE
+            pkg.startsWith("com.glasshole.streamplayer.") -> AppKind.CORE
+            pkg.startsWith("com.glasshole.plugin.") -> AppKind.PLUGIN
+            else -> AppKind.OTHER
+        }
+    }
 
     private val allPackages = mutableListOf<PackageRow>()
     private val visiblePackages = mutableListOf<PackageRow>()
@@ -130,13 +155,14 @@ class ApkManagerActivity : AppCompatActivity() {
             val arr = JSONArray(json)
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val pkg = obj.getString("pkg")
                 allPackages.add(
                     PackageRow(
-                        pkg = obj.getString("pkg"),
-                        label = obj.optString("label", obj.getString("pkg")),
+                        pkg = pkg,
+                        label = obj.optString("label", pkg),
                         version = obj.optString("version", ""),
                         system = obj.optBoolean("system", false),
-                        glasshole = obj.optBoolean("glasshole", false)
+                        kind = classify(pkg)
                     )
                 )
             }
@@ -144,7 +170,9 @@ class ApkManagerActivity : AppCompatActivity() {
             statusText.text = "Bad package list: ${e.message}"
             return
         }
-        allPackages.sortWith(compareBy({ !it.glasshole }, { it.label.lowercase() }))
+        // GlassHole-family (Base → Core → Plugin) first, then other apps. Within
+        // each group, sort by label case-insensitively.
+        allPackages.sortWith(compareBy({ it.kind.ordinal }, { it.label.lowercase() }))
         applyFilter()
         statusText.text = "${visiblePackages.size} packages on glass"
     }
@@ -152,7 +180,7 @@ class ApkManagerActivity : AppCompatActivity() {
     private fun applyFilter() {
         visiblePackages.clear()
         for (p in allPackages) {
-            if (!showSystemApps && p.system && !p.glasshole) continue
+            if (!showSystemApps && p.system && !p.isGlasshole) continue
             visiblePackages.add(p)
         }
         adapter.notifyDataSetChanged()
@@ -270,12 +298,27 @@ class ApkManagerActivity : AppCompatActivity() {
 
             val label = view.findViewById<TextView>(R.id.label)
             val pkg = view.findViewById<TextView>(R.id.pkg)
-            val badge = view.findViewById<TextView>(R.id.badge)
+            val familyBadge = view.findViewById<TextView>(R.id.familyBadge)
+            val kindBadge = view.findViewById<TextView>(R.id.kindBadge)
             val uninstall = view.findViewById<ImageButton>(R.id.uninstallBtn)
 
             label.text = row.label
             pkg.text = if (row.version.isNotEmpty()) "${row.pkg}  v${row.version}" else row.pkg
-            badge.visibility = if (row.glasshole) View.VISIBLE else View.GONE
+
+            familyBadge.visibility = if (row.isGlasshole) View.VISIBLE else View.GONE
+            when (row.kind) {
+                AppKind.BASE, AppKind.CORE -> {
+                    kindBadge.visibility = View.VISIBLE
+                    kindBadge.text = "Core"
+                    kindBadge.setBackgroundColor(0xFF1565C0.toInt())  // blue
+                }
+                AppKind.PLUGIN -> {
+                    kindBadge.visibility = View.VISIBLE
+                    kindBadge.text = "Plugin"
+                    kindBadge.setBackgroundColor(0xFF2E7D32.toInt())  // green
+                }
+                AppKind.OTHER -> kindBadge.visibility = View.GONE
+            }
             uninstall.setOnClickListener { confirmUninstall(row) }
 
             return view

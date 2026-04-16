@@ -11,13 +11,14 @@ android {
         applicationId = "com.glasshole.glassee1"
         minSdk = 19
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0-alpha"
+        versionCode = 3
+        versionName = "0.3.0-alpha"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

@@ -136,6 +136,15 @@ class NotificationForwardingService : NotificationListenerService() {
         // Skip group summaries
         if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
 
+        // Skip media playback "now playing" cards (YouTube, Spotify, Pocket Casts,
+        // etc.). These are transport-control notifications attached to a
+        // MediaSession — not user-facing alerts — so forwarding them to the
+        // glass just spams the display every time the user opens a video. The
+        // app's normal notifications (new video uploaded, subscription alerts,
+        // etc.) carry a different category and still go through.
+        if (notification.category == Notification.CATEGORY_TRANSPORT) return
+        if (extras.containsKey(Notification.EXTRA_MEDIA_SESSION)) return
+
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()

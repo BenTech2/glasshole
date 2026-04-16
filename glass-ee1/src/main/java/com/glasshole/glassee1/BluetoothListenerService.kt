@@ -125,7 +125,10 @@ class BluetoothListenerService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             val action = intent.action ?: return
             val pkg = intent.data?.schemeSpecificPart ?: return
-            if (!pkg.startsWith("com.glasshole.plugin.")) return
+            // Rediscover on any glasshole-family install — plugin APKs
+            // (com.glasshole.plugin.*) and plugin-hosting apps like the
+            // merged Stream Player (com.glasshole.streamplayer.*).
+            if (!pkg.startsWith("com.glasshole.")) return
             Log.i(TAG, "Package change ($action): $pkg — rediscovering plugins")
             android.os.Handler().postDelayed({ discoverAndBindPlugins() }, 500)
         }

@@ -28,10 +28,23 @@
                 android:ellipsize="end" />
 
             <TextView
-                android:id="@+id/badge"
+                android:id="@+id/familyBadge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="GlassHole"
+                android:textSize="10sp"
+                android:textColor="@android:color/white"
+                android:background="#6A1B9A"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:layout_marginStart="6dp" />
+
+            <TextView
+                android:id="@+id/kindBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:textSize="10sp"
                 android:textColor="@android:color/white"
                 android:background="#1565C0"
@@ -39,7 +52,7 @@
                 android:paddingEnd="6dp"
                 android:paddingTop="2dp"
                 android:paddingBottom="2dp"
-                android:layout_marginStart="6dp" />
+                android:layout_marginStart="4dp" />
         </LinearLayout>
 
         <TextView

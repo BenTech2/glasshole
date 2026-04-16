@@ -86,7 +86,7 @@ can improve support.
 │  │  Built-in plugins  │  │           │  │  Glass plugin APKs │  │
 │  │  - notes           │  │           │  │  - notes-glass     │  │
 │  │  - calc            │  │           │  │  - calc-glass      │  │
-│  │  - stream          │  │           │  │  - stream-glass    │  │
+│  │  - stream          │  │           │  │  - stream-player   │  │
 │  │  - device          │  │           │  │  - device-glass    │  │
 │  │  - gallery         │  │           │  │  - gallery-glass   │  │
 │  └────────────────────┘  │           │  └────────────────────┘  │
@@ -114,25 +114,29 @@ glasshole-phone.apk                    (install on your Android phone)
 
 glasshole-glass-ee1-v0.1.0-alpha.zip   (for Glass Enterprise Edition 1 / Android 4.4-era glass)
   ├── glasshole-base-ee1.apk           (base app — BT listener, plugin host, notification card UI)
+  ├── glasshole-stream-viewer-ee1.apk  (core — Stream Player: URL receiver + video playback, also the stream plugin)
   ├── plugin-notes.apk                 (notes dictation + timeline/card)
   ├── plugin-calc.apk                  (voice calculator)
-  ├── plugin-stream.apk                (stream player launcher)
   ├── plugin-device.apk                (brightness / volume / timeout / wake control target)
   └── plugin-gallery.apk               (media scanner + chunked file transfer)
 
 glasshole-glass-ee2-v0.1.0-alpha.zip   (for Glass Enterprise Edition 2 — Android 8.1)
   ├── glasshole-base-ee2.apk
-  └── (same five plugins)
+  ├── glasshole-stream-viewer-ee2.apk
+  ├── plugin-camera2.apk               (EE2-only — Camera2-based replacement camera)
+  ├── plugin-gallery2.apk              (EE2-only — Cover Flow gallery)
+  └── (same five common plugins)
 
 glasshole-glass-xe-v0.1.0-alpha.zip    (for real Google Glass Explorer Edition)
   ├── glasshole-base-xe.apk
-  └── (same five plugins)
+  ├── glasshole-stream-viewer-xe.apk
+  └── (same five common plugins)
 ```
 
-The plugin APKs are identical across glass variants — they target
-`minSdk 19` and work on every supported device. Only the base app
-differs per variant because each Glass generation has different
-system-level APIs.
+The five common plugins are identical across glass variants — they
+target `minSdk 19` and work on every supported device. The base app and
+the stream viewer are per-variant because each Glass generation has
+different system-level APIs.
 
 ---
 
@@ -181,14 +185,18 @@ Plug the glass into your computer (or enable wireless ADB), then:
 ```bash
 # For EE2:
 adb install glasshole-base-ee2.apk
+adb install glasshole-stream-viewer-ee2.apk
 adb install plugin-notes.apk
 adb install plugin-calc.apk
-adb install plugin-stream.apk
 adb install plugin-device.apk
 adb install plugin-gallery.apk
+adb install plugin-camera2.apk
+adb install plugin-gallery2.apk
 ```
 
-Repeat with `base-ee1.apk` or `base-xe.apk` if you're on EE1 or XE.
+Swap the filenames for `base-ee1.apk` + `stream-viewer-ee1.apk` or
+`base-xe.apk` + `stream-viewer-xe.apk` if you're on EE1 or XE (and
+drop the EE2-only camera2/gallery2 lines).
 
 #### Option B: Use the phone-side APK Manager
 
@@ -274,18 +282,15 @@ Twitch app, Chrome, etc.), tap share and pick **Send to Glass** /
 it over BT to the glass stream plugin, wakes the glass display, and
 launches the stream-viewer app with the URL pre-resolved.
 
-**On EE2**, the stream-viewer uses NewPipeExtractor to resolve YouTube
-videos (both live streams and VODs) into direct HLS/MP4 URLs that play
-in ExoPlayer. Twitch resolves via the Twitch GraphQL playback token
+The stream viewer uses NewPipeExtractor to resolve YouTube videos
+(both live streams and VODs) into direct HLS/MP4 URLs that play in
+ExoPlayer. Twitch resolves via the Twitch GraphQL playback token
 endpoint into an HLS URL.
 
-**You need the `glass-stream-viewer` app installed on the glass
-separately** for this feature to have somewhere to hand off to —
-that's a different project at
-[github.com/benharlett/glass-stream-viewer](https://github.com/benharlett/glass-stream-viewer)
-(or wherever it ends up — if the URL is broken, grep this repo's
-history for the module name). Without it, the stream plugin will log
-"no stream-viewer installed" and do nothing.
+The stream viewer is bundled inside each glass release zip
+(`glasshole-stream-viewer-<variant>.apk`) and ships as a core
+component — install it alongside the base app. If it's missing, the
+stream plugin logs "no stream-viewer installed" and nothing launches.
 
 ### Gallery
 
@@ -452,9 +457,9 @@ Should work on EE1 and EE2. If it doesn't:
   a different target.
 - Check the log panel for `[Share]` entries — should show the extracted
   URL, then `URL forwarded to glass: ...`, then on the glass side the
-  stream-viewer should launch.
-- If there's no stream-viewer installed on the glass, the stream plugin
-  logs "No glass-stream-viewer app installed" and nothing launches.
+  Stream Player should launch.
+- If there's no Stream Player installed on the glass, the stream plugin
+  logs "No Stream Player app installed" and nothing launches.
 
 ---
 
@@ -492,9 +497,13 @@ glass-plugin-sdk/       Shared AIDL + base classes for glass plugin APKs
 plugin-sdk/             Shared AIDL + base classes for phone plugin APKs (mostly unused now, left for compat)
 plugin-notes-glass/     Notes plugin — dictation UI, note list viewer, timeline card inserter
 plugin-calc-glass/      Calculator plugin — voice input, expression parser
-plugin-stream-glass/    Stream plugin — receives URLs, launches glass-stream-viewer
 plugin-device-glass/    Device control plugin — brightness/volume/timeout/wake/time
 plugin-gallery-glass/   Gallery plugin — media scanner + chunked file transfer
+plugin-camera2-glass/   EE2-only — Camera2 replacement camera (minSdk 27)
+plugin-gallery2-glass/  EE2-only — Cover Flow gallery (minSdk 27)
+stream-viewer-ee1/      Stream Player + stream plugin — EE1 (ExoPlayer + NewPipe, minSdk 19)
+stream-viewer-ee2/      Stream Player + stream plugin — EE2 (media3 + NewPipe, minSdk 26)
+stream-viewer-xe/       Stream Player + stream plugin — XE (ExoPlayer + NewPipe, minSdk 19)
 ```
 
 Built-in phone plugins live in `phone/src/main/java/com/glasshole/phone/plugins/`

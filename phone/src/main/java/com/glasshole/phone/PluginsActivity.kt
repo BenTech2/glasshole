@@ -14,69 +14,41 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.glasshole.phone.plugins.calc.CalcHistoryActivity
-import com.glasshole.phone.plugins.gallery.GalleryActivity
 import com.glasshole.phone.plugins.notes.NotesActivity
 import com.glasshole.phone.service.BridgeService
 import org.json.JSONArray
 
 /**
- * Lists glasshole plugins with their Open button and (optionally) a
- * settings gear. The list is hand-declared for now since the phone-side
- * plugins are in-process and don't support auto-discovery — but each
- * entry carries the matching glass-side package name so we can pair it
- * with the LIST_PACKAGES response from the connected glass and show the
- * version that's actually installed on-device.
+ * Lists the user-launchable GlassHole plugins currently installed on the
+ * connected glass. The glass's LIST_PACKAGES response is the source of
+ * truth — whatever plugin APKs it reports as installed (excluding the
+ * core device / stream / photo-sync packages) show up here with their
+ * label, installed version, and an Open button routing to the phone-side
+ * companion activity when one exists.
  */
 class PluginsActivity : AppCompatActivity() {
 
-    private data class PluginEntry(
-        val name: String,
-        val description: String,
+    private data class PluginRow(
+        val packageName: String,
+        val label: String,
+        val version: String,
         val openActivity: Class<*>?,
-        val settingsActivity: Class<*>?,
-        val glassPackage: String
+        val settingsActivity: Class<*>?
     )
 
-    private val plugins = listOf(
-        PluginEntry(
-            name = "Notes",
-            description = "Dictate notes on glass, read them on the phone",
-            openActivity = NotesActivity::class.java,
-            settingsActivity = null,
-            glassPackage = "com.glasshole.plugin.notes.glass"
-        ),
-        PluginEntry(
-            name = "Calc",
-            description = "Calculator with history shared between phone and glass",
-            openActivity = CalcHistoryActivity::class.java,
-            settingsActivity = null,
-            glassPackage = "com.glasshole.plugin.calc.glass"
-        ),
-        PluginEntry(
-            name = "Gallery",
-            description = "Browse and download photos/videos from the glass",
-            openActivity = GalleryActivity::class.java,
-            settingsActivity = null,
-            glassPackage = "com.glasshole.plugin.gallery.glass"
-        ),
-        PluginEntry(
-            name = "Stream",
-            description = "Share YouTube / Twitch links from any app to play on the glass",
-            openActivity = null,
-            settingsActivity = null,
-            glassPackage = "com.glasshole.plugin.stream.glass"
-        ),
-        PluginEntry(
-            name = "Device Controls",
-            description = "Brightness, volume, timeout, wake, auto-start, tilt-wake (EE2)",
-            openActivity = com.glasshole.phone.plugins.device.DeviceActivity::class.java,
-            settingsActivity = null,
-            glassPackage = "com.glasshole.plugin.device.glass"
-        )
+    // Plugin packages that back core GlassHole functionality — excluded
+    private val CORE_PLUGIN_PACKAGES = setOf(
+        "com.glasshole.plugin.device.glass",
+        "com.glasshole.plugin.gallery.glass"
     )
 
-    // pkg → version string, updated as LIST_PACKAGES responses come in
-    private val glassVersions = mutableMapOf<String, String>()
+    // Glass plugin package → phone-side companion activity, if any.
+    private val phoneCompanions: Map<String, Class<*>> = mapOf(
+        "com.glasshole.plugin.notes.glass" to NotesActivity::class.java,
+        "com.glasshole.plugin.calc.glass" to CalcHistoryActivity::class.java
+    )
+
+    private val rows = mutableListOf<PluginRow>()
 
     private lateinit var listContainer: LinearLayout
     private lateinit var statusText: TextView
@@ -90,10 +62,10 @@ class PluginsActivity : AppCompatActivity() {
             bridgeBound = true
             bridgeService?.onPackageList = { json -> runOnUiThread { handlePackageList(json) } }
             if (bridgeService?.isConnected == true) {
-                statusText.text = "Fetching installed versions from glass…"
+                statusText.text = "Fetching installed plugins from glass…"
                 bridgeService?.requestPackageList()
             } else {
-                statusText.text = "Glass not connected — showing phone-side plugins only"
+                statusText.text = "Glass not connected — connect to see installed plugins"
             }
         }
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -137,19 +109,13 @@ class PluginsActivity : AppCompatActivity() {
     private fun renderList() {
         listContainer.removeAllViews()
         val inflater = LayoutInflater.from(this)
-        for (p in plugins) {
+        for (p in rows) {
             val row = inflater.inflate(R.layout.item_plugin, listContainer, false)
-            row.findViewById<TextView>(R.id.pluginName).text = p.name
-            row.findViewById<TextView>(R.id.pluginDescription).text = p.description
+            row.findViewById<TextView>(R.id.pluginName).text = p.label
+            row.findViewById<TextView>(R.id.pluginDescription).text = p.packageName
 
             val versionView = row.findViewById<TextView>(R.id.pluginVersion)
-            val version = glassVersions[p.glassPackage]
-            versionView.text = when {
-                version == null -> "Not installed on glass"
-                version.isEmpty() -> "Installed on glass"
-                else -> "v$version on glass"
-            }
-            versionView.alpha = if (version == null) 0.55f else 1f
+            versionView.text = if (p.version.isNotEmpty()) "v${p.version} on glass" else "Installed on glass"
 
             val openBtn = row.findViewById<View>(R.id.pluginOpenButton)
             if (p.openActivity != null) {
@@ -176,20 +142,35 @@ class PluginsActivity : AppCompatActivity() {
     }
 
     private fun handlePackageList(json: String) {
+        rows.clear()
         try {
             val arr = JSONArray(json)
-            glassVersions.clear()
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
                 val pkg = obj.optString("pkg")
-                val version = obj.optString("version", "")
-                if (pkg.isNotEmpty()) glassVersions[pkg] = version
+                if (!pkg.startsWith("com.glasshole.plugin.")) continue
+                if (pkg in CORE_PLUGIN_PACKAGES) continue
+
+                rows.add(
+                    PluginRow(
+                        packageName = pkg,
+                        label = obj.optString("label", pkg),
+                        version = obj.optString("version", ""),
+                        openActivity = phoneCompanions[pkg],
+                        settingsActivity = null
+                    )
+                )
             }
-            val matched = plugins.count { glassVersions.containsKey(it.glassPackage) }
-            statusText.text = "$matched of ${plugins.size} plugins installed on glass"
-            renderList()
+            rows.sortBy { it.label.lowercase() }
         } catch (e: Exception) {
             statusText.text = "Bad package list: ${e.message}"
+            return
         }
+        statusText.text = if (rows.isEmpty()) {
+            "No plugins installed on glass"
+        } else {
+            "${rows.size} plugin${if (rows.size == 1) "" else "s"} installed on glass"
+        }
+        renderList()
     }
 }

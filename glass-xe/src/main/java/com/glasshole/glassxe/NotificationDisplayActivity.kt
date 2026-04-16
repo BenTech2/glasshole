@@ -53,6 +53,10 @@ class NotificationDisplayActivity : Activity() {
     private val actionButtons = mutableListOf<TextView>()
     private var focusedActionIndex = 0
 
+    // XE touchpad state (raw x/y from SOURCE_TOUCHPAD onGenericMotionEvent)
+    private var padStartX: Float = 0f
+    private var padStartY: Float = 0f
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -81,8 +85,55 @@ class NotificationDisplayActivity : Activity() {
         return super.onTouchEvent(event)
     }
 
+    // XE touchpad path. The cyttsp5 is SOURCE_TOUCHPAD and delivers raw
+    // DOWN/MOVE/UP via onGenericMotionEvent, NOT onTouchEvent, and does NOT
+    // emit KEYCODE_TAB for swipes. Interpret the raw gesture ourselves:
+    //   horizontal swipe right  → next action button
+    //   horizontal swipe left   → previous action button
+    //   vertical swipe down     → dismiss (finish)
+    //   small movement          → tap = invoke focused action
     override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
-        if (event != null) resetAutoDismiss()
+        event ?: return super.onGenericMotionEvent(event)
+        resetAutoDismiss()
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                padStartX = event.x
+                padStartY = event.y
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = event.x - padStartX
+                val dy = event.y - padStartY
+                val absDx = Math.abs(dx)
+                val absDy = Math.abs(dy)
+                val tapThreshold = 20f
+                val swipeThreshold = 60f
+
+                if (absDx < tapThreshold && absDy < tapThreshold) {
+                    if (actions.isNotEmpty()) {
+                        invokeAction(actions[focusedActionIndex])
+                    }
+                    return true
+                }
+                if (absDy > absDx * 1.3f && dy > swipeThreshold) {
+                    finish()
+                    return true
+                }
+                if (absDx > absDy && absDx > swipeThreshold) {
+                    if (actionButtons.isNotEmpty()) {
+                        focusedActionIndex = if (dx > 0) {
+                            (focusedActionIndex + 1) % actionButtons.size
+                        } else {
+                            (focusedActionIndex - 1 + actionButtons.size) % actionButtons.size
+                        }
+                        highlightFocusedAction()
+                    }
+                    return true
+                }
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> return true
+        }
         return super.onGenericMotionEvent(event)
     }
 

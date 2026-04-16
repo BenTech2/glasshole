@@ -5,8 +5,11 @@ import android.app.Service
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.os.BatteryManager
 import android.os.Binder
 import android.os.Build
@@ -66,6 +69,7 @@ class BluetoothListenerService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        PluginMessageReceiver.btService = this
         running = true
 
         @Suppress("DEPRECATION")
@@ -81,12 +85,47 @@ class BluetoothListenerService : Service() {
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GlassHole::BT")
         wakeLock?.acquire()
 
+        // Bind PluginHostService so it runs discoverAndBindPlugins() — that
+        // auto-creates each glass plugin service via BIND_AUTO_CREATE, which
+        // lets the plugins register their broadcast receivers. Without this
+        // kick, incoming messages like NOTE_LIST go out as broadcasts with no
+        // running plugin to receive them.
+        startPluginHost()
+
         startListening()
+    }
+
+    private var pluginHostBound = false
+    private val pluginHostConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            pluginHostBound = true
+            Log.i(TAG, "PluginHostService bound — discovery will run")
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            pluginHostBound = false
+        }
+    }
+
+    private fun startPluginHost() {
+        try {
+            bindService(
+                Intent(this, PluginHostService::class.java),
+                pluginHostConnection,
+                Context.BIND_AUTO_CREATE
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not bind PluginHostService: ${e.message}")
+        }
     }
 
     override fun onDestroy() {
         running = false
         instance = null
+        PluginMessageReceiver.btService = null
+        if (pluginHostBound) {
+            try { unbindService(pluginHostConnection) } catch (_: Exception) {}
+            pluginHostBound = false
+        }
         closeAll()
         wakeLock?.release()
         wakeLock = null
@@ -283,6 +322,13 @@ class BluetoothListenerService : Service() {
                     }
                     line.startsWith("INSTALL:") -> {
                         handleInstall(line, reader)
+                    }
+                    line == "LIST_PACKAGES_REQ" -> {
+                        sendPackageList()
+                    }
+                    line.startsWith("UNINSTALL:") -> {
+                        val pkg = line.removePrefix("UNINSTALL:")
+                        handleUninstall(pkg)
                     }
                     else -> {
                         messageListener?.onMessageReceived(line)
@@ -498,6 +544,120 @@ class BluetoothListenerService : Service() {
     private fun sendInstallAck(status: String) {
         try {
             outputStream?.write("INSTALL_ACK:$status\n".toByteArray(Charsets.UTF_8))
+            outputStream?.flush()
+        } catch (_: IOException) {}
+    }
+
+    // --- Package list / uninstall ---
+
+    private fun sendPackageList() {
+        val pm = packageManager
+        val installed = pm.getInstalledApplications(0)
+        val arr = org.json.JSONArray()
+        for (info in installed) {
+            if (!info.enabled) continue
+            val pkg = info.packageName
+            if (pkg.startsWith("com.google.glass.") ||
+                pkg.startsWith("com.google.android.glass.")) continue
+
+            val label = try { pm.getApplicationLabel(info).toString() } catch (_: Exception) { pkg }
+            val isSystem = (info.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+            val versionName = try {
+                pm.getPackageInfo(pkg, 0).versionName ?: ""
+            } catch (_: Exception) { "" }
+
+            arr.put(JSONObject().apply {
+                put("pkg", pkg)
+                put("label", label)
+                put("version", versionName)
+                put("system", isSystem)
+                put("glasshole", pkg.startsWith("com.glasshole."))
+            })
+        }
+        try {
+            outputStream?.write("LIST_PACKAGES:$arr\n".toByteArray(Charsets.UTF_8))
+            outputStream?.flush()
+            Log.i(TAG, "Sent package list (${arr.length()} entries)")
+        } catch (e: IOException) {
+            Log.e(TAG, "Send package list failed: ${e.message}")
+        }
+    }
+
+    private fun handleUninstall(pkg: String) {
+        Log.i(TAG, "Uninstall requested: $pkg")
+        if (pkg == packageName) {
+            sendUninstallAck(pkg, "refused:self")
+            return
+        }
+
+        val pmResult = tryShell(arrayOf("pm", "uninstall", pkg))
+        if (pmResult.success) {
+            Log.i(TAG, "Uninstalled via pm: $pkg")
+            sendUninstallAck(pkg, "success:pm")
+            return
+        }
+
+        val suResult = trySuShell("pm uninstall $pkg")
+        if (suResult.success) {
+            Log.i(TAG, "Uninstalled via su: $pkg")
+            sendUninstallAck(pkg, "success:su")
+            return
+        }
+
+        // Fall back to ACTION_DELETE. Glass XE routes this through
+        // PackageInstallerHandlerActivity which silently refuses if
+        // Unknown Sources is off on the headset.
+        try {
+            val intent = Intent(Intent.ACTION_DELETE).apply {
+                data = android.net.Uri.parse("package:$pkg")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+            sendUninstallAck(pkg, "prompt_shown:needs_unknown_sources")
+        } catch (e: Exception) {
+            Log.e(TAG, "Uninstall trigger failed: ${e.message}")
+            sendUninstallAck(pkg, "failed:${e.message}")
+        }
+    }
+
+    private data class CmdResult(val success: Boolean, val output: String)
+
+    private fun tryShell(cmd: Array<String>): CmdResult {
+        return try {
+            val proc = Runtime.getRuntime().exec(cmd)
+            val out = proc.inputStream.bufferedReader().readText()
+            val err = proc.errorStream.bufferedReader().readText()
+            val exit = proc.waitFor()
+            val combined = (out + err).trim()
+            Log.d(TAG, "shell ${cmd.joinToString(" ")}: exit=$exit out=$combined")
+            CmdResult(exit == 0 && combined.contains("Success"), combined)
+        } catch (e: Exception) {
+            Log.d(TAG, "shell exec failed: ${e.message}")
+            CmdResult(false, e.message ?: "")
+        }
+    }
+
+    private fun trySuShell(script: String): CmdResult {
+        for (suPath in listOf("su", "/system/xbin/su", "/system/bin/su", "/sbin/su")) {
+            try {
+                val proc = Runtime.getRuntime().exec(arrayOf(suPath, "-c", script))
+                val out = proc.inputStream.bufferedReader().readText()
+                val err = proc.errorStream.bufferedReader().readText()
+                val exit = proc.waitFor()
+                val combined = (out + err).trim()
+                if (exit == 0 && combined.contains("Success")) {
+                    return CmdResult(true, combined)
+                }
+            } catch (_: Exception) {
+                // next path
+            }
+        }
+        return CmdResult(false, "su_unavailable")
+    }
+
+    private fun sendUninstallAck(pkg: String, status: String) {
+        try {
+            outputStream?.write("UNINSTALL_ACK:$pkg:$status\n".toByteArray(Charsets.UTF_8))
             outputStream?.flush()
         } catch (_: IOException) {}
     }

@@ -227,6 +227,56 @@
                 android:layout_marginTop="6dp" />
         </LinearLayout>
 
+        <!-- Timezone -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Timezone"
+                android:textSize="14sp"
+                android:textColor="?attr/colorOnBackground"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/timezoneCurrentText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Current on glass: --"
+                android:textSize="12sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="4dp" />
+
+            <Spinner
+                android:id="@+id/timezoneSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/timezoneApplyButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Apply Timezone to Glass"
+                android:textAllCaps="false"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Direct timezone change requires signature|privileged on EE2 so this usually falls back to su if your glass is rooted. On non-rooted glass it will log failure — use your phone's carrier network setting + Sync Time Now as the workaround."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
         <!-- Actions -->
         <LinearLayout
             android:layout_width="match_parent"

@@ -1,12 +1,16 @@
 package com.glasshole.glassxe
 
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import com.glasshole.glass.sdk.GlassPluginConstants
 import com.glasshole.glass.sdk.GlassPluginMessage
@@ -59,6 +63,21 @@ class PluginHostService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = hostBinder
 
+    /** Watches for plugin installs/replacements and re-runs discovery. */
+    private val packageReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val action = intent.action ?: return
+            val pkg = intent.data?.schemeSpecificPart ?: return
+            // Catch plugin APKs (com.glasshole.plugin.*) AND plugin-hosting
+            // apps like the Stream Player (com.glasshole.streamplayer.*).
+            if (!pkg.startsWith("com.glasshole.")) return
+            Log.i(TAG, "Package change ($action): $pkg — rediscovering plugins")
+            Handler(Looper.getMainLooper()).postDelayed({
+                discoverAndBindPlugins()
+            }, 500)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
 
@@ -66,10 +85,19 @@ class PluginHostService : Service() {
         val btIntent = Intent(this, BluetoothListenerService::class.java)
         bindService(btIntent, btConnection, Context.BIND_AUTO_CREATE)
 
+        // Listen for plugin reinstalls so we rebind them without a reboot.
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addDataScheme("package")
+        }
+        registerReceiver(packageReceiver, filter)
+
         discoverAndBindPlugins()
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(packageReceiver) } catch (_: Exception) {}
         if (btBound) {
             unbindService(btConnection)
             btBound = false
@@ -88,6 +116,10 @@ class PluginHostService : Service() {
         for (info in resolved) {
             val serviceInfo = info.serviceInfo ?: continue
             val metaData = serviceInfo.metaData ?: continue
+
+            // Already connected — don't rebind a working plugin.
+            val id = metaData.getString(GlassPluginConstants.META_PLUGIN_ID)
+            if (id != null && pluginConnections.containsKey(id)) continue
             val pluginId = metaData.getString(GlassPluginConstants.META_PLUGIN_ID) ?: continue
 
             val connection = object : ServiceConnection {
