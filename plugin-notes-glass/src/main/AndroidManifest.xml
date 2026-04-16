@@ -3,7 +3,7 @@
     <application
         android:allowBackup="true"
         android:label="Notes"
-        android:icon="@android:drawable/ic_menu_edit"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.GlassHoleGlass">
 
         <meta-data

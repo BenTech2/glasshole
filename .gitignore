@@ -12,3 +12,4 @@ local.properties
 
 # release staging
 /release-v*/
+/dist/

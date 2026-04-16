@@ -22,5 +22,20 @@
             <meta-data android:name="com.glasshole.plugin.ID" android:value="device" />
         </service>
 
+        <!-- Launcher tile. Only used to request WRITE_SETTINGS on API 23+ glass
+             (EE2); on EE1 / XE the permission is install-time and this is a
+             "nothing to do" info screen. -->
+        <activity
+            android:name=".DeviceAccessActivity"
+            android:label="Device Access"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.google.android.glass.category.DIRECTORY" />
+            </intent-filter>
+        </activity>
+
     </application>
 </manifest>

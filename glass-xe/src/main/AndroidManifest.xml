@@ -55,6 +55,14 @@
             android:exported="true" />
 
         <receiver
+            android:name=".PluginMessageReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.glasshole.glass.MESSAGE_TO_PHONE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".BootReceiver"
             android:exported="true">
             <intent-filter>

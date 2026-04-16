@@ -9,7 +9,7 @@
     <application
         android:allowBackup="true"
         android:label="Gallery"
-        android:icon="@android:drawable/ic_menu_gallery"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
         <meta-data

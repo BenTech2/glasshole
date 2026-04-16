@@ -33,6 +33,7 @@ class DeviceGlassPluginService : GlassPluginService() {
             "SET_TIMEOUT" -> handleSetTimeout(message.payload)
             "WAKE" -> handleWake()
             "SET_TIME" -> handleSetTime(message.payload)
+            "SET_TIMEZONE" -> handleSetTimezone(message.payload)
             else -> Log.w(TAG, "Unknown message type: ${message.type}")
         }
     }
@@ -48,6 +49,7 @@ class DeviceGlassPluginService : GlassPluginService() {
             put("battery", readBatteryPct())
             put("charging", isCharging())
             put("currentTimeMillis", System.currentTimeMillis())
+            put("timezone", java.util.TimeZone.getDefault().id)
         }
         sendToPhone(GlassPluginMessage("STATE", json.toString()))
     }
@@ -188,6 +190,63 @@ class DeviceGlassPluginService : GlassPluginService() {
         } catch (e: Exception) {
             Log.e(TAG, "SET_TIME failed: ${e.message}")
         }
+    }
+
+    private fun handleSetTimezone(payload: String) {
+        try {
+            val tz = JSONObject(payload).optString("tz", "")
+            if (tz.isEmpty()) return
+
+            var success = false
+            var method = ""
+
+            // Path 1: AlarmManager.setTimeZone (needs SET_TIME_ZONE = signature|privileged on API 23+)
+            try {
+                val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                am.setTimeZone(tz)
+                success = true
+                method = "AlarmManager"
+            } catch (e: Exception) {
+                Log.w(TAG, "AlarmManager.setTimeZone blocked: ${e.message}")
+            }
+
+            // Path 2: su shell — setprop persist.sys.timezone
+            if (!success && trySuSetTimezone(tz)) {
+                success = true
+                method = "su"
+            }
+
+            val reply = JSONObject().apply {
+                put("success", success)
+                put("tz", tz)
+                put("method", method)
+                put("currentTz", java.util.TimeZone.getDefault().id)
+                put("now", System.currentTimeMillis())
+            }
+            sendToPhone(GlassPluginMessage("TIMEZONE_ACK", reply.toString()))
+            sendState()
+        } catch (e: Exception) {
+            Log.e(TAG, "SET_TIMEZONE failed: ${e.message}")
+        }
+    }
+
+    private fun trySuSetTimezone(tz: String): Boolean {
+        val suPaths = listOf("su", "/system/xbin/su", "/system/bin/su", "/sbin/su")
+        val script = "setprop persist.sys.timezone $tz"
+        for (suPath in suPaths) {
+            try {
+                val proc = Runtime.getRuntime().exec(arrayOf(suPath, "-c", script))
+                val exit = proc.waitFor()
+                if (exit == 0) {
+                    Log.i(TAG, "Timezone set via $suPath: $tz")
+                    return true
+                }
+                Log.d(TAG, "$suPath $script exit=$exit")
+            } catch (e: Exception) {
+                Log.d(TAG, "$suPath not usable: ${e.message}")
+            }
+        }
+        return false
     }
 
     private fun trySuSetTime(millis: Long, tz: String): Boolean {
