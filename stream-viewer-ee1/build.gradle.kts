@@ -27,6 +27,13 @@ android {
         }
     }
 
+    lint {
+        // Targeting API 19 is intentional — Glass EE1 runs KitKat-era
+        // Android and there is no newer SDK to move to.
+        disable += "ExpiredTargetSdkVersion"
+        abortOnError = false
+    }
+
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
@@ -80,8 +87,6 @@ dependencies {
     // OkHttp for Twitch API calls
     implementation("com.squareup.okhttp3:okhttp:3.12.13")
 
-    // JSON parsing
-    implementation("org.json:json:20231013")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
