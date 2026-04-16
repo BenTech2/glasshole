@@ -127,20 +127,20 @@
                     android:layout_marginBottom="12dp" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/openNotesButton"
+                    android:id="@+id/openGalleryButton"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Open Notes"
+                    android:text="Glass Gallery"
                     android:textAllCaps="false"
                     android:layout_marginBottom="8dp" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/openCalcButton"
+                    android:id="@+id/openPluginsButton"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Open Calculator History"
+                    android:text="Plugins"
                     android:textAllCaps="false"
                     android:layout_marginBottom="8dp" />
 
@@ -150,15 +150,6 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Glass Settings"
-                    android:textAllCaps="false"
-                    android:layout_marginBottom="8dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/openGalleryButton"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Glass Gallery"
                     android:textAllCaps="false"
                     android:layout_marginBottom="8dp" />
 

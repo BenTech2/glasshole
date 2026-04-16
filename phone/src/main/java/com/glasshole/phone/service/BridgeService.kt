@@ -13,7 +13,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import com.glasshole.phone.MainActivity
@@ -37,6 +39,9 @@ class BridgeService : Service() {
         private const val HEARTBEAT_INTERVAL = 30_000L
         private const val RECONNECT_DELAY_INITIAL = 1_000L
         private const val RECONNECT_DELAY_MAX = 4_000L
+
+        /** Notification-action intent asking the service to shut down entirely. */
+        const val ACTION_STOP = "com.glasshole.phone.service.BRIDGE_STOP"
 
         @Volatile var instance: BridgeService? = null
     }
@@ -115,7 +120,29 @@ class BridgeService : Service() {
         super.onDestroy()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            Log.i(TAG, "Stop requested — killing GlassHole process")
+            // Release anything sensitive before we go. We still kill the
+            // process at the end because otherwise the activities that are
+            // bound to us would keep the process (and its wake lock / BT
+            // threads) alive. User-requested nuke: reopening the launcher
+            // icon is the only way back.
+            running = false
+            autoReconnect = false
+            disconnectBluetooth()
+            wakeLock?.release()
+            wakeLock = null
+            stopForeground(Service.STOP_FOREGROUND_REMOVE)
+            stopService(Intent(this, PluginHostService::class.java))
+            stopSelf()
+            Handler(Looper.getMainLooper()).postDelayed({
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }, 300)
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         Log.i(TAG, "Task removed — service continues running")
@@ -133,29 +160,29 @@ class BridgeService : Service() {
     }
 
     private fun buildNotification(text: String): Notification {
-        val intent = Intent(this, MainActivity::class.java)
-        val pi = PendingIntent.getActivity(
-            this, 0, intent,
+        val contentPi = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val stopPi = PendingIntent.getService(
+            this, 1,
+            Intent(this, BridgeService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("GlassHole")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentIntent(pi)
-                .setOngoing(true)
-                .build()
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("GlassHole")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentIntent(pi)
-                .setOngoing(true)
-                .build()
         }
+        return builder
+            .setContentTitle("GlassHole")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentIntent(contentPi)
+            .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi)
+            .build()
     }
 
     private fun updateNotification(text: String) {
