@@ -114,7 +114,7 @@ glasshole-phone.apk                    (install on your Android phone)
 
 glasshole-glass-ee1-v0.1.0-alpha.zip   (for Glass Enterprise Edition 1 / Android 4.4-era glass)
   ├── glasshole-base-ee1.apk           (base app — BT listener, plugin host, notification card UI)
-  ├── glasshole-stream-viewer-ee1.apk  (core — Stream Player: URL receiver + video playback, also the stream plugin)
+  ├── glasshole-stream-player-ee1.apk  (core — Stream Player: URL receiver + video playback, also the stream plugin)
   ├── plugin-notes.apk                 (notes dictation + timeline/card)
   ├── plugin-calc.apk                  (voice calculator)
   ├── plugin-device.apk                (brightness / volume / timeout / wake control target)
@@ -122,14 +122,14 @@ glasshole-glass-ee1-v0.1.0-alpha.zip   (for Glass Enterprise Edition 1 / Android
 
 glasshole-glass-ee2-v0.1.0-alpha.zip   (for Glass Enterprise Edition 2 — Android 8.1)
   ├── glasshole-base-ee2.apk
-  ├── glasshole-stream-viewer-ee2.apk
+  ├── glasshole-stream-player-ee2.apk
   ├── plugin-camera2.apk               (EE2-only — Camera2-based replacement camera)
   ├── plugin-gallery2.apk              (EE2-only — Cover Flow gallery)
   └── (same five common plugins)
 
 glasshole-glass-xe-v0.1.0-alpha.zip    (for real Google Glass Explorer Edition)
   ├── glasshole-base-xe.apk
-  ├── glasshole-stream-viewer-xe.apk
+  ├── glasshole-stream-player-xe.apk
   └── (same five common plugins)
 ```
 
@@ -185,7 +185,7 @@ Plug the glass into your computer (or enable wireless ADB), then:
 ```bash
 # For EE2:
 adb install glasshole-base-ee2.apk
-adb install glasshole-stream-viewer-ee2.apk
+adb install glasshole-stream-player-ee2.apk
 adb install plugin-notes.apk
 adb install plugin-calc.apk
 adb install plugin-device.apk
@@ -194,8 +194,8 @@ adb install plugin-camera2.apk
 adb install plugin-gallery2.apk
 ```
 
-Swap the filenames for `base-ee1.apk` + `stream-viewer-ee1.apk` or
-`base-xe.apk` + `stream-viewer-xe.apk` if you're on EE1 or XE (and
+Swap the filenames for `base-ee1.apk` + `stream-player-ee1.apk` or
+`base-xe.apk` + `stream-player-xe.apk` if you're on EE1 or XE (and
 drop the EE2-only camera2/gallery2 lines).
 
 #### Option B: Use the phone-side APK Manager
@@ -280,17 +280,17 @@ From any app on the phone that supports sharing text (YouTube app,
 Twitch app, Chrome, etc.), tap share and pick **Send to Glass** /
 **GlassHole**. The phone extracts the URL from the share text, forwards
 it over BT to the glass stream plugin, wakes the glass display, and
-launches the stream-viewer app with the URL pre-resolved.
+launches the Stream Player with the URL pre-resolved.
 
-The stream viewer uses NewPipeExtractor to resolve YouTube videos
-(both live streams and VODs) into direct HLS/MP4 URLs that play in
-ExoPlayer. Twitch resolves via the Twitch GraphQL playback token
-endpoint into an HLS URL.
+Stream Player uses NewPipeExtractor to resolve YouTube videos (both
+live streams and VODs) into direct HLS/MP4 URLs that play in ExoPlayer.
+Twitch resolves via the Twitch GraphQL playback token endpoint into an
+HLS URL.
 
-The stream viewer is bundled inside each glass release zip
-(`glasshole-stream-viewer-<variant>.apk`) and ships as a core
-component — install it alongside the base app. If it's missing, the
-stream plugin logs "no stream-viewer installed" and nothing launches.
+Stream Player is bundled inside each glass release zip
+(`glasshole-stream-player-<variant>.apk`) and ships as a core component
+— install it alongside the base app. If it's missing, the stream
+plugin logs "no Stream Player installed" and nothing launches.
 
 ### Gallery
 
@@ -489,26 +489,36 @@ cd glasshole
 ### Module layout
 
 ```
-phone/                  Phone companion app — main UI, BT bridge, plugin host, all built-in plugins
-glass-ee1/              Base app for Glass Enterprise Edition 1 / Android 4.4-era glass
-glass-ee2/              Base app for Glass Enterprise Edition 2 (Android 8.1)
-glass-xe/               Base app for real Google Glass Explorer Edition
-glass-plugin-sdk/       Shared AIDL + base classes for glass plugin APKs
-plugin-sdk/             Shared AIDL + base classes for phone plugin APKs (mostly unused now, left for compat)
-plugin-notes-glass/     Notes plugin — dictation UI, note list viewer, timeline card inserter
-plugin-calc-glass/      Calculator plugin — voice input, expression parser
-plugin-device-glass/    Device control plugin — brightness/volume/timeout/wake/time
-plugin-gallery-glass/   Gallery plugin — media scanner + chunked file transfer
-plugin-camera2-glass/   EE2-only — Camera2 replacement camera (minSdk 27)
-plugin-gallery2-glass/  EE2-only — Cover Flow gallery (minSdk 27)
-stream-viewer-ee1/      Stream Player + stream plugin — EE1 (ExoPlayer + NewPipe, minSdk 19)
-stream-viewer-ee2/      Stream Player + stream plugin — EE2 (media3 + NewPipe, minSdk 26)
-stream-viewer-xe/       Stream Player + stream plugin — XE (ExoPlayer + NewPipe, minSdk 19)
+apps/
+  phone/                    Phone companion app — main UI, BT bridge, plugin host, all built-in plugins
+  core/                     "Core" installable pieces (Core-badged in the phone APK Manager,
+                            not shown in the on-glass plugin carousel):
+    glass-ee1/              Base app — Glass Enterprise Edition 1 / Android 4.4
+    glass-ee2/              Base app — Glass Enterprise Edition 2 / Android 8.1
+    glass-xe/               Base app — original Google Glass Explorer Edition
+    stream-player-ee1/      Stream Player + stream plugin — EE1 (ExoPlayer + NewPipe, minSdk 19)
+    stream-player-ee2/      Stream Player + stream plugin — EE2 (media3 + NewPipe, minSdk 26)
+    stream-player-xe/       Stream Player + stream plugin — XE (ExoPlayer + NewPipe, minSdk 19)
+    plugin-device-glass/    Device control plugin — brightness/volume/timeout/wake/time
+    plugin-gallery-glass/   Photo-sync plugin — media scanner + chunked file transfer
+  plugins/                  User-launchable plugins (shown in the on-glass plugin carousel):
+    plugin-notes-glass/     Notes — dictation UI, note list viewer, timeline card inserter
+    plugin-calc-glass/      Calculator — voice input, expression parser
+    plugin-gallery2-glass/  EE2-only — Cover Flow gallery (minSdk 27)
+    plugin-camera2-glass/   EE2-only — Camera2 replacement camera (minSdk 27)
+
+sdk/
+  glass-plugin-sdk/         Shared AIDL + base classes for glass plugin APKs
+  plugin-sdk/               Shared AIDL + base classes for phone plugin APKs (mostly unused now, left for compat)
 ```
 
-Built-in phone plugins live in `phone/src/main/java/com/glasshole/phone/plugins/`
-and implement the `PhonePlugin` interface in
-`phone/src/main/java/com/glasshole/phone/plugin/PhonePlugin.kt`.
+Gradle project IDs match the folder basenames — e.g. `:phone`, `:glass-ee2`,
+`:plugin-notes-glass`, `:stream-player-ee1`.
+
+Built-in phone plugins live in
+`apps/phone/src/main/java/com/glasshole/phone/plugins/` and implement the
+`PhonePlugin` interface in
+`apps/phone/src/main/java/com/glasshole/phone/plugin/PhonePlugin.kt`.
 
 ### Adding a new plugin
 

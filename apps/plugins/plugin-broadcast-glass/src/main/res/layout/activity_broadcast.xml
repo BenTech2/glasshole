@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- OpenGL-backed surface the encoder library renders camera frames
+         into. Fills the screen when the viewfinder mode is on; hidden
+         otherwise, but still the active encoder surface. -->
+    <com.pedro.library.view.OpenGlView
+        android:id="@+id/surface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Black cover — laid on top of the OpenGlView when the user chose
+         "preview off" or "chat". Encoder keeps running underneath. -->
+    <View
+        android:id="@+id/previewCover"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FF000000"
+        android:visibility="gone" />
+
+    <!-- Chat overlay — visible only in chat display mode, scrolls with
+         incoming CHAT broadcasts from the phone. -->
+    <ScrollView
+        android:id="@+id/chatScroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="16dp"
+        android:scrollbars="none"
+        android:fillViewport="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/chatContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="bottom" />
+    </ScrollView>
+
+    <!-- Status + stream stats overlay -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:orientation="vertical"
+        android:background="#99000000"
+        android:padding="10dp"
+        android:layout_margin="12dp">
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Waiting for phone..."
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/bitrateText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:layout_marginTop="2dp" />
+    </LinearLayout>
+
+    <!-- Live indicator (red dot + "LIVE") -->
+    <LinearLayout
+        android:id="@+id/liveBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#99000000"
+        android:padding="8dp"
+        android:layout_margin="12dp"
+        android:visibility="gone">
+
+        <View
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:background="#FFFF3030"
+            android:layout_marginEnd="6dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="LIVE"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</FrameLayout>

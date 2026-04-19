@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Bluetooth -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Required to wake the screen and fire a launch PendingIntent from a
+         background NLS / bound-service context. Android 15 blocks every other
+         same-UID activity-launch path. Granted by the user once at first use;
+         on Android 14+ Android may additionally require the user to flip
+         "Allow full-screen notifications" under App Info. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- Network & system -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Allow discovering plugin APKs on Android 11+ -->
+    <queries>
+        <intent>
+            <action android:name="com.glasshole.plugin.PHONE_PLUGIN" />
+        </intent>
+    </queries>
+
+    <!-- Needed so the Choose Notification Apps picker can enumerate every
+         installed package on the phone. On Android 11+ apps can only see
+         themselves + a few defaults unless this permission is granted. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <!-- Custom permission for plugin binding -->
+    <permission
+        android:name="com.glasshole.permission.BIND_PLUGIN"
+        android:protectionLevel="signature" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@android:drawable/ic_dialog_info"
+        android:label="GlassHole"
+        android:theme="@style/Theme.GlassHole">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".NotificationAppsActivity"
+            android:exported="false"
+            android:label="Notification Apps"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".ApkManagerActivity"
+            android:exported="false"
+            android:label="APK Manager"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".DebugActivity"
+            android:exported="false"
+            android:label="Debug"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".PluginsActivity"
+            android:exported="false"
+            android:label="Plugins"
+            android:parentActivityName=".MainActivity" />
+
+        <!-- Invisible relay used to launch other apps from the NotificationListener
+             context. Android 14+ blocks background services from bringing other
+             apps' tasks to the foreground, but a visible activity can. See the
+             matching LaunchRelay launch opts in NotificationForwardingService
+             for the dance needed to keep Android 15's BAL from rejecting us. -->
+        <activity
+            android:name=".LaunchRelayActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity
+            android:name=".plugins.notes.NotesActivity"
+            android:exported="true"
+            android:label="Notes"
+            android:parentActivityName=".MainActivity">
+            <intent-filter>
+                <action android:name="com.glasshole.phone.DEBUG_INSERT_NOTE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".plugins.calc.CalcHistoryActivity"
+            android:exported="false"
+            android:label="Calculator History"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".plugins.device.DeviceActivity"
+            android:exported="false"
+            android:label="Glass Settings"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".plugins.gallery.GalleryActivity"
+            android:exported="false"
+            android:label="Glass Gallery"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".plugins.openclaw.OpenClawSettingsActivity"
+            android:exported="false"
+            android:label="OpenClaw settings"
+            android:parentActivityName=".PluginsActivity" />
+
+        <activity
+            android:name=".plugins.chat.ChatSettingsActivity"
+            android:exported="false"
+            android:label="Chat viewer settings"
+            android:parentActivityName=".PluginsActivity" />
+
+        <activity
+            android:name=".plugins.broadcast.BroadcastSettingsActivity"
+            android:exported="false"
+            android:label="Broadcast settings"
+            android:parentActivityName=".PluginsActivity" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <activity
+            android:name=".plugins.stream.SharePlayActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay"
+            android:label="Send to Glass">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".service.BridgeService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false" />
+
+        <service
+            android:name=".service.PluginHostService"
+            android:exported="true"
+            android:permission="com.glasshole.permission.BIND_PLUGIN" />
+
+        <service
+            android:name=".service.NotificationForwardingService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

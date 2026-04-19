@@ -1,0 +1,386 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Glass Settings"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="?attr/colorOnBackground"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Status card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:id="@+id/statusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Connecting..."
+                android:textSize="14sp"
+                android:textColor="?android:attr/textColorSecondary" />
+
+            <TextView
+                android:id="@+id/batteryText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Battery: --"
+                android:textSize="14sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:id="@+id/glassTimeText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Glass time: --"
+                android:textSize="14sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Brightness -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:id="@+id/brightnessLabel"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Brightness: --"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Auto"
+                    android:textSize="14sp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:layout_marginEnd="8dp" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/brightnessAutoSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/brightnessSeek"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="255" />
+        </LinearLayout>
+
+        <!-- Volume -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:id="@+id/volumeLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Volume: --"
+                android:textSize="14sp"
+                android:textColor="?attr/colorOnBackground"
+                android:layout_marginBottom="8dp" />
+
+            <SeekBar
+                android:id="@+id/volumeSeek"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="15" />
+        </LinearLayout>
+
+        <!-- Screen timeout -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:id="@+id/timeoutLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Screen timeout: --"
+                android:textSize="14sp"
+                android:textColor="?attr/colorOnBackground"
+                android:layout_marginBottom="8dp" />
+
+            <SeekBar
+                android:id="@+id/timeoutSeek"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="7" />
+        </LinearLayout>
+
+        <!-- Notification on-screen timeout -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:id="@+id/notifTimeoutLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Notification timeout: --"
+                android:textSize="14sp"
+                android:textColor="?attr/colorOnBackground"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="How long a forwarded notification stays on the glass before it auto-dismisses."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginBottom="8dp" />
+
+            <SeekBar
+                android:id="@+id/notifTimeoutSeek"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <!-- Auto-start on boot -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Auto-start on boot"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/autoStartSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Starts GlassHole on the glass automatically after a reboot or reinstall. When off, you'll need to open the GlassHole tile manually to connect."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Tilt to Wake (EE2 only) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Tilt to wake"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/tiltWakeSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Wakes the glass display when you look up. Runs a background service on the glass — trades some battery life for the gesture. EE2 only."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Connection notifications -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Show connection notifications"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/connectNotifySwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Pops a short notification on both the phone and the glass whenever the phone successfully connects (or reconnects) to your glass. Handy for confirming a reconnect without opening the app."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Timezone -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Timezone"
+                android:textSize="14sp"
+                android:textColor="?attr/colorOnBackground"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/timezoneCurrentText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Current on glass: --"
+                android:textSize="12sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="4dp" />
+
+            <Spinner
+                android:id="@+id/timezoneSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/timezoneApplyButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Apply Timezone to Glass"
+                android:textAllCaps="false"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Direct timezone change requires signature|privileged on EE2 so this usually falls back to su if your glass is rooted. On non-rooted glass it will log failure — use your phone's carrier network setting + Sync Time Now as the workaround."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Actions -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/wakeButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Wake Glass"
+                android:textAllCaps="false"
+                android:layout_marginBottom="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/syncTimeButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Sync Time Now"
+                android:textAllCaps="false"
+                android:layout_marginBottom="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/refreshButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Refresh"
+                android:textAllCaps="false" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

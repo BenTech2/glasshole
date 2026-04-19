@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Album art, shown behind the player for YouTube Music / audio-only
+         tracks. Hidden by default, sized to fill the screen. -->
+    <ImageView
+        android:id="@+id/albumArt"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:visibility="gone"
+        android:contentDescription="Album art" />
+
+    <!-- Gradient dim on top of the album art so overlay text stays legible. -->
+    <View
+        android:id="@+id/albumArtDim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#66000000"
+        android:visibility="gone" />
+
+    <!-- ExoPlayer view - fullscreen -->
+    <com.google.android.exoplayer2.ui.StyledPlayerView
+        android:id="@+id/playerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:use_controller="false"
+        app:resize_mode="fit" />
+
+    <!-- Loading overlay -->
+    <TextView
+        android:id="@+id/loadingText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="Loading stream..."
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:visibility="visible" />
+
+    <!-- Track info overlay — "Track N of M · Title" at the bottom -->
+    <TextView
+        android:id="@+id/trackInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#99000000"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text=""
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:visibility="gone" />
+
+</FrameLayout>
