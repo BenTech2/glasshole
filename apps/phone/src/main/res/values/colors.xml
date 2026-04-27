@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material 3 fallback palette derived from a single seed (Glass blue
+         #1976D2). Devices on Android 12+ override these via dynamic colors
+         drawn from the user's wallpaper; everything below is what shows on
+         Android 11 / 10. -->
+    <color name="seed_primary">#1F5FA8</color>
+    <color name="seed_primary_container">#D9E2FF</color>
+    <color name="seed_on_primary_container">#001A41</color>
+    <color name="seed_secondary">#445E91</color>
+</resources>

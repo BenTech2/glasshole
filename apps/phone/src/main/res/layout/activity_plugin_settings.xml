@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:orientation="vertical"
+    android:background="?attr/colorSurface">
 
     <ScrollView
         android:id="@+id/pluginScroll"
@@ -22,33 +24,32 @@
                 android:id="@+id/pluginHeaderName"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textSize="22sp"
-                android:textStyle="bold"
-                android:textColor="?attr/colorOnBackground" />
+                android:textAppearance="?attr/textAppearanceHeadlineMedium"
+                android:textColor="?attr/colorOnSurface" />
 
             <TextView
                 android:id="@+id/pluginHeaderDescription"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="14sp"
-                android:textColor="?android:attr/textColorSecondary" />
+                android:layout_marginTop="6dp"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorOnSurfaceVariant" />
 
             <TextView
                 android:id="@+id/pluginStatusText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="12dp"
-                android:textSize="14sp"
-                android:textColor="?android:attr/textColorSecondary" />
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="8dp"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorOnSurfaceVariant" />
 
             <LinearLayout
                 android:id="@+id/pluginFieldsContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:layout_marginTop="12dp" />
+                android:layout_marginTop="8dp" />
 
         </LinearLayout>
 
@@ -56,10 +57,10 @@
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/pluginSaveButton"
+        style="@style/Widget.Material3.Button"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_margin="16dp"
-        android:text="Save to glass"
-        android:textAllCaps="false" />
+        android:text="Save to glass" />
 
 </LinearLayout>

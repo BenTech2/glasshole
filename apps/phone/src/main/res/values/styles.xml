@@ -1,12 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.GlassHole" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#1976D2</item>
-        <item name="colorPrimaryVariant">#1565C0</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSecondary">#43A047</item>
-        <item name="colorSecondaryVariant">#388E3C</item>
-        <item name="colorOnSecondary">#FFFFFF</item>
-        <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
+
+    <!-- Material 3 base. DynamicColors.applyToActivitiesIfAvailable in
+         GlassHoleApp swaps in wallpaper-derived colors on Android 12+.
+         The fallback palette below is what shows on Android 11 and any
+         component that doesn't pick up dynamic colors. -->
+    <style name="Theme.GlassHole" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/seed_primary</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="colorPrimaryContainer">@color/seed_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/seed_on_primary_container</item>
+        <item name="colorSecondary">@color/seed_secondary</item>
+        <item name="colorOnSecondary">@android:color/white</item>
+        <item name="android:statusBarColor">?attr/colorSurface</item>
     </style>
+
+    <!-- Section header used inside grouped MaterialCardViews on the
+         settings screen. Small, tracked-out, primary color — M3 list
+         section label convention. -->
+    <style name="GlassHole.SectionHeader" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textColor">?attr/colorPrimary</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.08</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
 </resources>

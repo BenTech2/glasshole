@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
@@ -22,8 +23,8 @@
                 android:id="@+id/label"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="15sp"
-                android:textColor="?attr/colorOnBackground"
+                android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:textColor="?attr/colorOnSurface"
                 android:maxLines="1"
                 android:ellipsize="end" />
 
@@ -32,24 +33,24 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="GlassHole"
-                android:textSize="10sp"
-                android:textColor="@android:color/white"
-                android:background="#6A1B9A"
-                android:paddingStart="6dp"
-                android:paddingEnd="6dp"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textColor="?attr/colorOnPrimaryContainer"
+                android:background="@drawable/badge_bg_primary"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
                 android:paddingTop="2dp"
                 android:paddingBottom="2dp"
-                android:layout_marginStart="6dp" />
+                android:layout_marginStart="8dp" />
 
             <TextView
                 android:id="@+id/kindBadge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="10sp"
-                android:textColor="@android:color/white"
-                android:background="#1565C0"
-                android:paddingStart="6dp"
-                android:paddingEnd="6dp"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:textColor="?attr/colorOnSecondaryContainer"
+                android:background="@drawable/badge_bg_secondary"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
                 android:paddingTop="2dp"
                 android:paddingBottom="2dp"
                 android:layout_marginStart="4dp" />
@@ -59,8 +60,8 @@
             android:id="@+id/pkg"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="11sp"
-            android:textColor="?android:attr/textColorSecondary"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:maxLines="1"
             android:ellipsize="middle"
             android:layout_marginTop="2dp" />
@@ -72,6 +73,7 @@
         android:layout_height="40dp"
         android:background="?attr/selectableItemBackgroundBorderless"
         android:src="@android:drawable/ic_menu_delete"
-        android:contentDescription="Uninstall" />
+        android:contentDescription="Uninstall"
+        app:tint="?attr/colorOnSurfaceVariant" />
 
 </LinearLayout>

@@ -14,9 +14,9 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="?attr/colorPrimary"
+            android:background="?attr/colorSurface"
             app:title="Notes"
-            app:titleTextColor="@android:color/white" />
+            app:titleTextColor="?attr/colorOnSurface" />
 
     </com.google.android.material.appbar.AppBarLayout>
 
@@ -29,7 +29,7 @@
             android:id="@+id/notesList"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:divider="@android:color/darker_gray"
+            android:divider="?attr/colorOutlineVariant"
             android:dividerHeight="0.5dp"
             android:padding="8dp"
             android:clipToPadding="false" />
@@ -41,19 +41,19 @@
             android:layout_gravity="center"
             android:text="No notes yet.\nTap + to create one, or dictate from Glass."
             android:textAlignment="center"
-            android:textSize="16sp"
-            android:textColor="?android:attr/textColorSecondary" />
+            android:textAppearance="?attr/textAppearanceBodyLarge"
+            android:textColor="?attr/colorOnSurfaceVariant" />
 
     </FrameLayout>
 
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabNewNote"
+        style="@style/Widget.Material3.FloatingActionButton.Primary"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
         android:src="@android:drawable/ic_input_add"
-        android:contentDescription="New note"
-        app:tint="@android:color/white" />
+        android:contentDescription="New note" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

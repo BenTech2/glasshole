@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="seed_primary_dark">#AFC6FF</color>
+    <color name="seed_primary_container_dark">#0040A1</color>
+    <color name="seed_secondary_dark">#ADC6FF</color>
+</resources>
