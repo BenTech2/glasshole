@@ -88,7 +88,9 @@ PLUGINS_EE1_XE_EXTRA="plugin-broadcast-legacy-glass"
 # ── Build all APKs ────────────────────────────────────────────────────────
 GRADLE_TASKS=( ":phone:assemble${V_CAP}" )
 for v in $VARIANTS; do
-    GRADLE_TASKS+=( ":$(base_module "$v"):assemble${V_CAP}" )
+    # Glass base apps have launcher + standalone flavors; assemble both.
+    GRADLE_TASKS+=( ":$(base_module "$v"):assembleStandalone${V_CAP}" )
+    GRADLE_TASKS+=( ":$(base_module "$v"):assembleLauncher${V_CAP}" )
     GRADLE_TASKS+=( ":$(player_module "$v"):assemble${V_CAP}" )
 done
 for p in $PLUGINS_CORE_COMMON $PLUGINS_COMMON $PLUGINS_EE2_EXTRA $PLUGINS_EE1_XE_EXTRA; do
@@ -98,17 +100,28 @@ done
 echo "▶ building ${#GRADLE_TASKS[@]} modules (${VARIANT})"
 ./gradlew "${GRADLE_TASKS[@]}"
 
-# apk_path <module> → path to the built APK, resolved via module_dir.
+# apk_path <module> [<flavor>] → path to the built APK, resolved via module_dir.
+# When <flavor> is omitted, looks at the unflavored output dir; when provided,
+# resolves the flavored layout (e.g. apk/standalone/debug/<module>-<flavor>-<variant>.apk).
 apk_path() {
     local module="$1"
-    local dir="$(module_dir "${module}")/build/outputs/apk/${V_LOW}"
+    local flavor="${2:-}"
+    local base="$(module_dir "${module}")/build/outputs/apk"
+    local dir suffix
+    if [[ -n "${flavor}" ]]; then
+        dir="${base}/${flavor}/${V_LOW}"
+        suffix="${flavor}-${V_LOW}"
+    else
+        dir="${base}/${V_LOW}"
+        suffix="${V_LOW}"
+    fi
     for candidate in \
-        "${dir}/${module}-${V_LOW}.apk" \
-        "${dir}/${module}-${V_LOW}-unsigned.apk" \
+        "${dir}/${module}-${suffix}.apk" \
+        "${dir}/${module}-${suffix}-unsigned.apk" \
     ; do
         [[ -f "$candidate" ]] && { echo "$candidate"; return 0; }
     done
-    echo "✗ no APK found for module ${module} under ${dir}" >&2
+    echo "✗ no APK found for module ${module} (flavor='${flavor}') under ${dir}" >&2
     ls "${dir}" >&2 || true
     return 1
 }
@@ -124,8 +137,11 @@ for v in $VARIANTS; do
     rm -rf "${STAGE}"
     mkdir -p "${STAGE}"
 
-    # Base app
-    cp "$(apk_path "$(base_module "$v")")" "${STAGE}/glasshole-base-${v}.apk"
+    # Base app — both flavors. Standalone is the default for users who
+    # want GlassHole alongside the stock Glass launcher; launcher
+    # replaces stock home and adds swipe-down lockNow().
+    cp "$(apk_path "$(base_module "$v")" standalone)" "${STAGE}/glasshole-base-${v}-standalone.apk"
+    cp "$(apk_path "$(base_module "$v")" launcher)"   "${STAGE}/glasshole-base-${v}-launcher.apk"
 
     # Stream Player (core)
     cp "$(apk_path "$(player_module "$v")")" "${STAGE}/glasshole-stream-player-${v}.apk"
