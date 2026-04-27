@@ -100,6 +100,25 @@ class CardAdapter(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
+        // Notification card: clip the front card to its rounded-top
+        // outline so the full-bleed picture child doesn't square out
+        // the corners. ViewOutlineProvider is API 21+; EE2 runs API 27+
+        // so this is always available, but the guard is cheap.
+        if (type == CardType.NOTIFICATION) {
+            view.findViewById<View>(R.id.notifFrontCard)?.let { card ->
+                val radiusPx = card.resources.displayMetrics.density * 6f
+                card.outlineProvider = object : android.view.ViewOutlineProvider() {
+                    override fun getOutline(v: View, outline: android.graphics.Outline) {
+                        // Extending bottom past the view rounds only the top
+                        // two corners — the rest is clipped by the screen edge.
+                        outline.setRoundRect(
+                            0, 0, v.width, v.height + radiusPx.toInt(), radiusPx
+                        )
+                    }
+                }
+                card.clipToOutline = true
+            }
+        }
         return CardHolder(view, type)
     }
 
@@ -279,19 +298,37 @@ class CardAdapter(
 
     private fun bindNotification(holder: CardHolder) {
         val latest = NotificationStore.latest()
-        val content = holder.itemView.findViewById<LinearLayout>(R.id.notifContent)
+        val total = NotificationStore.count()
+        val front = holder.itemView.findViewById<View>(R.id.notifFrontCard)
         val empty = holder.itemView.findViewById<TextView>(R.id.notifEmpty)
         val picture = holder.itemView.findViewById<ImageView>(R.id.notifPicture)
         val gradient = holder.itemView.findViewById<View>(R.id.notifPictureGradient)
+        val stack1 = holder.itemView.findViewById<View>(R.id.notifStack1)
+        val stack2 = holder.itemView.findViewById<View>(R.id.notifStack2)
+        val stackCount = holder.itemView.findViewById<TextView>(R.id.notifStackCount)
         if (latest == null) {
-            content?.visibility = View.GONE
+            front?.visibility = View.GONE
             empty?.visibility = View.VISIBLE
             picture?.visibility = View.GONE
             gradient?.visibility = View.GONE
+            stack1?.visibility = View.GONE
+            stack2?.visibility = View.GONE
+            stackCount?.visibility = View.GONE
             return
         }
-        content?.visibility = View.VISIBLE
+        front?.visibility = View.VISIBLE
         empty?.visibility = View.GONE
+
+        // Time Machine slivers: peek out the top of the front card to imply
+        // a stack. Decorative only — drawer is still tap-to-open.
+        stack1?.visibility = if (total >= 2) View.VISIBLE else View.GONE
+        stack2?.visibility = if (total >= 3) View.VISIBLE else View.GONE
+        if (total >= 2) {
+            stackCount?.visibility = View.VISIBLE
+            stackCount?.text = "$total notifications"
+        } else {
+            stackCount?.visibility = View.GONE
+        }
 
         val topSpacer = holder.itemView.findViewById<View>(R.id.notifTopSpacer)
         val middleSpacer = holder.itemView.findViewById<View>(R.id.notifMiddleSpacer)
@@ -318,10 +355,6 @@ class CardAdapter(
         holder.itemView.findViewById<TextView>(R.id.notifBody)?.text = latest.text
         holder.itemView.findViewById<TextView>(R.id.notifTimestamp)?.text =
             formatTimeAgo(latest.timestamp)
-
-        val count = NotificationStore.count()
-        holder.itemView.findViewById<TextView>(R.id.notifCountText)?.text =
-            if (count > 1) "+${count - 1}" else ""
 
         val icon = holder.itemView.findViewById<ImageView>(R.id.notifAppIcon)
         if (latest.iconBitmap != null) icon?.setImageBitmap(latest.iconBitmap)
