@@ -12,6 +12,14 @@ import org.json.JSONArray
 
 class CalcHistoryActivity : AppCompatActivity() {
 
+    companion object {
+        // Written by the history-store worker primitive when the glass
+        // plugin emits RESULT. Keep these in sync with the calc plugin's
+        // plugin_schema.json params.
+        private const val PREFS_NAME = "calc_history"
+        private const val KEY_HISTORY = "history"
+    }
+
     private lateinit var listView: ListView
     private lateinit var emptyText: TextView
     private lateinit var clearButton: Button
@@ -30,8 +38,8 @@ class CalcHistoryActivity : AppCompatActivity() {
         listView.adapter = adapter
 
         clearButton.setOnClickListener {
-            getSharedPreferences(CalcPlugin.PREFS_NAME, MODE_PRIVATE)
-                .edit().putString(CalcPlugin.KEY_HISTORY, "[]").apply()
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putString(KEY_HISTORY, "[]").apply()
             loadHistory()
         }
     }
@@ -44,8 +52,8 @@ class CalcHistoryActivity : AppCompatActivity() {
     private fun loadHistory() {
         items.clear()
 
-        val prefs = getSharedPreferences(CalcPlugin.PREFS_NAME, MODE_PRIVATE)
-        val historyStr = prefs.getString(CalcPlugin.KEY_HISTORY, "[]") ?: "[]"
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val historyStr = prefs.getString(KEY_HISTORY, "[]") ?: "[]"
 
         try {
             val history = JSONArray(historyStr)

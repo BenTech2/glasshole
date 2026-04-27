@@ -37,7 +37,12 @@ class BridgeService : Service() {
         private val APP_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "glasshole_bridge"
-        private const val HEARTBEAT_INTERVAL = 30_000L
+        private const val HEARTBEAT_INTERVAL = 10_000L
+        // If we've heard nothing back from the glass for this long, assume
+        // the glass-side socket is dead even if writes still appear to
+        // succeed (BT RFCOMM buffers can mask a half-closed connection,
+        // especially after `pm install` force-stops the glass app).
+        private const val INBOUND_STALE_THRESHOLD = 25_000L
         private const val RECONNECT_DELAY_INITIAL = 1_000L
         private const val RECONNECT_DELAY_MAX = 4_000L
         private const val LAUNCH_CHANNEL_ID = "glasshole_launch"
@@ -70,6 +75,7 @@ class BridgeService : Service() {
     @Volatile private var running = false
     private var readerThread: Thread? = null
     private var heartbeatThread: Thread? = null
+    @Volatile private var lastInboundMs: Long = 0L
 
     // Auto-reconnect
     private var targetDevice: BluetoothDevice? = null
@@ -115,10 +121,26 @@ class BridgeService : Service() {
 
     val isConnected: Boolean get() = btConnected
 
+    /**
+     * Coordinates workers for dynamic plugins. Activates once at service
+     * start and drives primitives' lifecycle off PluginDirectory updates.
+     */
+    private val workerManager by lazy {
+        com.glasshole.phone.plugindir.worker.WorkerManager(
+            appContext = applicationContext,
+            send = { pluginId, type, payload ->
+                sendPluginMessage(pluginId, type, payload)
+            }
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
         createNotificationChannel()
+        // Register built-in worker primitives exactly once per process.
+        com.glasshole.phone.plugindir.worker.WorkerRegistry.registerBuiltIns()
+        workerManager.start()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
@@ -145,6 +167,7 @@ class BridgeService : Service() {
         running = false
         instance = null
         autoReconnect = false
+        workerManager.stop()
         idleHandler.removeCallbacks(idleCheckRunnable)
         reconnectThread?.interrupt()
         reconnectThread = null
@@ -464,11 +487,15 @@ class BridgeService : Service() {
         log("Connected to ${device.name}")
         onConnectionChanged?.invoke(true)
         pluginRouter?.notifyConnectionChanged(true)
+        workerManager.onConnectionChanged(true)
         updateNotification("Connected to ${device.name}")
         notifyConnectionSuccess(device.name ?: "Glass")
 
         wireNotificationListener()
         sendRaw(ProtocolCodec.encodeInfoReq())
+        // Seed the Home clock card with our timezone. Phone is the source
+        // of truth for Glass time so the two screens never drift.
+        sendRaw(ProtocolCodec.encodeHomeTz(java.util.TimeZone.getDefault().id))
 
         startHeartbeat()
         startReaderThread()
@@ -491,6 +518,7 @@ class BridgeService : Service() {
 
         NotificationForwardingService.instance?.onNotificationForGlass = null
         pluginRouter?.notifyConnectionChanged(false)
+        workerManager.onConnectionChanged(false)
         onConnectionChanged?.invoke(false)
         updateNotification("Disconnected")
         // User hit disconnect — start the 10-min idle clock.
@@ -507,6 +535,7 @@ class BridgeService : Service() {
         bluetoothSocket = null
 
         pluginRouter?.notifyConnectionChanged(false)
+        workerManager.onConnectionChanged(false)
         onConnectionChanged?.invoke(false)
         // Lost connection — start the 10-min idle clock. If auto-reconnect
         // brings us back before it fires, doConnect() resets it.
@@ -535,11 +564,17 @@ class BridgeService : Service() {
 
     private fun startHeartbeat() {
         heartbeatThread?.interrupt()
+        lastInboundMs = android.os.SystemClock.elapsedRealtime()
         heartbeatThread = Thread {
             try {
                 while (btConnected && running) {
                     Thread.sleep(HEARTBEAT_INTERVAL)
                     if (!btConnected) break
+                    val sinceInbound = android.os.SystemClock.elapsedRealtime() - lastInboundMs
+                    if (sinceInbound > INBOUND_STALE_THRESHOLD) {
+                        Log.i(TAG, "Heartbeat: no inbound for ${sinceInbound}ms, dead")
+                        break
+                    }
                     try {
                         sendRaw(ProtocolCodec.encodePing())
                         // Refresh glass battery / model / plugin info so the
@@ -563,6 +598,7 @@ class BridgeService : Service() {
                 )
                 while (btConnected) {
                     val line = reader.readLine() ?: break
+                    lastInboundMs = android.os.SystemClock.elapsedRealtime()
                     Log.d(TAG, "From Glass: $line")
                     handleMessage(ProtocolCodec.decode(line))
                 }
@@ -576,6 +612,32 @@ class BridgeService : Service() {
     private fun handleMessage(msg: DecodedMessage) {
         when (msg) {
             is DecodedMessage.Plugin -> {
+                // Dynamic-plugin directory messages are base-app-owned;
+                // intercept before the hardcoded phone-side plugin router.
+                when (msg.type) {
+                    "SCHEMA_RESP" -> {
+                        com.glasshole.phone.plugindir.PluginDirectory
+                            .updateSchema(msg.pluginId, msg.payload)
+                        com.glasshole.phone.AppLog.log(
+                            "BT", "← ${msg.pluginId}:SCHEMA_RESP (${msg.payload.length} B)"
+                        )
+                        return
+                    }
+                    "CONFIG" -> {
+                        com.glasshole.phone.plugindir.PluginDirectory
+                            .updateConfig(msg.pluginId, msg.payload)
+                        com.glasshole.phone.AppLog.log(
+                            "BT", "← ${msg.pluginId}:CONFIG (${msg.payload.length} B)"
+                        )
+                        return
+                    }
+                }
+                // Dynamic workers get every non-directory PLUGIN message.
+                // Hardcoded phone-side plugins (ChatPlugin etc. during the
+                // migration) still receive via the legacy router — both
+                // paths co-exist while we finish the refactor.
+                workerManager.deliverMessage(msg.pluginId, msg.type, msg.payload)
+
                 val pluginMsg = PluginMessage(msg.type, msg.payload)
                 val routed = pluginRouter?.routeToPlugin(msg.pluginId, pluginMsg) ?: false
                 if (!routed) {
@@ -586,6 +648,12 @@ class BridgeService : Service() {
                         "← ${msg.pluginId}:${msg.type} (${msg.payload.length} B)"
                     )
                 }
+            }
+            is DecodedMessage.PluginList -> {
+                com.glasshole.phone.plugindir.PluginDirectory.updateList(msg.json)
+                com.glasshole.phone.AppLog.log(
+                    "BT", "← PLUGIN_LIST (${msg.json.length} B)"
+                )
             }
             is DecodedMessage.Reply -> {
                 log("Glass replied: ${msg.text}")
@@ -607,6 +675,17 @@ class BridgeService : Service() {
             is DecodedMessage.UninstallAck -> {
                 log("Uninstall ${msg.pkg}: ${msg.status}")
                 onUninstallResult?.invoke(msg.pkg, msg.status)
+            }
+            is DecodedMessage.NotifDismiss -> {
+                val listener = NotificationForwardingService.instance
+                log("← NOTIF_DISMISS key=${msg.notifKey.take(40)}")
+                if (listener != null) {
+                    try {
+                        listener.cancelNotification(msg.notifKey)
+                    } catch (e: Exception) {
+                        log("  cancelNotification failed: ${e.message}")
+                    }
+                }
             }
             is DecodedMessage.NotifAction -> {
                 val listener = NotificationForwardingService.instance
@@ -653,6 +732,23 @@ class BridgeService : Service() {
     }
 
     fun requestGlassInfo() = sendRaw(ProtocolCodec.encodeInfoReq())
+
+    /** Ask Glass Home to clear its "already prompted" flag for the
+     *  device-admin dialog so the next HomeActivity open re-asks. */
+    fun sendResetHomeAdminPrompt(): Boolean =
+        sendRaw(ProtocolCodec.encodeResetHomeAdminPrompt())
+
+    /** Ask a plugin for its settings schema (JSON from its res/raw). */
+    fun requestPluginSchema(pluginId: String): Boolean =
+        sendRaw(ProtocolCodec.encodePlugin(pluginId, "SCHEMA_REQ", ""))
+
+    /** Ask a plugin for its current saved config. */
+    fun requestPluginConfig(pluginId: String): Boolean =
+        sendRaw(ProtocolCodec.encodePlugin(pluginId, "CONFIG_READ", ""))
+
+    /** Commit a partial or full config edit to a plugin. */
+    fun writePluginConfig(pluginId: String, configJson: String): Boolean =
+        sendRaw(ProtocolCodec.encodePlugin(pluginId, "CONFIG_WRITE", configJson))
 
     // --- APK manager ---
 
@@ -715,6 +811,9 @@ class BridgeService : Service() {
         listener.onNotifWithActions = { json ->
             log("Forwarding notification with actions (${json.length} B)")
             sendRaw(ProtocolCodec.encodeNotif(json))
+        }
+        listener.onNotifRemoved = { key ->
+            sendRaw(ProtocolCodec.encodeNotifRemoved(key))
         }
         log("Notification forwarding active")
     }

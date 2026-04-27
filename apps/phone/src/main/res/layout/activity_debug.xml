@@ -136,5 +136,44 @@
                 android:layout_marginTop="8dp" />
         </LinearLayout>
 
+        <!-- Glass Home: clear the "already prompted" flag for the device-
+             admin (screen-off) permission so the user sees the opt-in
+             dialog on their next open of GlassHole Home. Useful if they
+             tapped "Skip" the first time and now want to enable sleep. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Glass Home"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="?attr/colorOnBackground"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Re-show the device-admin prompt on the glass so the user can enable screen-off."
+                android:textSize="13sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginBottom="12dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/debugResetAdminPromptButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Re-prompt admin on glass"
+                android:textAllCaps="false" />
+
+        </LinearLayout>
+
     </LinearLayout>
 </ScrollView>

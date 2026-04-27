@@ -17,9 +17,12 @@
             <intent-filter>
                 <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
             </intent-filter>
-            <meta-data
-                android:name="com.glasshole.plugin.ID"
-                android:value="openclaw" />
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="openclaw" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="OpenClaw" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="Telegram kickstart button — one tap fires your opener to a bot" />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA"
+                android:resource="@raw/plugin_schema" />
         </service>
 
         <activity

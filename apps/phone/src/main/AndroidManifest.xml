@@ -84,6 +84,12 @@
             android:label="Plugins"
             android:parentActivityName=".MainActivity" />
 
+        <activity
+            android:name=".plugindir.PluginSettingsActivity"
+            android:exported="false"
+            android:label="Plugin settings"
+            android:parentActivityName=".PluginsActivity" />
+
         <!-- Invisible relay used to launch other apps from the NotificationListener
              context. Android 14+ blocks background services from bringing other
              apps' tasks to the foreground, but a visible activity can. See the
@@ -126,23 +132,6 @@
             android:label="Glass Gallery"
             android:parentActivityName=".MainActivity" />
 
-        <activity
-            android:name=".plugins.openclaw.OpenClawSettingsActivity"
-            android:exported="false"
-            android:label="OpenClaw settings"
-            android:parentActivityName=".PluginsActivity" />
-
-        <activity
-            android:name=".plugins.chat.ChatSettingsActivity"
-            android:exported="false"
-            android:label="Chat viewer settings"
-            android:parentActivityName=".PluginsActivity" />
-
-        <activity
-            android:name=".plugins.broadcast.BroadcastSettingsActivity"
-            android:exported="false"
-            android:label="Broadcast settings"
-            android:parentActivityName=".PluginsActivity" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

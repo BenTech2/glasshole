@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wi-Fi fan for the Settings drawer tile. White fill — the existing
+     ic_wifi is muted grey for the Home status indicator, which would
+     read as "disabled" inside a settings tile. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M1,9 L3,11 C7.97,6.03 16.03,6.03 21,11 L23,9 C16.93,2.93 7.08,2.93 1,9 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M5,13 L7,15 C9.76,12.24 14.24,12.24 17,15 L19,13 C15.14,9.14 8.87,9.14 5,13 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M9,17 L12,20 L15,17 C13.35,15.34 10.66,15.34 9,17 Z" />
+</vector>

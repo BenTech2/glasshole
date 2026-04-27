@@ -68,6 +68,10 @@ class MainActivity : AppCompatActivity() {
                 putExtra(PlayerActivity.EXTRA_URL, url)
             }
         }
+        // Every PLAY_URL replaces whatever's playing — wipe the stream
+        // player's task first so old PlayerActivity / WebViewPlayerActivity
+        // instances can't stack up behind the new one.
+        target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         startActivity(target)
         finish()
     }

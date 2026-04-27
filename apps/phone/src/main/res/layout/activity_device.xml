@@ -259,6 +259,120 @@
                 android:layout_marginTop="6dp" />
         </LinearLayout>
 
+        <!-- Keep screen on during nav -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Keep screen on during nav"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/navKeepScreenOnSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Prevents the glass display from dimming while the Nav card is in view. The screen returns to its normal idle timeout as soon as you swipe to another card."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Wake on nav update -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Wake screen on nav update"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/navWakeOnUpdateSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Briefly wakes the glass display whenever a new turn instruction arrives, so you see the next direction without having to tilt-to-wake or tap the touchpad."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Wake to time card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Show time card on wake"
+                    android:textSize="14sp"
+                    android:textColor="?attr/colorOnBackground" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/wakeToTimeCardSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Snaps the GlassHole Home carousel back to the Time card whenever the glass display turns on, so you always re-enter from the same default position. Off by default — leave it off to keep your last card position across sleeps."
+                android:textSize="11sp"
+                android:textColor="?android:attr/textColorSecondary"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
         <!-- Connection notifications -->
         <LinearLayout
             android:layout_width="match_parent"

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "sort_order",
+      "type": "radio",
+      "label": "Sort order",
+      "default": "newest",
+      "options": [
+        { "value": "newest", "label": "Newest first" },
+        { "value": "oldest", "label": "Oldest first" }
+      ]
+    },
+    {
+      "key": "thumbnail_size_px",
+      "type": "slider",
+      "label": "Thumbnail size (px)",
+      "min": 240,
+      "max": 480,
+      "step": 60,
+      "default": 360
+    }
+  ],
+  "workers": []
+}

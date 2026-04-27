@@ -19,12 +19,14 @@ object MediaScanner {
 
     private const val TAG = "Gallery2Scan"
 
+    private fun settingsPrefs(context: Context) =
+        context.getSharedPreferences(Gallery2PluginService.PREFS_NAME, Context.MODE_PRIVATE)
+
     /**
      * Scan the standard glass media directories and return all images and
-     * videos sorted newest-first. Mirrors the paths the Google GallerySample
-     * uses plus the DCIM/Pictures/Movies conventions EE2 follows.
+     * videos. Sort order (newest/oldest first) is read from plugin settings.
      */
-    fun scan(): List<MediaItem> {
+    fun scan(context: Context): List<MediaItem> {
         val dirs = listOf(
             File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Camera"),
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
@@ -36,6 +38,12 @@ object MediaScanner {
         val seen = HashSet<String>()
         val out = mutableListOf<MediaItem>()
 
+        // Skip tiny files — most of them are app caches / social-media
+        // thumbnails that also happen to live in Pictures/DCIM, not
+        // anything the user wants in their gallery.
+        val minImageBytes = 80_000L
+        val minVideoBytes = 200_000L
+
         for (dir in dirs) {
             if (!dir.exists() || !dir.isDirectory) continue
             dir.walkTopDown()
@@ -46,16 +54,24 @@ object MediaScanner {
                     val isImage = ext in imgExt
                     val isVideo = ext in vidExt
                     if (!isImage && !isVideo) return@forEach
+                    val minBytes = if (isVideo) minVideoBytes else minImageBytes
+                    if (f.length() < minBytes) return@forEach
                     val path = f.absolutePath
                     if (seen.add(path)) {
                         out.add(MediaItem(f, isVideo, f.lastModified()))
                     }
                 }
         }
-        return out.sortedByDescending { it.dateModified }
+        val order = settingsPrefs(context).getString("sort_order", "newest") ?: "newest"
+        return if (order == "oldest") {
+            out.sortedBy { it.dateModified }
+        } else {
+            out.sortedByDescending { it.dateModified }
+        }
     }
 
-    fun loadThumbnail(context: Context, item: MediaItem, target: Int = 360): Bitmap? {
+    fun loadThumbnail(context: Context, item: MediaItem, target: Int? = null): Bitmap? {
+        val resolvedTarget = target ?: settingsPrefs(context).getInt("thumbnail_size_px", 360)
         return try {
             if (item.isVideo) {
                 ThumbnailUtils.createVideoThumbnail(
@@ -65,7 +81,7 @@ object MediaScanner {
             } else {
                 val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(item.file.absolutePath, opts)
-                val scale = maxOf(1, minOf(opts.outWidth, opts.outHeight) / target)
+                val scale = maxOf(1, minOf(opts.outWidth, opts.outHeight) / resolvedTarget)
                 val loadOpts = BitmapFactory.Options().apply { inSampleSize = scale }
                 BitmapFactory.decodeFile(item.file.absolutePath, loadOpts)
             }

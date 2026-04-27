@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "url",
+      "type": "text",
+      "label": "RTMP URL"
+    },
+    {
+      "key": "resolution",
+      "type": "radio",
+      "label": "Resolution",
+      "default": "1280x720",
+      "options": [
+        { "value": "640x360",  "label": "640×360" },
+        { "value": "854x480",  "label": "854×480" },
+        { "value": "1280x720", "label": "1280×720" }
+      ]
+    },
+    {
+      "key": "fps",
+      "type": "radio",
+      "label": "FPS",
+      "default": "30",
+      "options": [
+        { "value": "24", "label": "24" },
+        { "value": "30", "label": "30" }
+      ]
+    },
+    {
+      "key": "bitrate_kbps",
+      "type": "slider",
+      "label": "Bitrate (kbps)",
+      "min": 300,
+      "max": 4000,
+      "step": 100,
+      "default": 1500
+    },
+    {
+      "key": "audio",
+      "type": "checkbox",
+      "label": "Audio",
+      "default": true
+    },
+    {
+      "key": "display",
+      "type": "radio",
+      "label": "Display mode",
+      "default": "viewfinder",
+      "options": [
+        { "value": "viewfinder",  "label": "Viewfinder" },
+        { "value": "preview_off", "label": "Preview off" },
+        { "value": "screen_off",  "label": "Screen off (encoder only)" },
+        { "value": "chat",        "label": "Chat overlay" }
+      ]
+    },
+    {
+      "key": "chat_platform",
+      "type": "radio",
+      "label": "Chat source",
+      "default": "twitch",
+      "visible_when": { "key": "display", "eq": "chat" },
+      "options": [
+        { "value": "twitch",  "label": "Twitch" },
+        { "value": "youtube", "label": "YouTube" }
+      ]
+    },
+    {
+      "key": "chat_twitch_channel",
+      "type": "text",
+      "label": "Twitch channel",
+      "visible_when": { "key": "chat_platform", "eq": "twitch" }
+    },
+    {
+      "key": "chat_youtube_api_key",
+      "type": "password",
+      "label": "YouTube Data API key",
+      "visible_when": { "key": "chat_platform", "eq": "youtube" }
+    },
+    {
+      "key": "chat_youtube_video",
+      "type": "text",
+      "label": "YouTube live video URL or ID",
+      "visible_when": { "key": "chat_platform", "eq": "youtube" }
+    },
+    {
+      "key": "chat_font_size",
+      "type": "slider",
+      "label": "Chat font size (sp)",
+      "min": 10,
+      "max": 24,
+      "step": 2,
+      "default": 14,
+      "visible_when": { "key": "display", "eq": "chat" }
+    },
+    {
+      "key": "chat_max_messages",
+      "type": "slider",
+      "label": "Chat cache (messages)",
+      "min": 50,
+      "max": 1000,
+      "step": 50,
+      "default": 200,
+      "visible_when": { "key": "display", "eq": "chat" }
+    }
+  ],
+  "workers": [
+    {
+      "primitive": "chat-twitch",
+      "enabled_when": {
+        "all": [
+          { "key": "display",       "eq": "chat" },
+          { "key": "chat_platform", "eq": "twitch" }
+        ]
+      },
+      "params": {
+        "start_trigger": "START",
+        "stop_trigger": "STOP",
+        "channel": "${chat_twitch_channel}",
+        "emit_type": "CHAT",
+        "status_type": "CHAT_STATUS"
+      }
+    },
+    {
+      "primitive": "chat-youtube",
+      "enabled_when": {
+        "all": [
+          { "key": "display",       "eq": "chat" },
+          { "key": "chat_platform", "eq": "youtube" }
+        ]
+      },
+      "params": {
+        "start_trigger": "START",
+        "stop_trigger": "STOP",
+        "api_key": "${chat_youtube_api_key}",
+        "video": "${chat_youtube_video}",
+        "emit_type": "CHAT",
+        "status_type": "CHAT_STATUS"
+      }
+    }
+  ]
+}

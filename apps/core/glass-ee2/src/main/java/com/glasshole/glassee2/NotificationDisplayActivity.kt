@@ -25,7 +25,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import org.json.JSONArray
+import com.glasshole.glassee2.home.NotifAction
 import org.json.JSONObject
 
 /**
@@ -39,6 +39,7 @@ class NotificationDisplayActivity : Activity() {
         private const val TAG = "NotifDisplay"
         private const val DEFAULT_DISMISS_MS = 12000L
         private const val REQUEST_VOICE = 101
+        private const val SYNTH_DISMISS_ID = "__dismiss__"
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -48,7 +49,16 @@ class NotificationDisplayActivity : Activity() {
     private var notifKey: String = ""
     private var actions: List<NotifAction> = emptyList()
     private var pendingReplyActionId: String? = null
-    private val actionButtons = mutableListOf<TextView>()
+
+    // Options overlay — shown when the user taps the card. Holds the
+    // action list plus an always-present Dismiss at the end.
+    private var overlayVisible: Boolean = false
+    private var overlaySelected: Int = 0
+    private var optionsOverlay: LinearLayout? = null
+    private var overlayOptionViews: List<TextView> = emptyList()
+    /** Actions + synthetic "Dismiss" at the end. */
+    private var overlayOptions: List<NotifAction> = emptyList()
+    private var hintText: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,9 +93,72 @@ class NotificationDisplayActivity : Activity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         resetAutoDismiss()
+        if (overlayVisible) return handleOverlayKey(keyCode, event)
+
         return when (keyCode) {
             KeyEvent.KEYCODE_BACK -> { finish(); true }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                showOverlay(); true
+            }
             else -> super.onKeyDown(keyCode, event)
+        }
+    }
+
+    private fun handleOverlayKey(keyCode: Int, event: KeyEvent?): Boolean {
+        return when (keyCode) {
+            KeyEvent.KEYCODE_BACK -> { hideOverlay(); true }
+            KeyEvent.KEYCODE_TAB -> {
+                cycleOverlaySelection(if (event?.isShiftPressed == true) -1 else 1)
+                true
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { cycleOverlaySelection(1); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { cycleOverlaySelection(-1); true }
+            KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                executeOverlaySelection()
+                true
+            }
+            else -> true
+        }
+    }
+
+    private fun showOverlay() {
+        optionsOverlay?.let {
+            overlaySelected = 0
+            paintOverlaySelection()
+            it.visibility = View.VISIBLE
+            hintText?.visibility = View.GONE
+            overlayVisible = true
+        }
+    }
+
+    private fun hideOverlay() {
+        optionsOverlay?.visibility = View.GONE
+        hintText?.visibility = View.VISIBLE
+        overlayVisible = false
+    }
+
+    private fun cycleOverlaySelection(delta: Int) {
+        val n = overlayOptions.size
+        if (n == 0) return
+        overlaySelected = ((overlaySelected + delta) % n + n) % n
+        paintOverlaySelection()
+    }
+
+    private fun paintOverlaySelection() {
+        overlayOptionViews.forEachIndexed { idx, tv ->
+            tv.setTextColor(
+                if (idx == overlaySelected) 0xFFFFC107.toInt() else 0xFFFFFFFF.toInt()
+            )
+        }
+    }
+
+    private fun executeOverlaySelection() {
+        val option = overlayOptions.getOrNull(overlaySelected) ?: return
+        if (option.id == SYNTH_DISMISS_ID) {
+            finish()
+        } else {
+            invokeAction(option)
         }
     }
 
@@ -102,13 +175,6 @@ class NotificationDisplayActivity : Activity() {
         val pictureBase64: String,
         val key: String,
         val actions: List<NotifAction>
-    )
-
-    private data class NotifAction(
-        val id: String,
-        val label: String,
-        val type: String,
-        val url: String?
     )
 
     private fun parseIntent(): ParsedNotif {
@@ -135,137 +201,187 @@ class NotificationDisplayActivity : Activity() {
             }
         }
 
-        val parsedActions = mutableListOf<NotifAction>()
-        if (!actionsJson.isNullOrEmpty()) {
-            try {
-                val arr = JSONArray(actionsJson)
-                for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
-                    parsedActions.add(
-                        NotifAction(
-                            id = o.optString("id"),
-                            label = o.optString("label"),
-                            type = o.optString("type"),
-                            url = o.optString("url").takeIf { it.isNotEmpty() }
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Actions parse failed: ${e.message}")
-            }
-        }
-
-        return ParsedNotif(app, title, text, icon, picture, key, parsedActions)
+        return ParsedNotif(app, title, text, icon, picture, key, NotifAction.parseArray(actionsJson))
     }
 
     private fun buildCardView(p: ParsedNotif): View {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
 
+        val pictureBitmap = decodeIcon(p.pictureBase64)
+        val iconBitmap = decodeIcon(p.iconBase64)
+        val hasPicture = pictureBitmap != null
+        val hasTitle = p.title.isNotEmpty()
+        val hasBody = p.text.isNotEmpty()
+
+        // Picture goes full-bleed behind everything; a bottom-to-top dark
+        // gradient keeps text readable over any image. Classic Glass
+        // timeline card look — content floats, no chrome.
+        if (hasPicture) {
+            root.addView(ImageView(this).apply {
+                setImageBitmap(pictureBitmap)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            })
+            root.addView(View(this).apply {
+                background = GradientDrawable(
+                    GradientDrawable.Orientation.BOTTOM_TOP,
+                    intArrayOf(0xEE000000.toInt(), 0x00000000)
+                )
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            })
+        }
+
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(20), dp(24), dp(20))
+            setPadding(dp(28), dp(26), dp(28), dp(18))
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
 
-        // Header: icon + app name
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        decodeIcon(p.iconBase64)?.let { bmp ->
-            header.addView(ImageView(this).apply {
-                setImageBitmap(bmp)
-                layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
-                    rightMargin = dp(10)
-                }
+        // Picture layouts anchor everything to the bottom so text sits on
+        // the dark gradient. Text-only layouts anchor the title at the top
+        // and let the footer drop to the bottom.
+        if (hasPicture) {
+            column.addView(View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(0, 0, 1f)
             })
         }
-        header.addView(TextView(this).apply {
-            text = p.app.uppercase()
-            setTextColor(0xFFB0BEC5.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        })
-        column.addView(header)
 
-        column.addView(View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(12)
-            )
-        })
-
-        // Text + picture side by side when there's an image
-        val pictureBitmap = decodeIcon(p.pictureBase64)
-        val bodyRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val textColumn = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-            )
-        }
-        textColumn.addView(TextView(this).apply {
-            text = if (p.title.isNotEmpty()) p.title else p.text
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (pictureBitmap != null) 24f else 32f)
-            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-            setLineSpacing(0f, 1.05f)
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-        })
-        if (p.title.isNotEmpty() && p.text.isNotEmpty()) {
-            textColumn.addView(TextView(this).apply {
-                text = p.text
-                setTextColor(0xFFCCCCCC.toInt())
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (pictureBitmap != null) 14f else 18f)
+        // Title — big, thin, white.
+        if (hasTitle) {
+            column.addView(TextView(this).apply {
+                text = p.title
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 36f)
                 typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-                setLineSpacing(0f, 1.12f)
-                maxLines = if (pictureBitmap != null) 3 else 3
+                setLineSpacing(0f, 1.02f)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            })
+        }
+
+        // Body — smaller, even thinner, lighter gray. If there's no title
+        // the body gets the big-title slot instead so the card isn't just
+        // one small line of text at the bottom.
+        if (hasBody) {
+            column.addView(TextView(this).apply {
+                text = p.text
+                if (!hasTitle) {
+                    setTextColor(Color.WHITE)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 36f)
+                    typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                    maxLines = 4
+                } else {
+                    setTextColor(0xFFDDDDDD.toInt())
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+                    typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
+                    maxLines = if (hasPicture) 2 else 3
+                }
+                setLineSpacing(0f, 1.1f)
                 ellipsize = TextUtils.TruncateAt.END
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(6) }
+                ).apply { if (hasTitle) topMargin = dp(8) }
             })
         }
-        bodyRow.addView(textColumn)
-        if (pictureBitmap != null) {
-            bodyRow.addView(ImageView(this).apply {
-                setImageBitmap(pictureBitmap)
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                layoutParams = LinearLayout.LayoutParams(dp(110), dp(110)).apply {
-                    leftMargin = dp(12)
-                }
+
+        // Spacer pushes actions/footer to the bottom for text-only cards.
+        if (!hasPicture) {
+            column.addView(View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(0, 0, 1f)
             })
         }
-        column.addView(bodyRow)
 
-        // Spacer pushes actions to the bottom
-        column.addView(View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, 0, 1f)
-        })
-
-        // Actions row
-        if (p.actions.isNotEmpty()) {
-            column.addView(buildActionsRow(p.actions))
+        // "TAP FOR OPTIONS" hint sits just above the footer so the user
+        // knows the card is interactive. Hidden while the overlay is up.
+        val hint = TextView(this).apply {
+            text = "TAP FOR OPTIONS"
+            setTextColor(0xFF4FC3F7.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            letterSpacing = 0.12f
+            // The letterSpacing on sans-serif-medium shifts the first
+            // glyph a hair left of the title's left sidebearing. A small
+            // start padding lines it up with the title / body.
+            setPadding(dp(4), 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(12); bottomMargin = dp(4) }
         }
+        column.addView(hint)
+        hintText = hint
+
+        column.addView(buildFooter(p.app, iconBitmap))
 
         root.addView(column)
+
+        // Tap-activated options overlay — layered on top of the card.
+        // Always includes a synthetic "Dismiss" so the user can close the
+        // popup without waiting for the auto-dismiss timeout.
+        overlayOptions = p.actions + NotifAction(SYNTH_DISMISS_ID, "Dismiss", "dismiss", null)
+        val overlay = buildOptionsOverlay(overlayOptions)
+        overlay.visibility = View.GONE
+        root.addView(overlay)
+        optionsOverlay = overlay
+
         return root
     }
 
-    private fun buildActionsRow(list: List<NotifAction>): View {
+    private fun buildOptionsOverlay(options: List<NotifAction>): LinearLayout {
+        val overlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(0xC0000000.toInt())
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        overlay.addView(TextView(this).apply {
+            text = "tap to confirm · swipe to choose · swipe down to cancel"
+            setTextColor(0xFF888888.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            letterSpacing = 0.05f
+            gravity = Gravity.CENTER
+        })
         val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(24) }
+        }
+        val viewList = mutableListOf<TextView>()
+        options.forEach { option ->
+            val tv = TextView(this).apply {
+                text = option.label
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+                typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                setPadding(dp(18), dp(10), dp(18), dp(10))
+            }
+            row.addView(tv)
+            viewList.add(tv)
+        }
+        overlay.addView(row)
+        overlayOptionViews = viewList
+        return overlay
+    }
+
+    private fun buildFooter(app: String, iconBitmap: android.graphics.Bitmap?): View {
+        val footer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
@@ -273,36 +389,34 @@ class NotificationDisplayActivity : Activity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(14) }
         }
-        list.forEachIndexed { idx, a ->
-            val btn = makeActionButton(a)
-            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                if (idx > 0) leftMargin = dp(8)
-            }
-            btn.layoutParams = lp
-            btn.setOnClickListener { invokeAction(a) }
-            btn.isFocusable = true
-            btn.isFocusableInTouchMode = true
-            row.addView(btn)
-            actionButtons.add(btn)
+        if (iconBitmap != null) {
+            footer.addView(ImageView(this).apply {
+                setImageBitmap(iconBitmap)
+                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                    rightMargin = dp(10)
+                }
+            })
         }
-        row.post { actionButtons.firstOrNull()?.requestFocus() }
-        return row
-    }
-
-    private fun makeActionButton(a: NotifAction): TextView {
-        val bg = GradientDrawable().apply {
-            cornerRadius = dp(6).toFloat()
-            setColor(0xFF1A2735.toInt())
-            setStroke(dp(1), 0xFF4FC3F7.toInt())
-        }
-        return TextView(this).apply {
-            text = a.label
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            gravity = Gravity.CENTER
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            background = bg
-        }
+        footer.addView(TextView(this).apply {
+            text = app.uppercase()
+            setTextColor(0xFF888888.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            letterSpacing = 0.08f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+            )
+        })
+        footer.addView(TextView(this).apply {
+            text = "now"
+            setTextColor(0xFFDDDDDD.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            maxLines = 1
+        })
+        return footer
     }
 
     private fun invokeAction(a: NotifAction) {

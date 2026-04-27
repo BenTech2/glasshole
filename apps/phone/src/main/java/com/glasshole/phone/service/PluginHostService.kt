@@ -11,13 +11,11 @@ import com.glasshole.phone.AppLog
 import com.glasshole.phone.plugin.PhonePlugin
 import com.glasshole.phone.plugin.PluginDiscovery
 import com.glasshole.phone.plugin.PluginRouter
-import com.glasshole.phone.plugins.broadcast.BroadcastPlugin
-import com.glasshole.phone.plugins.calc.CalcPlugin
-import com.glasshole.phone.plugins.chat.ChatPlugin
 import com.glasshole.phone.plugins.device.DevicePlugin
 import com.glasshole.phone.plugins.gallery.GalleryPlugin
+import com.glasshole.phone.plugins.media.MediaPlugin
+import com.glasshole.phone.plugins.nav.NavPlugin
 import com.glasshole.phone.plugins.notes.NotesPlugin
-import com.glasshole.phone.plugins.openclaw.OpenClawPlugin
 import com.glasshole.phone.plugins.stream.StreamPlugin
 import com.glasshole.sdk.IPluginCallback
 import com.glasshole.sdk.IPluginHost
@@ -62,13 +60,11 @@ class PluginHostService : Service() {
 
     private val builtInPlugins: List<PhonePlugin> = listOf(
         NotesPlugin(),
-        CalcPlugin(),
         StreamPlugin(),
         DevicePlugin(),
         GalleryPlugin(),
-        OpenClawPlugin(),
-        ChatPlugin(),
-        BroadcastPlugin()
+        NavPlugin(),
+        MediaPlugin()
     )
 
     // Local binder for in-process binding (MainActivity)

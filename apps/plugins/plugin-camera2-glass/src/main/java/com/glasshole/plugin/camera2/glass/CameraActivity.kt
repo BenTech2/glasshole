@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
@@ -25,6 +26,8 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
+import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import android.view.GestureDetector
@@ -36,6 +39,7 @@ import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import java.io.File
@@ -107,7 +111,12 @@ class CameraActivity : Activity() {
 
     // --- Long-press detection ---
     private var keyDownTime = 0L
-    private val longPressThresholdMs = 500L
+    private val longPressThresholdMs: Long
+        get() = settingsPrefs.getInt("long_press_ms", 500).toLong()
+
+    private val settingsPrefs by lazy {
+        getSharedPreferences(Camera2PluginService.PREFS_NAME, MODE_PRIVATE)
+    }
 
     // --- Swipe-down to exit (EE2) ---
     private lateinit var backGestureDetector: GestureDetector
@@ -115,9 +124,42 @@ class CameraActivity : Activity() {
     // also fire a still-capture via onTouchEvent.
     private var suppressNextTap = false
 
+    // --- Quick capture (XE-style "press camera button, get photo") ---
+    /** Launched via the system camera-key / IMAGE_CAPTURE intent — if the
+     *  quick_capture setting is on, fire the shutter as soon as the session
+     *  is ready and auto-finish, no preview UI. */
+    private var quickCaptureMode = false
+    /** Guard against double-firing: once we schedule the still capture we
+     *  clear this, and the repeating-preview capture callback checks it. */
+    private var quickCaptureArmed = false
+    private lateinit var quickCaptureOverlay: FrameLayout
+    private lateinit var quickCapturePreview: ImageView
+    private lateinit var quickCaptureText: TextView
+
+    private val quickCaptureTriggerActions = setOf(
+        MediaStore.ACTION_IMAGE_CAPTURE,
+        MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA,
+        "android.media.action.STILL_IMAGE_CAMERA_SECURE",
+        "android.media.action.IMAGE_CAPTURE_SECURE",
+        Intent.ACTION_CAMERA_BUTTON
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+        )
+
+        // Quick-capture mode: if the activity was launched by a camera-key
+        // or IMAGE_CAPTURE style intent AND the user hasn't turned the
+        // setting off, we'll fire the shutter as soon as the preview
+        // session is configured. Default is on.
+        quickCaptureMode = intent?.action in quickCaptureTriggerActions &&
+            settingsPrefs.getBoolean("quick_capture", true)
+        quickCaptureArmed = quickCaptureMode
 
         backGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(
@@ -136,7 +178,10 @@ class CameraActivity : Activity() {
         })
 
         setContentView(buildUi())
-        statusText.text = "Tap to capture · long-press to record"
+        statusText.text = if (quickCaptureMode) "" else "Tap to capture · long-press to record"
+        if (quickCaptureMode) {
+            quickCaptureOverlay.visibility = View.VISIBLE
+        }
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
@@ -193,6 +238,40 @@ class CameraActivity : Activity() {
             layoutParams = lp
         }
         root.addView(modeText)
+
+        // Opaque overlay used in quick-capture mode. Hides the TextureView
+        // preview so the user doesn't see a brief preview flash before the
+        // shutter fires. After the JPEG saves, the decoded thumbnail fills
+        // the frame for a moment — XE-style "see what you got" feedback.
+        quickCaptureOverlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            visibility = View.GONE
+        }
+        quickCapturePreview = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        quickCaptureOverlay.addView(quickCapturePreview)
+        quickCaptureText = TextView(this).apply {
+            text = "CAPTURING…"
+            setTextColor(Color.WHITE)
+            textSize = 22f
+            gravity = Gravity.CENTER
+            val lp = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            layoutParams = lp
+        }
+        quickCaptureOverlay.addView(quickCaptureText)
+        root.addView(quickCaptureOverlay)
 
         return root
     }
@@ -359,7 +438,27 @@ class CameraActivity : Activity() {
                             CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
                         )
                         try {
-                            session.setRepeatingRequest(previewRequestBuilder.build(), null, backgroundHandler)
+                            // In quick-capture mode we listen for the first
+                            // preview result, then fire the still immediately.
+                            // That gives AE one frame to converge — still under
+                            // ~200ms total — without waiting for an explicit
+                            // precapture sequence that Glass's fixed-focus
+                            // sensor doesn't meaningfully benefit from.
+                            val previewCallback = if (quickCaptureArmed) {
+                                object : CameraCaptureSession.CaptureCallback() {
+                                    override fun onCaptureCompleted(
+                                        s: CameraCaptureSession,
+                                        request: CaptureRequest,
+                                        result: TotalCaptureResult
+                                    ) {
+                                        if (quickCaptureArmed) {
+                                            quickCaptureArmed = false
+                                            runOnUiThread { captureStillPicture() }
+                                        }
+                                    }
+                                }
+                            } else null
+                            session.setRepeatingRequest(previewRequestBuilder.build(), previewCallback, backgroundHandler)
                         } catch (e: CameraAccessException) {
                             Log.e(TAG, "setRepeatingRequest: ${e.message}")
                         }
@@ -431,11 +530,45 @@ class CameraActivity : Activity() {
         try {
             FileOutputStream(file).use { it.write(bytes) }
             notifyMediaScanner(file)
-            runOnUiThread { statusText.text = "Saved ${file.name}" }
+            // Decode a downscaled thumbnail off the main thread — the JPEG
+            // is 8MP, decoding it full-size would stall for ~500ms and we
+            // only need to fill a 640x360 display.
+            val thumb = if (quickCaptureMode) decodeThumbnail(bytes) else null
+            runOnUiThread {
+                statusText.text = "Saved ${file.name}"
+                if (quickCaptureMode) {
+                    if (thumb != null) quickCapturePreview.setImageBitmap(thumb)
+                    // Brief confirmation, then exit so the user ends up back
+                    // on whatever screen they were on when they hit the
+                    // button (or on the lockscreen / Home).
+                    quickCaptureText.visibility = View.GONE
+                    Handler(Looper.getMainLooper()).postDelayed({ finish() }, 1200)
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "saveJpeg: ${e.message}")
-            runOnUiThread { statusText.text = "Save failed" }
+            runOnUiThread {
+                statusText.text = "Save failed"
+                if (quickCaptureMode) {
+                    quickCaptureText.text = "SAVE FAILED"
+                    Handler(Looper.getMainLooper()).postDelayed({ finish() }, 1000)
+                }
+            }
         }
+    }
+
+    /** Decode JPEG bytes at roughly display resolution — fast enough that
+     *  the user sees the shot within ~100ms of the save completing. */
+    private fun decodeThumbnail(bytes: ByteArray): android.graphics.Bitmap? {
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val target = resources.displayMetrics.widthPixels.coerceAtLeast(640)
+            var sample = 1
+            while (bounds.outWidth / sample > target * 2) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        } catch (_: Exception) { null }
     }
 
     private fun notifyMediaScanner(file: File) {
@@ -464,8 +597,10 @@ class CameraActivity : Activity() {
                 setVideoSource(MediaRecorder.VideoSource.SURFACE)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setOutputFile(currentVideoFile!!.absolutePath)
-                setVideoEncodingBitRate(10_000_000)
-                setVideoFrameRate(30)
+                setVideoEncodingBitRate(settingsPrefs.getInt("video_bitrate_mbps", 10) * 1_000_000)
+                setVideoFrameRate(
+                    (settingsPrefs.getString("video_framerate", "30") ?: "30").toIntOrNull() ?: 30
+                )
                 setVideoSize(previewSize.width, previewSize.height)
                 setVideoEncoder(MediaRecorder.VideoEncoder.H264)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)

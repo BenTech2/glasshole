@@ -38,6 +38,12 @@ class PlayerActivity : AppCompatActivity() {
     private var queue: List<QueueItem> = emptyList()
     private var cursor: Int = 0
 
+    // Bumped every time a new track load begins. Async resolve callbacks
+    // compare against this before touching the player — otherwise a
+    // rapid-skip or STATE_ENDED race could let two resolves both finish
+    // and each spawn an ExoPlayer, leaving multiple songs playing at once.
+    private var loadGeneration: Long = 0
+
     // Touchpad gesture tracking (EE2 also gets KEYCODE_DPAD_LEFT / RIGHT for
     // swipes, but fall back to raw motion events if they come that way).
     private var downX = 0f
@@ -117,6 +123,7 @@ class PlayerActivity : AppCompatActivity() {
             finish()
             return
         }
+        val myGen = ++loadGeneration
         showTrackInfo(item)
         binding.loadingText.text = "Loading..."
         binding.loadingText.visibility = View.VISIBLE
@@ -127,7 +134,9 @@ class PlayerActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             val result = StreamResolver.resolve(item.sourceUrl)
+            if (myGen != loadGeneration) return@launch
             result.onSuccess { resolved ->
+                if (myGen != loadGeneration) return@onSuccess
                 Log.d(TAG, "Resolved (hls=${resolved.isHls}, audio=${resolved.isAudioOnly}): ${resolved.url}")
                 // Merge metadata — playlist entries know title/art already,
                 // standalone resolution may also report them.
@@ -139,6 +148,7 @@ class PlayerActivity : AppCompatActivity() {
                 loadAlbumArt(enriched.artworkUrl, enriched.isAudioOnly)
                 initPlayer(enriched)
             }.onFailure { error ->
+                if (myGen != loadGeneration) return@onFailure
                 Log.w(TAG, "Track resolve failed, falling back to WebView: ${error.message}")
                 Toast.makeText(
                     this@PlayerActivity,
@@ -157,6 +167,10 @@ class PlayerActivity : AppCompatActivity() {
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun initPlayer(resolved: ResolvedStream) {
+        // Belt-and-suspenders: if any prior ExoPlayer survived a race,
+        // kill it before creating the new one.
+        player?.release()
+        player = null
         binding.loadingText.visibility = View.GONE
 
         val dataSourceFactory = DefaultHttpDataSource.Factory()

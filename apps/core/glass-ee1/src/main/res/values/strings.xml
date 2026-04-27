@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sleep_a11y_description">Lets you swipe down on the Glass touchpad from the stock Glass clock face to put the display back to standby. Only active on the Glass launcher — the Back gesture works normally everywhere else.</string>
+    <string name="sleep_a11y_summary">Swipe down on the clock to sleep the glass</string>
+</resources>

@@ -25,7 +25,6 @@ class DictateActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         GlassBaseAppStarter.start(this)
         launchVoiceInput()
     }

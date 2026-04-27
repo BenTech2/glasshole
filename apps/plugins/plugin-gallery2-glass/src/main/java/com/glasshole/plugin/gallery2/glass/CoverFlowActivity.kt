@@ -4,18 +4,16 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.AsyncTask
 import android.os.Build
 import android.os.Bundle
-import android.view.GestureDetector
-import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.FrameLayout
+import android.view.animation.DecelerateInterpolator
 import android.widget.TextView
+import kotlin.math.abs
 import androidx.core.app.ActivityCompat
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
@@ -23,42 +21,50 @@ import androidx.viewpager2.widget.ViewPager2
 /**
  * Cover Flow style media browser. Uses ViewPager2 with a PageTransformer
  * that scales / rotates / overlaps sibling pages to reproduce the iPod
- * carousel look.
+ * carousel look. Structure deliberately mirrors the Home app drawer so
+ * EE2's touchpad gesture → keycode pipeline lights up the same way.
  */
 class CoverFlowActivity : Activity() {
 
     companion object {
         private const val REQUEST_PERMS = 201
+        /** Duration of one keycode's smooth scroll. Short enough that
+         *  stacked TABs from consecutive swipes feel like one motion. */
+        private const val SCROLL_MS = 220
     }
 
     private lateinit var pager: ViewPager2
     private lateinit var emptyText: TextView
     private lateinit var titleText: TextView
     private var items: List<MediaItem> = emptyList()
-    private lateinit var backGestureDetector: GestureDetector
+
+    // EE2 touchpad gesture tracking — on plugin APKs the system doesn't
+    // deliver swipes as TAB keycodes the way it does for activities inside
+    // the base glass-ee2 package. We read MotionEvents directly instead,
+    // matching the pattern the Notes / Chat plugins use.
+    private var downX = 0f
+    private var downY = 0f
+    private var swiped = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        setContentView(R.layout.activity_cover_flow)
 
-        // EE2 swipe-down dismiss: ViewPager2's RecyclerView swallows vertical
-        // touches, so the system never gets the chance to fire KEYCODE_BACK.
-        // Detect a downward fling at dispatchTouchEvent time and finish.
-        backGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onFling(
-                e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float
-            ): Boolean {
-                val dy = if (e1 != null) e2.y - e1.y else 0f
-                val dx = if (e1 != null) e2.x - e1.x else 0f
-                if (velocityY > 1200 && dy > 80 && Math.abs(dy) > Math.abs(dx) * 1.3f) {
-                    finish()
-                    return true
-                }
-                return false
-            }
-        })
+        pager = findViewById(R.id.coverPager)
+        titleText = findViewById(R.id.titleText)
+        emptyText = findViewById(R.id.emptyText)
 
-        setContentView(buildUi())
+        pager.offscreenPageLimit = 4
+        pager.isUserInputEnabled = false
+        pager.setPageTransformer(CoverFlowTransformer())
+
+        (pager.getChildAt(0) as? RecyclerView)?.apply {
+            val pad = (resources.displayMetrics.widthPixels * 0.28f).toInt()
+            setPadding(pad, 0, pad, 0)
+            clipToPadding = false
+            clipChildren = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
 
         if (!hasReadPermission()) {
             ActivityCompat.requestPermissions(this, readPermissionArray(), REQUEST_PERMS)
@@ -109,66 +115,26 @@ class CoverFlowActivity : Activity() {
         }
     }
 
-    private fun buildUi(): View {
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-
-        pager = ViewPager2(this).apply {
-            offscreenPageLimit = 3
-            clipToPadding = false
-            clipChildren = false
-            // Padding lets neighbor pages peek in at the sides for the carousel feel
-            val pad = (resources.displayMetrics.widthPixels * 0.28f).toInt()
-            setPadding(pad, 0, pad, 0)
-            (getChildAt(0) as? RecyclerView)?.apply {
-                clipToPadding = false
-                clipChildren = false
-                overScrollMode = View.OVER_SCROLL_NEVER
-            }
-            setPageTransformer(CoverFlowTransformer())
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-        root.addView(pager)
-
-        titleText = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 14f
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-            setBackgroundColor(0x99000000.toInt())
-            val lp = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            )
-            lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            lp.bottomMargin = dp(12)
-            layoutParams = lp
-        }
-        root.addView(titleText)
-
-        emptyText = TextView(this).apply {
-            text = "No photos or videos"
-            setTextColor(Color.WHITE)
-            textSize = 22f
-            gravity = Gravity.CENTER
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-        root.addView(emptyText)
-
-        return root
-    }
-
     private fun loadMedia() {
+        // Preserve scroll position across reloads (onResume fires one when
+        // the viewer activity closes) — otherwise the user lands back on
+        // image #1 every time.
+        val previousKey = items.getOrNull(pager.currentItem)?.file?.absolutePath
+        val alreadyInitialised = pager.adapter != null
+
         object : AsyncTask<Void, Void, List<MediaItem>>() {
             override fun doInBackground(vararg params: Void?): List<MediaItem> =
-                MediaScanner.scan()
+                MediaScanner.scan(applicationContext)
 
             override fun onPostExecute(result: List<MediaItem>) {
+                // Fast path: if the file list matches what we already have,
+                // leave the adapter and scroll position alone entirely.
+                if (alreadyInitialised &&
+                    result.size == items.size &&
+                    result.zip(items).all { (a, b) -> a.file.absolutePath == b.file.absolutePath }
+                ) {
+                    return
+                }
                 items = result
                 if (items.isEmpty()) {
                     emptyText.visibility = View.VISIBLE
@@ -177,16 +143,19 @@ class CoverFlowActivity : Activity() {
                 }
                 emptyText.visibility = View.GONE
                 titleText.visibility = View.VISIBLE
-                val adapter = CoverFlowAdapter(this@CoverFlowActivity, items) { item ->
-                    openViewer(item)
-                }
-                pager.adapter = adapter
+                pager.adapter = CoverFlowAdapter(this@CoverFlowActivity, items)
                 pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                     override fun onPageSelected(position: Int) {
                         updateTitle(position)
                     }
                 })
-                updateTitle(0)
+                // If the previously-centered item still exists, jump back
+                // to it. Otherwise fall back to the closest index.
+                val restoreIdx = previousKey
+                    ?.let { key -> items.indexOfFirst { it.file.absolutePath == key } }
+                    ?.takeIf { it >= 0 } ?: 0
+                pager.setCurrentItem(restoreIdx, false)
+                updateTitle(restoreIdx)
             }
         }.execute()
     }
@@ -203,6 +172,58 @@ class CoverFlowActivity : Activity() {
         startActivity(intent)
     }
 
+    // EE2's touchpad surfaces via onTouchEvent, EE1/XE via
+    // onGenericMotionEvent. Both route through the same handler so
+    // gestures feel identical across all three variants.
+    override fun onTouchEvent(event: MotionEvent?): Boolean {
+        if (event != null && handleTouchpad(event)) return true
+        return super.onTouchEvent(event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
+        if (event != null && handleTouchpad(event)) return true
+        return super.onGenericMotionEvent(event)
+    }
+
+    private fun handleTouchpad(event: MotionEvent): Boolean {
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                swiped = false
+                return false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.x - downX
+                val dy = event.y - downY
+                // Swipe-down = back (Glass's standard exit gesture).
+                if (dy > 80f && abs(dy) > abs(dx)) {
+                    finish()
+                    return true
+                }
+                // Forward swipe (finger right, dx > 0) advances to the
+                // next item — matches every other carousel surface in the
+                // app (Home cover-flow drawer, Settings drawer) and the
+                // KEYCODE_TAB path below. Earlier the sign was flipped
+                // for an "album paging" feel but it was inconsistent with
+                // the rest of the system.
+                if (!swiped && abs(dx) > 30f && abs(dx) > abs(dy)) {
+                    swiped = true
+                    glideBy(if (dx > 0f) 1 else -1)
+                    return true
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                // A release without a detected swipe = tap = open viewer.
+                if (!swiped) {
+                    items.getOrNull(pager.currentItem)?.let { openViewer(it) }
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         return when (keyCode) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
@@ -210,32 +231,28 @@ class CoverFlowActivity : Activity() {
                 true
             }
             KeyEvent.KEYCODE_TAB -> {
-                val shift = event?.isShiftPressed == true
-                val next = if (shift) pager.currentItem - 1 else pager.currentItem + 1
-                if (next in 0 until items.size) pager.currentItem = next
+                val dir = if (event?.isShiftPressed == true) -1 else 1
+                glideBy(dir)
                 true
             }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { glideBy(1); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { glideBy(-1); true }
+            KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_BACK -> { finish(); true }
             else -> super.onKeyDown(keyCode, event)
         }
     }
 
-    // The system back (or swipe-down on EE2) sometimes bypasses onKeyDown and
-    // goes straight to onBackPressed — honor it by finishing. Without this,
-    // ViewPager2's internal scroll state can swallow the back gesture.
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        finish()
+    /**
+     * Pixel-level smooth pan on the ViewPager2's inner RecyclerView —
+     * mirrors the Home app drawer's scroll so successive swipes stack
+     * into one continuous glide and the snap helper lands on the
+     * closest item.
+     */
+    private fun glideBy(direction: Int) {
+        val rv = pager.getChildAt(0) as? RecyclerView ?: return
+        val itemWidth = rv.width - rv.paddingLeft - rv.paddingRight
+        if (itemWidth <= 0) return
+        rv.smoothScrollBy(direction * itemWidth, 0, DecelerateInterpolator(), SCROLL_MS)
     }
-
-    // Intercept touches at the top level so the downward fling is seen even
-    // if ViewPager2 is mid-drag. We don't consume the event (return false),
-    // we just watch for the dismissal gesture.
-    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
-        if (ev != null) backGestureDetector.onTouchEvent(ev)
-        return super.dispatchTouchEvent(ev)
-    }
-
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
 }

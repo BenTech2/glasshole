@@ -39,6 +39,9 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var tiltWakeSwitch: SwitchMaterial
     private lateinit var autoStartSwitch: SwitchMaterial
     private lateinit var connectNotifySwitch: SwitchMaterial
+    private lateinit var navKeepScreenOnSwitch: SwitchMaterial
+    private lateinit var navWakeOnUpdateSwitch: SwitchMaterial
+    private lateinit var wakeToTimeCardSwitch: SwitchMaterial
 
     private lateinit var wakeButton: Button
     private lateinit var syncTimeButton: Button
@@ -51,7 +54,7 @@ class DeviceActivity : AppCompatActivity() {
     private val timezoneIds: List<String> = buildTimezoneList()
 
     // Screen timeout slider uses discrete steps (seconds)
-    private val timeoutSteps = intArrayOf(15, 30, 60, 120, 300, 600, 1200, 1800)
+    private val timeoutSteps = intArrayOf(2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800)
 
     // Notification on-screen timeout steps (seconds)
     private val notifTimeoutSteps = intArrayOf(3, 5, 8, 12, 15, 20, 30, 60)
@@ -77,6 +80,9 @@ class DeviceActivity : AppCompatActivity() {
         tiltWakeSwitch = findViewById(R.id.tiltWakeSwitch)
         autoStartSwitch = findViewById(R.id.autoStartSwitch)
         connectNotifySwitch = findViewById(R.id.connectNotifySwitch)
+        navKeepScreenOnSwitch = findViewById(R.id.navKeepScreenOnSwitch)
+        navWakeOnUpdateSwitch = findViewById(R.id.navWakeOnUpdateSwitch)
+        wakeToTimeCardSwitch = findViewById(R.id.wakeToTimeCardSwitch)
         wakeButton = findViewById(R.id.wakeButton)
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
@@ -213,6 +219,48 @@ class DeviceActivity : AppCompatActivity() {
             val json = JSONObject().apply { put("enabled", isChecked) }.toString()
             val sent = bridge.sendPluginMessage("base", "SET_AUTO_START", json)
             toast(if (sent) "Auto-start ${if (isChecked) "enabled" else "disabled"}"
+                  else "Send failed")
+        }
+
+        navKeepScreenOnSwitch.isChecked = prefs.getBoolean("nav_keep_screen_on", false)
+        navKeepScreenOnSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("nav_keep_screen_on", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_NAV_KEEP_SCREEN_ON", json)
+            toast(if (sent) "Keep screen on during nav ${if (isChecked) "enabled" else "disabled"}"
+                  else "Send failed")
+        }
+
+        navWakeOnUpdateSwitch.isChecked = prefs.getBoolean("nav_wake_on_update", false)
+        navWakeOnUpdateSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("nav_wake_on_update", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_NAV_WAKE_ON_UPDATE", json)
+            toast(if (sent) "Wake screen on nav update ${if (isChecked) "enabled" else "disabled"}"
+                  else "Send failed")
+        }
+
+        wakeToTimeCardSwitch.isChecked = prefs.getBoolean("wake_to_time_card", false)
+        wakeToTimeCardSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("wake_to_time_card", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_WAKE_TO_TIME_CARD", json)
+            toast(if (sent) "Show time card on wake ${if (isChecked) "enabled" else "disabled"}"
                   else "Send failed")
         }
 

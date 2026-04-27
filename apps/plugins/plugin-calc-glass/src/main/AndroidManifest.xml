@@ -17,9 +17,12 @@
             <intent-filter>
                 <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
             </intent-filter>
-            <meta-data
-                android:name="com.glasshole.plugin.ID"
-                android:value="calc" />
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="calc" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="Calc" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="On-glass calculator with phone-side history" />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA"
+                android:resource="@raw/plugin_schema" />
         </service>
 
         <activity

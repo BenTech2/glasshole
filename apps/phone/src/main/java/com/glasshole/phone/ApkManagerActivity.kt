@@ -189,18 +189,20 @@ class ApkManagerActivity : AppCompatActivity() {
     private fun handleUninstallResult(pkg: String, status: String) {
         val label = allPackages.firstOrNull { it.pkg == pkg }?.label ?: pkg
         statusText.text = "$label: $status"
-        gateBanner.visibility =
-            if (status.contains("needs_unknown_sources")) View.VISIBLE else View.GONE
+        gateBanner.visibility = if (isPermissionGateStatus(status)) View.VISIBLE else View.GONE
         // Re-fetch list shortly so removed packages disappear (after user confirms)
         Handler(Looper.getMainLooper()).postDelayed({ refreshPackages() }, 2500)
     }
 
     private fun handleInstallResult(status: String) {
         statusText.text = "Install: $status"
-        gateBanner.visibility =
-            if (status.contains("needs_unknown_sources")) View.VISIBLE else View.GONE
+        gateBanner.visibility = if (isPermissionGateStatus(status)) View.VISIBLE else View.GONE
         Handler(Looper.getMainLooper()).postDelayed({ refreshPackages() }, 2500)
     }
+
+    private fun isPermissionGateStatus(status: String): Boolean =
+        status.contains("needs_install_permission") ||
+        status.contains("needs_unknown_sources")
 
     private fun sendApk(uri: Uri) {
         val filename = resolveFilename(uri) ?: "app.apk"

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Standalone-only "Exit" card. Leftmost on the main carousel; the only
+     surface where swipe-down actually closes Home. Sizes scaled ~⅔ from
+     EE1/EE2 to fit XE's 240dpi 360-px-tall display. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FF5252"
+            android:textSize="56sp"
+            android:fontFamily="sans-serif-thin"
+            android:includeFontPadding="false"
+            android:text="↓" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:fontFamily="sans-serif-light"
+            android:text="Exit" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:textColor="#4FC3F7"
+            android:textSize="10sp"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.12"
+            android:text="SWIPE DOWN TO CLOSE" />
+
+    </LinearLayout>
+
+</FrameLayout>

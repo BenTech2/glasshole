@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "quick_capture",
+      "type": "checkbox",
+      "label": "Quick capture on camera button",
+      "description": "Pressing the hardware camera button takes a photo immediately, even from sleep. Turn off for normal preview UI.",
+      "default": true
+    },
+    {
+      "key": "video_bitrate_mbps",
+      "type": "slider",
+      "label": "Video bitrate (Mbps)",
+      "min": 5,
+      "max": 20,
+      "step": 1,
+      "default": 10
+    },
+    {
+      "key": "video_framerate",
+      "type": "radio",
+      "label": "Video frame rate",
+      "default": "30",
+      "options": [
+        { "value": "24", "label": "24 fps" },
+        { "value": "30", "label": "30 fps" },
+        { "value": "60", "label": "60 fps" }
+      ]
+    },
+    {
+      "key": "long_press_ms",
+      "type": "slider",
+      "label": "Long-press threshold (ms)",
+      "min": 300,
+      "max": 1000,
+      "step": 50,
+      "default": 500
+    }
+  ],
+  "workers": []
+}

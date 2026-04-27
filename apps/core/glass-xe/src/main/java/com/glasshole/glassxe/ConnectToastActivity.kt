@@ -27,6 +27,10 @@ class ConnectToastActivity : Activity() {
 
         // Wake the display + show over lock screen so the user sees the
         // banner even if the glass was asleep when the phone reconnected.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
         window.addFlags(
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or

@@ -41,9 +41,15 @@ class StreamPluginService : GlassPluginService() {
         wakeScreen()
 
         Log.i(TAG, "Launching MainActivity with url=$url")
+        // CLEAR_TASK on every share — otherwise a second PLAY_URL stacks
+        // a second PlayerActivity on top of the first, and closing the new
+        // one drops the user back into the still-playing previous video.
         val intent = Intent(this, MainActivity::class.java).apply {
             putExtra(MainActivity.EXTRA_URL, url)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TASK
+            )
         }
         try {
             startActivity(intent)

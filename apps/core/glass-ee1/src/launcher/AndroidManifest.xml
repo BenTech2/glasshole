@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Launcher-flavor manifest overlay. Merged with src/main/AndroidManifest.xml.
+    Adds the HOME + DEFAULT categories to HomeActivity so Glass EE1 treats
+    it as a valid home replacement; overrides the app label so the user
+    can tell the two APKs apart in Settings ▸ Apps.
+
+    Everything else (permissions, services, receivers, the other activities)
+    comes from the main manifest.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        tools:replace="android:label"
+        android:label="GlassHole Launcher">
+
+        <activity android:name=".home.HomeActivity">
+            <!-- High priority so our HOME wins over the stock Glass
+                 com.google.glass.nowtown launcher (priority=0). EE1's
+                 stock home is flagged PERSISTENT and can't be disabled
+                 via `pm disable-user`, so out-ranking it via filter
+                 priority is the only path that doesn't need root. -->
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -28,11 +28,17 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var sendStreamButton: Button
     private lateinit var sendMultiButton: Button
     private lateinit var sendImageButton: Button
+    private lateinit var resetAdminPromptButton: Button
     private lateinit var statusText: TextView
 
     private var bridgeService: BridgeService? = null
     private var bridgeBound = false
     private var testCounter = 0
+
+    // Cached test images, fetched eagerly so the test-send buttons
+    // don't block on a network round-trip when tapped.
+    @Volatile private var cachedTestImageBase64: String? = null
+    @Volatile private var cachedYoutubeThumbBase64: String? = null
 
     private val bridgeConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -59,6 +65,7 @@ class DebugActivity : AppCompatActivity() {
         sendStreamButton = findViewById(R.id.debugSendStreamButton)
         sendMultiButton = findViewById(R.id.debugSendMultiButton)
         sendImageButton = findViewById(R.id.debugSendImageButton)
+        resetAdminPromptButton = findViewById(R.id.debugResetAdminPromptButton)
         statusText = findViewById(R.id.debugStatusText)
 
         sendButton.setOnClickListener { sendVariant(Variant.PLAIN) }
@@ -67,12 +74,66 @@ class DebugActivity : AppCompatActivity() {
         sendStreamButton.setOnClickListener { sendVariant(Variant.STREAM) }
         sendMultiButton.setOnClickListener { sendVariant(Variant.MULTI) }
         sendImageButton.setOnClickListener { sendVariant(Variant.IMAGE) }
+        resetAdminPromptButton.setOnClickListener { sendResetAdminPrompt() }
 
         bindService(
             Intent(this, BridgeService::class.java),
             bridgeConnection,
             Context.BIND_AUTO_CREATE
         )
+
+        prefetchTestImages()
+    }
+
+    private fun prefetchTestImages() {
+        Thread {
+            if (cachedTestImageBase64 == null) {
+                cachedTestImageBase64 = fetchAndEncode(
+                    "https://upload.wikimedia.org/wikipedia/en/2/27/Bliss_%28Windows_XP%29.png"
+                )
+            }
+            if (cachedYoutubeThumbBase64 == null) {
+                // Matches the TEST_VIDEO_ID used by the STREAM variant. A real
+                // YouTube notification attaches this same thumbnail image.
+                cachedYoutubeThumbBase64 = fetchAndEncode(
+                    "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+                )
+            }
+        }.apply { isDaemon = true; start() }
+    }
+
+    private fun fetchAndEncode(urlStr: String): String? {
+        return try {
+            val conn = (java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 5000
+                readTimeout = 8000
+                instanceFollowRedirects = true
+                // Wikimedia rejects default UAs; YouTube doesn't mind but it's
+                // a reasonable default for any debug image fetch.
+                setRequestProperty(
+                    "User-Agent",
+                    "GlassHole-Debug/1.0 (https://github.com/glasshole)"
+                )
+            }
+            val bmp = conn.inputStream.use {
+                android.graphics.BitmapFactory.decodeStream(it)
+            } ?: return null
+            // Keep the payload small — BT pipe chokes on full-res.
+            val maxEdge = 480
+            val longest = maxOf(bmp.width, bmp.height)
+            val scaled = if (longest > maxEdge) {
+                val ratio = maxEdge.toFloat() / longest
+                android.graphics.Bitmap.createScaledBitmap(
+                    bmp, (bmp.width * ratio).toInt(), (bmp.height * ratio).toInt(), true
+                ).also { if (it !== bmp) bmp.recycle() }
+            } else bmp
+            val stream = java.io.ByteArrayOutputStream()
+            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, stream)
+            scaled.recycle()
+            android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override fun onResume() {
@@ -102,6 +163,18 @@ class DebugActivity : AppCompatActivity() {
         sendStreamButton.isEnabled = enabled
         sendMultiButton.isEnabled = enabled
         sendImageButton.isEnabled = enabled
+        resetAdminPromptButton.isEnabled = enabled
+    }
+
+    private fun sendResetAdminPrompt() {
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            updateStatus()
+            return
+        }
+        val ok = bridge.sendResetHomeAdminPrompt()
+        toast(if (ok) "Sent — open GlassHole Home on the glass" else "Send failed")
     }
 
     private enum class Variant { PLAIN, REPLY, OPEN_PHONE, STREAM, MULTI, IMAGE }
@@ -152,8 +225,13 @@ class DebugActivity : AppCompatActivity() {
             put("text", text)
             put("actions", actions)
             if (variant == Variant.IMAGE) {
-                val picture = generateTestImageBase64()
+                val picture = cachedTestImageBase64 ?: generateTestImageBase64()
                 if (picture != null) put("picture", picture)
+            }
+            if (variant == Variant.STREAM) {
+                // Real YouTube notifications ship a video thumbnail as their
+                // largeIcon/picture; mirror that so the Glass card matches.
+                cachedYoutubeThumbBase64?.let { put("picture", it) }
             }
         }.toString()
 

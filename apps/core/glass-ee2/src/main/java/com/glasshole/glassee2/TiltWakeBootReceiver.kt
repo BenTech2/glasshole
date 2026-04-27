@@ -54,4 +54,13 @@ object BaseSettings {
     const val PREFS = "glasshole_base_settings"
     const val KEY_TILT_WAKE = "tilt_wake_enabled"
     const val KEY_AUTO_START = "auto_start_enabled"
+    /** While the Nav card is visible on Home, keep the display on (suppress
+     *  the idle-dim timer). */
+    const val KEY_NAV_KEEP_SCREEN_ON = "nav_keep_screen_on"
+    /** Acquire a brief SCREEN_BRIGHT wake lock whenever a NAV_UPDATE arrives,
+     *  so the display wakes to show the new turn even if it was sleeping. */
+    const val KEY_NAV_WAKE_ON_UPDATE = "nav_wake_on_update"
+    /** When set, the Home carousel snaps back to the Time card on every
+     *  screen-on event so the user always re-enters from a known position. */
+    const val KEY_WAKE_TO_TIME_CARD = "wake_to_time_card"
 }

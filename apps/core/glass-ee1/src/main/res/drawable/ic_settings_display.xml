@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sun — for Display / Brightness. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,7 a5,5 0 1 0 0,10 a5,5 0 1 0 0,-10 Z M11,1 L13,1 L13,4 L11,4 Z M11,20 L13,20 L13,23 L11,23 Z M1,11 L4,11 L4,13 L1,13 Z M20,11 L23,11 L23,13 L20,13 Z M4.2,4.2 L6.3,6.3 L4.9,7.7 L2.8,5.6 Z M17.7,17.7 L19.8,19.8 L18.4,21.2 L16.3,19.1 Z M19.8,4.2 L21.2,5.6 L19.1,7.7 L17.7,6.3 Z M4.2,19.8 L5.6,21.2 L7.7,19.1 L6.3,17.7 Z" />
+</vector>

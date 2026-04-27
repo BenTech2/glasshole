@@ -8,19 +8,35 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Gallery handler: scans /sdcard/{Pictures,Movies,DCIM} on request. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Device handler (formerly plugin-device-glass): brightness, screen
+         timeout, time/timezone sync, sleep-now. WRITE_SETTINGS is the
+         runtime-toggled one — HomeActivity prompts for it on first run. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- SET_TIME / SET_TIME_ZONE are signature|system; request anyway in
+         case the device ships them, the handler falls back to su / Settings.
+         AUTO_TIME otherwise. -->
+    <uses-permission android:name="android.permission.SET_TIME" />
+    <uses-permission android:name="android.permission.SET_TIME_ZONE" />
 
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/ic_dialog_info"
         android:label="GlassHole"
+        android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.DeviceDefault">
 
         <activity
-            android:name=".MainActivity"
-            android:label="GlassHole"
-            android:enabled="true"
+            android:name=".home.HomeActivity"
+            android:label="GlassHole Home"
             android:exported="true"
-            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -29,8 +45,27 @@
         </activity>
 
         <activity
+            android:name=".home.NotificationDrawerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <activity
+            android:name=".home.AppDrawerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <activity
+            android:name=".home.SettingsDrawerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <!-- Own task affinity so dismissing returns to whatever task was
+             foreground when the notification arrived. -->
+        <activity
             android:name=".NotificationDisplayActivity"
             android:exported="false"
+            android:taskAffinity=":notif"
+            android:excludeFromRecents="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
         <activity
@@ -39,6 +74,23 @@
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
+        <activity
+            android:name=".InstallPermissionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog" />
+
+        <!-- Headless permission shim. HomeActivity's storage prompt fires
+             this directly via startActivity when the user taps "Enable",
+             so it's `exported="false"` and has no LAUNCHER intent-filter —
+             we don't want a redundant "Gallery Access" tile in the stock
+             Glass launcher now that the base app drives the prompt. -->
+        <activity
+            android:name=".GalleryPermissionActivity"
+            android:label="Gallery Access"
+            android:exported="false" />
 
         <service
             android:name=".BluetoothListenerService"
@@ -50,6 +102,22 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.glasshole.glass.MESSAGE_TO_PHONE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Device-admin receiver backing HomeActivity's instant-sleep
+             (DevicePolicyManager.lockNow). User must accept the admin
+             prompt once; after that we call lockNow on idle. -->
+        <receiver
+            android:name=".home.HomeDeviceAdminReceiver"
+            android:label="GlassHole Home Sleep"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/home_device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
             </intent-filter>
         </receiver>
 

@@ -29,6 +29,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.pedro.common.ConnectChecker
+import com.pedro.encoder.input.gl.render.filters.RotationFilterRender
 import com.pedro.library.rtmp.RtmpCamera2
 import com.pedro.library.view.OpenGlView
 
@@ -51,11 +52,23 @@ class BroadcastActivity : Activity() {
         private const val TAG = "BroadcastActivity"
         private const val REQUEST_PERMS = 11
         private const val SCREEN_OFF_DELAY_MS = 3_000L
-        private const val FALLBACK_MAX_CHAT_MESSAGES = 200
+        private const val DEFAULT_MAX_CHAT_MESSAGES = 200
         private const val ABSOLUTE_MAX_CHAT_MESSAGES = 1000
+        private const val DEFAULT_CHAT_FONT_SIZE = 14
     }
 
-    private var maxChatMessages = FALLBACK_MAX_CHAT_MESSAGES
+    private var maxChatMessages = DEFAULT_MAX_CHAT_MESSAGES
+    private var chatFontSizeSp = DEFAULT_CHAT_FONT_SIZE
+
+    private data class Config(
+        val url: String,
+        val width: Int,
+        val height: Int,
+        val fps: Int,
+        val bitrateKbps: Int,
+        val audio: Boolean,
+        val displayMode: String
+    )
 
     private lateinit var surface: OpenGlView
     private lateinit var statusText: TextView
@@ -69,7 +82,7 @@ class BroadcastActivity : Activity() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
 
-    private var pendingConfig: BroadcastPrefs.Config? = null
+    private var pendingConfig: Config? = null
     private var surfaceReady = false
     private var permissionsReady = false
     private var streamingStarted = false
@@ -86,28 +99,17 @@ class BroadcastActivity : Activity() {
     // re-arms it. While off, new messages stop yanking the view to live.
     private var stickToBottom = true
 
-    private val configReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val json = intent.getStringExtra(BroadcastGlassPluginService.EXTRA_CONFIG_JSON)
-                ?: return
-            Log.d(TAG, "CONFIG received")
-            BroadcastPrefs.save(this@BroadcastActivity, json)
-            pendingConfig = BroadcastPrefs.load(this@BroadcastActivity)
-            tryStart()
-        }
-    }
-
     private val chatReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.getStringExtra(BroadcastGlassPluginService.EXTRA_KIND)) {
                 "chat" -> {
-                    val cap = intent.getIntExtra(BroadcastGlassPluginService.EXTRA_MAX_MSGS, 0)
-                    if (cap in 10..ABSOLUTE_MAX_CHAT_MESSAGES) maxChatMessages = cap
+                    // Re-read display prefs each message so slider changes
+                    // land on the next incoming line without a restart.
+                    reloadChatPrefs()
                     appendChat(
                         user = intent.getStringExtra(BroadcastGlassPluginService.EXTRA_USER) ?: "",
                         text = intent.getStringExtra(BroadcastGlassPluginService.EXTRA_TEXT) ?: "",
-                        color = intent.getStringExtra(BroadcastGlassPluginService.EXTRA_COLOR) ?: "",
-                        sizeSp = intent.getIntExtra(BroadcastGlassPluginService.EXTRA_SIZE, 0)
+                        color = intent.getStringExtra(BroadcastGlassPluginService.EXTRA_COLOR) ?: ""
                     )
                 }
                 "status" -> appendChatStatus(
@@ -115,6 +117,46 @@ class BroadcastActivity : Activity() {
                 )
             }
         }
+    }
+
+    private fun reloadChatPrefs() {
+        val prefs = getSharedPreferences(
+            BroadcastGlassPluginService.PREFS_NAME, Context.MODE_PRIVATE
+        )
+        val size = prefs.getInt("chat_font_size", DEFAULT_CHAT_FONT_SIZE)
+        chatFontSizeSp = if (size in 8..40) size else DEFAULT_CHAT_FONT_SIZE
+        val cap = prefs.getInt("chat_max_messages", DEFAULT_MAX_CHAT_MESSAGES)
+        maxChatMessages = cap.coerceIn(10, ABSOLUTE_MAX_CHAT_MESSAGES)
+    }
+
+    /**
+     * Pull streaming config from the glass-side SharedPreferences managed
+     * by PluginConfigHandler. Returns null if no URL is set — caller
+     * shows "open plugin settings on phone" instead of trying to stream.
+     */
+    private fun loadConfig(): Config? {
+        val p = getSharedPreferences(
+            BroadcastGlassPluginService.PREFS_NAME, Context.MODE_PRIVATE
+        )
+        val url = p.getString("url", "")?.trim().orEmpty()
+        if (url.isEmpty()) return null
+
+        // Resolution is stored as "640x360" / "854x480" / "1280x720".
+        val res = (p.getString("resolution", "1280x720") ?: "1280x720").split("x")
+        val w = res.getOrNull(0)?.toIntOrNull() ?: 1280
+        val h = res.getOrNull(1)?.toIntOrNull() ?: 720
+
+        val fps = (p.getString("fps", "30") ?: "30").toIntOrNull() ?: 30
+
+        return Config(
+            url = url,
+            width = w,
+            height = h,
+            fps = fps,
+            bitrateKbps = p.getInt("bitrate_kbps", 1500),
+            audio = p.getBoolean("audio", true),
+            displayMode = p.getString("display", "viewfinder") ?: "viewfinder"
+        )
     }
 
     private val connectionListener = object : ConnectChecker {
@@ -187,19 +229,18 @@ class BroadcastActivity : Activity() {
             }
         })
 
-        val cfgFilter = IntentFilter(BroadcastGlassPluginService.ACTION_CONFIG)
         val chatFilter = IntentFilter(BroadcastGlassPluginService.ACTION_CHAT)
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(configReceiver, cfgFilter, Context.RECEIVER_NOT_EXPORTED)
             registerReceiver(chatReceiver, chatFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            registerReceiver(configReceiver, cfgFilter)
             registerReceiver(chatReceiver, chatFilter)
         }
 
-        // Cached config gives us something to start with instantly; the
-        // phone-side CONFIG reply will overwrite it if settings changed.
-        pendingConfig = BroadcastPrefs.load(this)
+        // Config is authoritative on the glass side now — settings are saved
+        // via the dynamic Plugins screen on the phone, which writes them
+        // into our SharedPreferences here. No CONFIG roundtrip needed.
+        pendingConfig = loadConfig()
+        reloadChatPrefs()
 
         if (!hasPermissions()) {
             requestPermissions(
@@ -210,11 +251,14 @@ class BroadcastActivity : Activity() {
             permissionsReady = true
         }
 
+        // Fires phone-side chat primitives (when display=chat) via their
+        // start_trigger. Non-chat display modes are harmless — no worker
+        // is enabled and the message is dropped.
         sendToPhone("START", "")
         statusText.text = if (pendingConfig == null) {
-            "Requesting config from phone…"
+            "No RTMP URL set — open Broadcast settings on phone"
         } else {
-            "Starting stream…"
+            "Preparing stream…"
         }
 
         acquireWakeLock()
@@ -263,12 +307,37 @@ class BroadcastActivity : Activity() {
                 return
             }
             applyDisplayMode(cfg.displayMode)
-            cam.startStream(cfg.url)
+            // Install rotation filter BEFORE startStream so it's in the GL
+            // pipeline when the encoder surface attaches. Setting it after
+            // start caused the preview to freeze on the first frame.
+            applyCameraRotation()
+            // JSON roundtrip can leave literal backslashes in the URL on some
+            // Android JSON implementations (\/ escape not always decoded).
+            // A valid RTMP URL never contains backslashes, so strip them.
+            val rtmpUrl = cfg.url.replace("\\", "").trim()
+            Log.d(TAG, "Starting RTMP: [$rtmpUrl]")
+            cam.startStream(rtmpUrl)
             streamingStarted = true
             statusText.text = "Connecting to RTMP…"
         } catch (e: Exception) {
             Log.e(TAG, "startStream error", e)
             statusText.text = "Start failed: ${e.message}"
+        }
+    }
+
+    private fun applyCameraRotation() {
+        // Glass EE2's sensor is 90° off from the library's landscape defaults.
+        // A GL rotation filter applies uniformly to preview and encoder
+        // because it sits upstream of the split. Must be installed BEFORE
+        // startStream — setting it after caused the preview to freeze on
+        // the first frame.
+        val cam = camera ?: return
+        try {
+            val filter = RotationFilterRender()
+            filter.rotation = 270 // -90° CCW
+            cam.glInterface.setFilter(filter)
+        } catch (e: Exception) {
+            Log.w(TAG, "Rotation filter failed: ${e.message}")
         }
     }
 
@@ -299,7 +368,7 @@ class BroadcastActivity : Activity() {
         }
     }
 
-    private fun appendChat(user: String, text: String, color: String, sizeSp: Int) {
+    private fun appendChat(user: String, text: String, color: String) {
         main.post {
             val userColor = parseColor(color) ?: 0xFF4FC3F7.toInt()
             val spanned = SpannableStringBuilder()
@@ -321,7 +390,7 @@ class BroadcastActivity : Activity() {
             val row = TextView(this).apply {
                 setText(spanned)
                 setTextColor(Color.WHITE)
-                textSize = if (sizeSp in 8..40) sizeSp.toFloat() else 14f
+                textSize = chatFontSizeSp.toFloat()
                 setPadding(0, 4, 0, 4)
             }
             chatContainer.addView(row)
@@ -438,7 +507,6 @@ class BroadcastActivity : Activity() {
 
     override fun onDestroy() {
         sendToPhone("STOP", "")
-        try { unregisterReceiver(configReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(chatReceiver) } catch (_: Exception) {}
         stopStreaming("Activity destroyed")
         releaseWakeLock()

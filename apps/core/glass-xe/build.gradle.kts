@@ -38,10 +38,32 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
+    // Two distributions share the same code + resources but ship as
+    // separate APKs with different applicationIds so they install
+    // side-by-side. Standalone is the regular app-drawer entry; Launcher
+    // adds android.intent.category.HOME so XE Glass treats it as a valid
+    // home replacement.
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("standalone") {
+            dimension = "distribution"
+        }
+        create("launcher") {
+            dimension = "distribution"
+            applicationIdSuffix = ".launcher"
+            versionNameSuffix = "-launcher"
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
 }
 
 dependencies {
     implementation(project(":glass-plugin-sdk"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.viewpager2:viewpager2:1.0.0")
 }
