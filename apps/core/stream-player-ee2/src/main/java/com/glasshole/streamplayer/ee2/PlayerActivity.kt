@@ -62,6 +62,18 @@ class PlayerActivity : AppCompatActivity() {
             .readTimeout(10, TimeUnit.SECONDS)
             .followRedirects(true)
             .build()
+
+        @Volatile
+        var activeInstance: PlayerActivity? = null
+            private set
+    }
+
+    private val stateTickHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val stateTickRunnable = object : Runnable {
+        override fun run() {
+            broadcastPlaybackState()
+            stateTickHandler.postDelayed(this, 3_000L)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -360,12 +372,70 @@ class PlayerActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         player?.play()
+        activeInstance = this
+        stateTickHandler.removeCallbacks(stateTickRunnable)
+        stateTickHandler.post(stateTickRunnable)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        stateTickHandler.removeCallbacks(stateTickRunnable)
+        if (activeInstance === this) activeInstance = null
+        StreamPluginService.instance?.sendPlaybackEnd()
         binding.trackInfo.removeCallbacks(trackInfoHideRunnable)
         player?.release()
         player = null
+    }
+
+    private fun broadcastPlaybackState() {
+        val p = player ?: return
+        val service = StreamPluginService.instance ?: return
+        val item = queue.getOrNull(cursor)
+        val durationMs = p.duration.takeIf { it > 0 } ?: 0L
+        val positionMs = p.currentPosition.coerceAtLeast(0L)
+        val isLive = p.isCurrentMediaItemLive
+        val canSeek = p.isCurrentMediaItemSeekable && !isLive
+        val state = org.json.JSONObject().apply {
+            put("isPlaying", p.playWhenReady && p.playbackState == Player.STATE_READY)
+            put("isLive", isLive)
+            put("canSeek", canSeek)
+            put("positionMs", positionMs)
+            put("durationMs", durationMs)
+            put("title", item?.title.orEmpty())
+            put("artworkUrl", item?.artworkUrl.orEmpty())
+            put("queueSize", queue.size)
+            put("cursor", cursor)
+        }
+        service.sendPlaybackState(state.toString())
+    }
+
+    fun handleCommand(type: String, payload: String?) {
+        runOnUiThread {
+            val p = player
+            when (type) {
+                "PLAY" -> p?.playWhenReady = true
+                "PAUSE" -> p?.playWhenReady = false
+                "SEEK" -> {
+                    val ms = try {
+                        org.json.JSONObject(payload ?: "{}").optLong("positionMs", -1L)
+                    } catch (_: Exception) { -1L }
+                    if (ms >= 0 && p != null) p.seekTo(ms)
+                }
+                "SEEK_RELATIVE" -> {
+                    val deltaMs = try {
+                        org.json.JSONObject(payload ?: "{}").optLong("deltaMs", 0L)
+                    } catch (_: Exception) { 0L }
+                    if (p != null) {
+                        val target = (p.currentPosition + deltaMs)
+                            .coerceIn(0L, p.duration.takeIf { it > 0 } ?: Long.MAX_VALUE)
+                        p.seekTo(target)
+                    }
+                }
+                "NEXT" -> if (queue.size > 1) skipNext()
+                "PREV" -> if (queue.size > 1) skipPrev()
+                "STOP" -> finish()
+            }
+            broadcastPlaybackState()
+        }
     }
 }
