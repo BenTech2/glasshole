@@ -29,7 +29,7 @@
 
         <receiver
             android:name=".home.HomeDeviceAdminReceiver"
-            android:label="GlassHole Home Sleep"
+            android:label="GlassHole Sleep"
             android:permission="android.permission.BIND_DEVICE_ADMIN"
             android:exported="true">
             <meta-data

@@ -21,7 +21,7 @@ package com.glasshole.phone.bt
  *   NOTIF_DISMISS:<key>                         - Glass asks phone to dismiss a
  *                                                 notification from the system
  *   HOME_RESET_ADMIN_PROMPT                     - Clear the "already prompted" flag
- *                                                 so GlassHole Home re-asks for
+ *                                                 so GlassHole re-asks for
  *                                                 device-admin rights on next open
  *   PLUGIN_LIST:<json>                          - Glass tells phone which plugins
  *                                                 are installed (name / description /

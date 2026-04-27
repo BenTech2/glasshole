@@ -44,7 +44,7 @@
              instead. -->
         <activity
             android:name=".home.HomeActivity"
-            android:label="GlassHole Home"
+            android:label="GlassHole"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">

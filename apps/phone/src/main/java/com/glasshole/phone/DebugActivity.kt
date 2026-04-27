@@ -202,7 +202,7 @@ class DebugActivity : AppCompatActivity() {
             return
         }
         val ok = bridge.sendResetHomeAdminPrompt()
-        toast(if (ok) "Sent — open GlassHole Home on the glass" else "Send failed")
+        toast(if (ok) "Sent — open GlassHole on the glass" else "Send failed")
     }
 
     private enum class Variant { PLAIN, REPLY, OPEN_PHONE, STREAM, MULTI, IMAGE }

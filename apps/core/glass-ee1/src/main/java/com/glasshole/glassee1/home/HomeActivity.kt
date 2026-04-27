@@ -367,7 +367,7 @@ class HomeActivity : Activity() {
         val dialog = AlertDialog.Builder(this)
             .setTitle("Enable sleep?")
             .setMessage(
-                "To put the display to sleep on idle, GlassHole Home needs " +
+                "To put the display to sleep on idle, GlassHole needs " +
                 "device-admin rights.\n\n" +
                 "The only power it gets is locking the screen. Nothing else.\n\n" +
                 "Tap to enable · swipe down to skip."
@@ -378,7 +378,7 @@ class HomeActivity : Activity() {
                     putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
                     putExtra(
                         DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        "Lets GlassHole Home sleep the display when idle."
+                        "Lets GlassHole sleep the display when idle."
                     )
                 }
                 try { startActivity(intent) } catch (_: Exception) {}
