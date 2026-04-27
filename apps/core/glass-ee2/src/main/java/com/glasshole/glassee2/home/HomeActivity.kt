@@ -381,6 +381,9 @@ class HomeActivity : Activity() {
     }
 
     private fun maybePromptForDeviceAdmin() {
+        // Standalone never invokes lockNow(); the device-admin receiver
+        // isn't even declared in the standalone manifest. Skip the prompt.
+        if (BuildConfig.FLAVOR != "launcher") return
         if (HomePrefs.hasPromptedForAdmin(this)) return
         if (dpm.isAdminActive(adminComponent)) return
         HomePrefs.markPromptedForAdmin(this)

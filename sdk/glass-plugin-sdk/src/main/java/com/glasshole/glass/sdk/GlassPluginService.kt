@@ -20,6 +20,18 @@ abstract class GlassPluginService : Service() {
 
     companion object {
         private const val TAG = "GlassHoleGlassPlugin"
+
+        /** GlassHole base-app candidate packages to bind / broadcast to.
+         *  Each edition ships standalone + launcher flavors; both are
+         *  enumerated so we connect regardless of which is installed. */
+        private val HOST_PACKAGES = listOf(
+            "com.glasshole.glassee2",
+            "com.glasshole.glassee2.launcher",
+            "com.glasshole.glassee1",
+            "com.glasshole.glassee1.launcher",
+            "com.glasshole.glassxe",
+            "com.glasshole.glassxe.launcher"
+        )
     }
 
     /** Unique plugin identifier — must match the phone-side plugin */
@@ -123,7 +135,6 @@ abstract class GlassPluginService : Service() {
     private fun sendViaBroadcast(message: GlassPluginMessage): Boolean {
         return try {
             val intent = Intent(GlassPluginConstants.ACTION_MESSAGE_TO_PHONE).apply {
-                // Target the GlassHole base app — try EE1 first, then XE
                 putExtra(GlassPluginConstants.EXTRA_PLUGIN_ID, pluginId)
                 putExtra(GlassPluginConstants.EXTRA_MESSAGE_TYPE, message.type)
                 putExtra(GlassPluginConstants.EXTRA_PAYLOAD, message.payload)
@@ -131,8 +142,8 @@ abstract class GlassPluginService : Service() {
                     putExtra(GlassPluginConstants.EXTRA_BINARY_DATA, message.binaryData)
                 }
             }
-            // Try to send to whichever GlassHole base app is installed
-            for (pkg in listOf("com.glasshole.glassee1", "com.glasshole.glassxe", "com.glasshole.glassee2")) {
+            // Both flavor variants — only one will resolve at install time.
+            for (pkg in HOST_PACKAGES) {
                 intent.setPackage(pkg)
                 sendBroadcast(intent)
             }
@@ -144,10 +155,16 @@ abstract class GlassPluginService : Service() {
     }
 
     private fun bindToHost() {
-        // Try EE2 host first
-        for (pkg in listOf("com.glasshole.glassee2", "com.glasshole.glassee1", "com.glasshole.glassxe")) {
+        // Each glass-edition base app ships in two flavors: standalone
+        // (e.g. com.glasshole.glassee2) and launcher (`.launcher` suffix).
+        // Without the launcher entries here, sendToPhone silently fails on
+        // a device where only the launcher flavor is installed — the host
+        // can talk to the plugin (via the host's bindService to the
+        // plugin's known package), but the plugin can't talk back.
+        for (pkg in HOST_PACKAGES) {
+            val cls = pkg.removeSuffix(".launcher") + ".PluginHostService"
             val intent = Intent().apply {
-                setClassName(pkg, "$pkg.PluginHostService")
+                setClassName(pkg, cls)
             }
             try {
                 hostBound = bindService(intent, hostConnection, Context.BIND_AUTO_CREATE)

@@ -105,21 +105,11 @@
             </intent-filter>
         </receiver>
 
-        <!-- Device-admin receiver backing HomeActivity's instant-sleep
-             (DevicePolicyManager.lockNow). User must accept the admin
-             prompt once; after that we call lockNow on idle. -->
-        <receiver
-            android:name=".home.HomeDeviceAdminReceiver"
-            android:label="GlassHole Home Sleep"
-            android:permission="android.permission.BIND_DEVICE_ADMIN"
-            android:exported="true">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/home_device_admin" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
+        <!-- HomeDeviceAdminReceiver lives in the launcher-flavor manifest
+             overlay only — it backs the launcher's swipe-down lockNow().
+             Standalone never invokes that path, so the receiver, the
+             "Enable sleep?" prompt, and the BIND_DEVICE_ADMIN permission
+             are all skipped on standalone. -->
 
         <service
             android:name=".PluginHostService"
