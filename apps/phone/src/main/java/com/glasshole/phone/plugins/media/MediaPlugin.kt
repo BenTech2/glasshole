@@ -275,7 +275,16 @@ class MediaPlugin : PhonePlugin {
         val state = controller.playbackState
         val playing = state?.state == PlaybackState.STATE_PLAYING
         val appName = resolveAppName(controller.packageName)
-        val position = state?.position ?: 0L
+        // PlaybackState.getPosition() is the position at lastPositionUpdateTime —
+        // some apps (YouTube Music in particular) only refresh that on user
+        // actions, so the raw value can be many seconds stale. Extrapolate to
+        // wall-clock now using playbackSpeed so the glass receives a fresh
+        // anchor every push instead of jumping backwards each cycle.
+        val rawPos = state?.position ?: 0L
+        val position = if (state != null && playing && rawPos >= 0L) {
+            val elapsed = SystemClock.elapsedRealtime() - state.lastPositionUpdateTime
+            rawPos + (elapsed * state.playbackSpeed).toLong()
+        } else rawPos.coerceAtLeast(0L)
         val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
 
         worker.execute {
@@ -288,13 +297,15 @@ class MediaPlugin : PhonePlugin {
                 Log.w(TAG, "encodeArt failed: ${e.message}"); ""
             }
 
-            // Some apps expose a MediaSession before its metadata has been
-            // populated — we see artist (or nothing) while title and album
-            // are still null. If we ship that empty snapshot the glass caches
-            // it, and the next time it renders the card it shows no title.
-            // Wait for the follow-up onMetadataChanged tick instead.
-            if (title.isEmpty() && album.isEmpty()) {
-                Log.d(TAG, "Skipping push: title+album empty for $appName")
+            // Track-transition crosstalk: between songs, YT Music briefly
+            // emits a metadata snapshot where title is empty but album/artist
+            // are still populated (sometimes with the *new* track's values).
+            // If we forward that, glass falls back to the previous title and
+            // we render last song's title alongside next song's artist —
+            // looks like the wrong song. Gate on title alone and wait for the
+            // follow-up onMetadataChanged tick that brings the real title.
+            if (title.isEmpty()) {
+                Log.d(TAG, "Skipping push: empty title for $appName")
                 return@execute
             }
 

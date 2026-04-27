@@ -28,6 +28,18 @@ data class MediaState(
     companion object {
         val EMPTY = MediaState()
 
+        /** True if the string is empty or made entirely of invisible glyphs
+         *  — whitespace, zero-width joiners/spaces, Hangul Filler, Braille
+         *  blank, or BOM. */
+        private fun String.looksBlank(): Boolean = all { c ->
+            c.isWhitespace() ||
+                c.code in 0x200B..0x200D ||
+                c.code == 0x2060 ||
+                c.code == 0xFEFF ||
+                c.code == 0x3164 ||
+                c.code == 0x2800
+        }
+
         fun fromJson(
             payload: String,
             previous: MediaState
@@ -38,13 +50,21 @@ data class MediaState(
             val hasSession = json.optBoolean("has_session", false)
             if (!hasSession) return EMPTY.copy(positionCapturedAtRealtime = SystemClock.elapsedRealtime())
 
-            // Empty string fields can come through during the window where
-            // the MediaSession exists but its metadata hasn't populated yet —
-            // fall back to whatever we last had for the same session rather
-            // than wiping good state.
-            val title = json.optString("title", "").ifEmpty { previous.title }
-            val album = json.optString("album", "").ifEmpty { previous.album }
-            val artist = json.optString("artist", "").ifEmpty { previous.artist }
+            // Trust the payload directly. Phone-side gates on
+            // title.isEmpty() before sending, so any payload that lands
+            // here is a real snapshot of the current track. Falling back to
+            // previous values caused track-transition crosstalk: between
+            // songs YT Music briefly emits partial metadata (new
+            // album/artist, old or empty title) and we'd render the
+            // previous song's title alongside the next song's artist.
+            //
+            // Some uploaders (YT Music in particular) set the title to an
+            // invisible Unicode glyph — Hangul Filler, zero-widths, etc. —
+            // to "blank out" the on-screen text. Normalize those to empty
+            // so bindMedia's "(unknown)" fallback kicks in.
+            val title = json.optString("title", "").let { if (it.looksBlank()) "" else it }
+            val artist = json.optString("artist", "").let { if (it.looksBlank()) "" else it }
+            val album = json.optString("album", "").let { if (it.looksBlank()) "" else it }
             val trackKey = "$title|$album"
             val artB64 = json.optString("art_b64", "")
             val bmp = if (artB64.isNotEmpty()) {
