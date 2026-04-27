@@ -221,6 +221,10 @@ class NotificationForwardingService : NotificationListenerService() {
                 put("actions", actionsJson)
                 put("dismissMs", dismissMs)
             }.toString()
+            // Opt-in debug capture for replay testing. Off by default; the
+            // Debug screen toggles it. Stores the same byte stream we just
+            // built so a replay matches the original glass-side render.
+            com.glasshole.phone.debug.NotificationReplayStore.capture(this, json)
             actionsAware(json)
             return
         }

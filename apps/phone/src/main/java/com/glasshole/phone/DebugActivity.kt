@@ -6,14 +6,19 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.glasshole.phone.bt.ProtocolCodec
+import com.glasshole.phone.debug.NotificationReplayStore
 import com.glasshole.phone.service.BridgeService
 import com.glasshole.phone.service.NotificationForwardingService
+import com.google.android.material.materialswitch.MaterialSwitch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -30,6 +35,19 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var sendImageButton: Button
     private lateinit var resetAdminPromptButton: Button
     private lateinit var statusText: TextView
+
+    private lateinit var captureSwitch: MaterialSwitch
+    private lateinit var captureLimitSpinner: Spinner
+    private lateinit var captureCountText: TextView
+    private lateinit var clearCacheButton: Button
+    private lateinit var replaySpinner: Spinner
+    private lateinit var replayButton: Button
+    private lateinit var replayRefreshButton: Button
+    private var replayEntries: List<NotificationReplayStore.Entry> = emptyList()
+
+    // Cache-limit dropdown options. -1 maps to UNLIMITED in the store.
+    private val limitOptions = listOf(100, 250, 500, 1000, NotificationReplayStore.UNLIMITED)
+    private val limitLabels = listOf("100", "250", "500", "1000", "Unlimited")
 
     private var bridgeService: BridgeService? = null
     private var bridgeBound = false
@@ -68,6 +86,14 @@ class DebugActivity : AppCompatActivity() {
         resetAdminPromptButton = findViewById(R.id.debugResetAdminPromptButton)
         statusText = findViewById(R.id.debugStatusText)
 
+        captureSwitch = findViewById(R.id.debugCaptureSwitch)
+        captureLimitSpinner = findViewById(R.id.debugCaptureLimitSpinner)
+        captureCountText = findViewById(R.id.debugCaptureCount)
+        clearCacheButton = findViewById(R.id.debugClearCacheButton)
+        replaySpinner = findViewById(R.id.debugReplaySpinner)
+        replayButton = findViewById(R.id.debugReplayButton)
+        replayRefreshButton = findViewById(R.id.debugReplayRefreshButton)
+
         sendButton.setOnClickListener { sendVariant(Variant.PLAIN) }
         sendReplyButton.setOnClickListener { sendVariant(Variant.REPLY) }
         sendOpenOnDeviceButton.setOnClickListener { sendVariant(Variant.OPEN_PHONE) }
@@ -75,6 +101,8 @@ class DebugActivity : AppCompatActivity() {
         sendMultiButton.setOnClickListener { sendVariant(Variant.MULTI) }
         sendImageButton.setOnClickListener { sendVariant(Variant.IMAGE) }
         resetAdminPromptButton.setOnClickListener { sendResetAdminPrompt() }
+
+        setupCaptureControls()
 
         bindService(
             Intent(this, BridgeService::class.java),
@@ -396,5 +424,93 @@ class DebugActivity : AppCompatActivity() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    // --- Notification capture / replay (debug) ---
+
+    private fun setupCaptureControls() {
+        // Toggle reflects the persisted opt-in flag.
+        captureSwitch.isChecked = NotificationReplayStore.isEnabled(this)
+        captureSwitch.setOnCheckedChangeListener { _, checked ->
+            NotificationReplayStore.setEnabled(this, checked)
+            updateCaptureCount()
+        }
+
+        // Limit spinner — preselect the saved limit (or "Unlimited" if no
+        // exact match in our discrete list).
+        val adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, limitLabels
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        captureLimitSpinner.adapter = adapter
+        val savedLimit = NotificationReplayStore.getLimit(this)
+        val savedIdx = limitOptions.indexOf(savedLimit).let {
+            if (it >= 0) it else limitOptions.indexOf(NotificationReplayStore.UNLIMITED)
+        }
+        captureLimitSpinner.setSelection(savedIdx)
+        captureLimitSpinner.onItemSelectedListener =
+            object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                    val newLimit = limitOptions[pos]
+                    if (newLimit != NotificationReplayStore.getLimit(this@DebugActivity)) {
+                        NotificationReplayStore.setLimit(this@DebugActivity, newLimit)
+                        updateCaptureCount()
+                    }
+                }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+
+        clearCacheButton.setOnClickListener {
+            NotificationReplayStore.clear(this)
+            refreshReplaySpinner()
+            updateCaptureCount()
+            toast("Cleared")
+        }
+
+        replayRefreshButton.setOnClickListener { refreshReplaySpinner() }
+        replayButton.setOnClickListener { replaySelected() }
+
+        refreshReplaySpinner()
+        updateCaptureCount()
+    }
+
+    private fun updateCaptureCount() {
+        captureCountText.text = "${NotificationReplayStore.count(this)} stored"
+    }
+
+    private fun refreshReplaySpinner() {
+        replayEntries = NotificationReplayStore.todayNewestFirst(this)
+        val labels = if (replayEntries.isEmpty()) {
+            listOf("(no captured notifications today)")
+        } else {
+            replayEntries.map { it.summary() }
+        }
+        val adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, labels
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        replaySpinner.adapter = adapter
+        replayButton.isEnabled = replayEntries.isNotEmpty()
+    }
+
+    private fun replaySelected() {
+        if (replayEntries.isEmpty()) return
+        val idx = replaySpinner.selectedItemPosition.coerceIn(0, replayEntries.size - 1)
+        val entry = replayEntries[idx]
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            return
+        }
+        // Re-key so the glass treats this as a fresh notification rather
+        // than deduping against the original.
+        val replayed = try {
+            JSONObject(entry.json).apply {
+                val originalKey = optString("key", "")
+                put("key", "replay-${System.currentTimeMillis()}-$originalKey")
+            }.toString()
+        } catch (_: Exception) {
+            entry.json
+        }
+        val ok = bridge.sendRaw(ProtocolCodec.encodeNotif(replayed))
+        toast(if (ok) "Replayed" else "Send failed")
     }
 }
