@@ -4,53 +4,53 @@ import android.content.Intent
 import android.util.Log
 import com.glasshole.glass.sdk.GlassPluginMessage
 import com.glasshole.glass.sdk.GlassPluginService
+import com.glasshole.glass.sdk.PluginConfigHandler
 
 /**
- * Phone → glass CONFIG is delivered here and handed off to BroadcastActivity
- * via a local broadcast. We also keep a SharedPreferences copy so the
- * activity can apply the last-known config instantly on open, before the
- * phone has time to reply to the START handshake.
+ * Glass-side service for the dynamic Broadcast plugin. Streaming config
+ * (URL, resolution, bitrate, display mode, chat overlay) lives in this
+ * plugin's own SharedPreferences, managed by [PluginConfigHandler] —
+ * BroadcastActivity reads it directly on open, so no CONFIG roundtrip
+ * with the phone is needed.
  *
- * CHAT / CHAT_STATUS messages are forwarded the same way — the broadcast
- * plugin runs its own chat client when the display mode is "chat", so we
- * don't depend on the separate Chat plugin being installed at all.
+ * Chat overlay messages still flow through here: the phone-side
+ * chat-twitch / chat-youtube worker primitives fire CHAT / CHAT_STATUS
+ * and we rebroadcast locally so BroadcastActivity can render them.
  */
 class BroadcastGlassPluginService : GlassPluginService() {
 
     companion object {
         private const val TAG = "BroadcastGlassPlugin"
-        const val ACTION_CONFIG = "com.glasshole.plugin.broadcast.glass.CONFIG"
+        const val PREFS_NAME = "broadcast_settings"
         const val ACTION_CHAT = "com.glasshole.plugin.broadcast.glass.CHAT"
-        const val EXTRA_CONFIG_JSON = "config_json"
         const val EXTRA_KIND = "kind"     // "chat" | "status"
         const val EXTRA_USER = "user"
         const val EXTRA_TEXT = "text"
         const val EXTRA_COLOR = "color"
-        const val EXTRA_SIZE = "size"
-        const val EXTRA_MAX_MSGS = "max_msgs"
     }
 
     override val pluginId: String = "broadcast"
 
+    // Routes SCHEMA_REQ / CONFIG_READ / CONFIG_WRITE for the dynamic
+    // settings UI. BroadcastActivity reads the persisted values directly
+    // from PREFS_NAME each time it starts streaming.
+    private val configHandler by lazy {
+        PluginConfigHandler(
+            context = this,
+            prefsName = PREFS_NAME,
+            schemaResId = R.raw.plugin_schema,
+            send = { type, payload ->
+                sendToPhone(GlassPluginMessage(type, payload))
+            }
+        )
+    }
+
     override fun onMessageFromPhone(message: GlassPluginMessage) {
+        if (configHandler.handle(message)) return
         when (message.type) {
-            "CONFIG" -> handleConfig(message.payload)
             "CHAT" -> handleChat(message.payload)
             "CHAT_STATUS" -> handleChatStatus(message.payload)
             else -> Log.d(TAG, "Unknown message: ${message.type}")
-        }
-    }
-
-    private fun handleConfig(payload: String) {
-        try {
-            BroadcastPrefs.save(this, payload)
-            val intent = Intent(ACTION_CONFIG).apply {
-                setPackage(packageName)
-                putExtra(EXTRA_CONFIG_JSON, payload)
-            }
-            sendBroadcast(intent)
-        } catch (e: Exception) {
-            Log.w(TAG, "Bad CONFIG payload: ${e.message}")
         }
     }
 
@@ -63,8 +63,6 @@ class BroadcastGlassPluginService : GlassPluginService() {
                 putExtra(EXTRA_USER, json.optString("user", ""))
                 putExtra(EXTRA_TEXT, json.optString("text", ""))
                 putExtra(EXTRA_COLOR, json.optString("color", ""))
-                putExtra(EXTRA_SIZE, json.optInt("size", 0))
-                putExtra(EXTRA_MAX_MSGS, json.optInt("maxMsgs", 0))
             }
             sendBroadcast(intent)
         } catch (e: Exception) {

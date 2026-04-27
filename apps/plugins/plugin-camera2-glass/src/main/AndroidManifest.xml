@@ -21,7 +21,6 @@
             android:name="com.google.android.glass.TouchEnabledApplication"
             android:value="true" />
 
-        <!-- Plugin service stub so glasshole base app discovers and counts us -->
         <service
             android:name=".Camera2PluginService"
             android:exported="true">
@@ -29,6 +28,11 @@
                 <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
             </intent-filter>
             <meta-data android:name="com.glasshole.plugin.ID" android:value="camera2" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="Camera" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="Camera2-based stills + video capture" />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA"
+                android:resource="@raw/plugin_schema" />
         </service>
 
         <!--
@@ -43,6 +47,8 @@
             android:exported="true"
             android:screenOrientation="landscape"
             android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
             <!-- Launcher tile (Glass app drawer) -->
             <intent-filter>

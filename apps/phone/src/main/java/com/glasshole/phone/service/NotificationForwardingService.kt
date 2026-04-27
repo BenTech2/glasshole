@@ -45,6 +45,10 @@ class NotificationForwardingService : NotificationListenerService() {
     // callbacks if set.
     var onNotifWithActions: ((json: String) -> Unit)? = null
 
+    // Fires when a forwarded notification is removed on the phone so the
+    // glass-side Home active-notification list stays in sync.
+    var onNotifRemoved: ((key: String) -> Unit)? = null
+
     // Pending action entries keyed by notifKey. Each entry maps actionId →
     // the PendingIntent (and RemoteInputs, if this is a reply action) to fire.
     // `kind` lets us pick the right invocation path in invokeAction() —
@@ -129,6 +133,19 @@ class NotificationForwardingService : NotificationListenerService() {
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
 
+        // Google Maps nav gets intercepted before the forwarding filter —
+        // the Nav plugin consumes it as structured turn data, not as a
+        // regular text notification. This runs regardless of whether the
+        // user has Maps in their forwarded-apps list.
+        if (pkg == com.glasshole.phone.plugins.nav.NavPlugin.MAPS_PKG) {
+            try {
+                com.glasshole.phone.plugins.nav.NavPlugin.instance?.handleMapsNotification(sbn)
+            } catch (e: Exception) {
+                Log.w(TAG, "Nav handle failed: ${e.message}")
+            }
+            return
+        }
+
         // Only forward notifications from user-selected apps. Default (empty) = none.
         if (pkg !in forwardedApps) return
 
@@ -204,6 +221,10 @@ class NotificationForwardingService : NotificationListenerService() {
                 put("actions", actionsJson)
                 put("dismissMs", dismissMs)
             }.toString()
+            // Opt-in debug capture for replay testing. Off by default; the
+            // Debug screen toggles it. Stores the same byte stream we just
+            // built so a replay matches the original glass-side render.
+            com.glasshole.phone.debug.NotificationReplayStore.capture(this, json)
             actionsAware(json)
             return
         }
@@ -262,26 +283,10 @@ class NotificationForwardingService : NotificationListenerService() {
                 JSONObject().put("url", url))
         }
 
-        // 3. Open on phone — use a URL ACTION_VIEW when the notification has
-        // one (YouTube videos, shared links, news alerts), otherwise fall back
-        // to getLaunchIntentForPackage. Both go through LaunchRelayActivity
-        // which bypasses the Android 14+ BAL restriction on starting another
-        // app's activity from a background service context.
-        val bigText = notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
-        val summary = notification.extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString()
-        val haystack = listOfNotNull(title, text, bigText, summary).joinToString("\n")
-        val detected = detectFirstUrl(haystack)
-        if (detected != null || packageManager.getLaunchIntentForPackage(sourcePkg) != null) {
-            val id = "a${idx++}"
-            out[id] = PendingAction(
-                intent = null,
-                remoteInputs = null,
-                kind = "open_phone",
-                pkg = sourcePkg,
-                url = detected
-            )
-            add(id, "Open on Phone", "open_phone")
-        }
+        // 3. "Open on phone" action removed — the LaunchRelayActivity
+        // path for opening the source app from the glass action sheet was
+        // unreliable across Android versions and notification types. Users
+        // can still long-press the notif on their phone to handle it natively.
 
         // 4. Remaining non-reply actions. Skip labels that duplicate gestures
         // the user already has on glass (swipe down dismisses, and the host
@@ -563,6 +568,23 @@ class NotificationForwardingService : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         if (sbn.key == latestNotificationKey) {
             // Keep the reply action even after removal — it often still works
+        }
+        // Google Maps removed its nav notification → trip ended or was
+        // cancelled. Tell the Nav plugin so the glass can go back to idle.
+        if (sbn.packageName == com.glasshole.phone.plugins.nav.NavPlugin.MAPS_PKG) {
+            try {
+                com.glasshole.phone.plugins.nav.NavPlugin.instance?.handleMapsRemoved()
+            } catch (e: Exception) {
+                Log.w(TAG, "Nav remove failed: ${e.message}")
+            }
+        }
+        // Tell the Home notification card that this notification is gone
+        // if its source app is in our forwarded list — ignore removals for
+        // other apps so we don't ship noise over BT.
+        if (sbn.packageName in forwardedApps) {
+            try { onNotifRemoved?.invoke(sbn.key) } catch (e: Exception) {
+                Log.w(TAG, "Notif-removed callback failed: ${e.message}")
+            }
         }
     }
 

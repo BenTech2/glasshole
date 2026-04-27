@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "font_size",
+      "type": "slider",
+      "label": "Font size (sp)",
+      "min": 14,
+      "max": 28,
+      "step": 1,
+      "default": 18
+    },
+    {
+      "key": "show_timestamps",
+      "type": "checkbox",
+      "label": "Show timestamps in note list",
+      "default": true
+    },
+    {
+      "key": "order",
+      "type": "radio",
+      "label": "Sort order",
+      "default": "newest",
+      "options": [
+        { "value": "newest", "label": "Newest first" },
+        { "value": "oldest", "label": "Oldest first" }
+      ]
+    }
+  ],
+  "workers": []
+}

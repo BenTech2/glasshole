@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Accessibility person — for Accessibility settings. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2 a2,2 0 1 0 0,4 a2,2 0 1 0 0,-4 Z M21,9 h-6 v13 h-2 v-6 h-2 v6 h-2 L9,9 L3,9 L3,7 h18 v2 z" />
+</vector>

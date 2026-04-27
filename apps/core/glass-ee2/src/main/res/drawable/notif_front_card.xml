@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Front notification card. Same rounded-top-corner shape as the back
+     stack cards so the deck reads as one piece, but black fill so the
+     active card stays the most prominent. The bottom edge of the
+     stroke is pushed past the bottom of the view via a negative inset
+     so the card "spills off" the bottom of the screen — top and sides
+     are bordered, bottom is open. The picture child is clipped to the
+     outline at runtime (API 21+) so it doesn't square out the rounded
+     corners. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:bottom="-2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#000000" />
+            <stroke
+                android:width="1dp"
+                android:color="#80FFFFFF" />
+            <corners
+                android:topLeftRadius="6dp"
+                android:topRightRadius="6dp"
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp" />
+        </shape>
+    </item>
+</layer-list>

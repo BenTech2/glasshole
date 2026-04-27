@@ -14,6 +14,26 @@ package com.glasshole.phone.bt
  *   PLUGIN:<pluginId>:<messageType>:<payload>   - Plugin message
  *   NOTIF_ACTION:<json>                         - Invoke a notification action
  *       json = {"key":"...","id":"...","text":"..."}
+ *   HOME_TZ:<tz_id>                             - Phone's current timezone,
+ *                                                 used by the Home clock card
+ *   NOTIF_REMOVED:<key>                         - Phone dismissed a notification;
+ *                                                 glass removes it from the active list
+ *   NOTIF_DISMISS:<key>                         - Glass asks phone to dismiss a
+ *                                                 notification from the system
+ *   HOME_RESET_ADMIN_PROMPT                     - Clear the "already prompted" flag
+ *                                                 so GlassHole re-asks for
+ *                                                 device-admin rights on next open
+ *   PLUGIN_LIST:<json>                          - Glass tells phone which plugins
+ *                                                 are installed (name / description /
+ *                                                 version). Sent on connect.
+ *
+ *   Dynamic-plugin message types riding the existing PLUGIN envelope:
+ *     PLUGIN:<id>:SCHEMA_REQ:""                 - Phone asks a plugin for its settings
+ *                                                 schema (res/raw/plugin_schema.json).
+ *     PLUGIN:<id>:SCHEMA_RESP:<schema_json>     - Plugin replies with its schema.
+ *     PLUGIN:<id>:CONFIG_READ:""                - Phone asks for current saved config.
+ *     PLUGIN:<id>:CONFIG:<config_json>          - Plugin replies with its full config.
+ *     PLUGIN:<id>:CONFIG_WRITE:<config_json>    - Phone commits edits; plugin persists.
  */
 object ProtocolCodec {
 
@@ -27,6 +47,14 @@ object ProtocolCodec {
 
     fun encodePlugin(pluginId: String, type: String, payload: String): String =
         "PLUGIN:$pluginId:$type:${escape(payload)}\n"
+
+    fun encodeHomeTz(tzId: String): String = "HOME_TZ:$tzId\n"
+
+    fun encodeNotifRemoved(key: String): String = "NOTIF_REMOVED:${escape(key)}\n"
+
+    fun encodeResetHomeAdminPrompt(): String = "HOME_RESET_ADMIN_PROMPT\n"
+
+    fun encodePluginList(json: String): String = "PLUGIN_LIST:${escape(json)}\n"
 
     fun encodeMsg(text: String): String =
         "MSG:${escape(text)}\n"
@@ -130,6 +158,12 @@ object ProtocolCodec {
                     DecodedMessage.Unknown(line)
                 }
             }
+            line.startsWith("NOTIF_DISMISS:") -> {
+                DecodedMessage.NotifDismiss(unescape(line.removePrefix("NOTIF_DISMISS:")))
+            }
+            line.startsWith("PLUGIN_LIST:") -> {
+                DecodedMessage.PluginList(unescape(line.removePrefix("PLUGIN_LIST:")))
+            }
             line == "PING" -> DecodedMessage.Ping
             line == "PONG" -> DecodedMessage.Pong
             line == "INFO_REQ" -> DecodedMessage.InfoReq
@@ -160,5 +194,7 @@ sealed class DecodedMessage {
         val actionId: String,
         val replyText: String?
     ) : DecodedMessage()
+    data class NotifDismiss(val notifKey: String) : DecodedMessage()
+    data class PluginList(val json: String) : DecodedMessage()
     data class Unknown(val raw: String) : DecodedMessage()
 }

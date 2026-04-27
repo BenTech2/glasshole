@@ -25,16 +25,43 @@ class PluginHostService : Service() {
 
     companion object {
         private const val TAG = "GlassHoleGlassHost"
+        private val HOME_OWNED_PLUGIN_IDS = setOf("media", "nav")
+        private val BASE_SERVICE_PLUGIN_IDS = setOf("gallery")
     }
 
     private var btService: BluetoothListenerService? = null
     private var btBound = false
     private val pluginConnections = mutableMapOf<String, ServiceConnection>()
 
+    /**
+     * Mirrors whatever we've asked BluetoothListenerService to register,
+     * so that when BT (re)connects we can replay the registrations. The
+     * host service starts [BluetoothListenerService] asynchronously via
+     * bindService, which means plugins that call register through our
+     * AIDL host binder in the race window would otherwise be dropped on
+     * the floor.
+     */
+    private val pluginCallbacks = mutableMapOf<String, IGlassPluginCallback>()
+
+    private fun registerWithBt(pluginId: String, callback: IGlassPluginCallback) {
+        pluginCallbacks[pluginId] = callback
+        btService?.registerPlugin(pluginId, callback)
+    }
+
+    private fun unregisterWithBt(pluginId: String) {
+        pluginCallbacks.remove(pluginId)
+        btService?.unregisterPlugin(pluginId)
+    }
+
     private val btConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             btService = (binder as BluetoothListenerService.LocalBinder).getService()
             btBound = true
+            // Replay every plugin callback we cached while BT was down so
+            // messages routed to those plugin IDs actually reach them.
+            for ((id, cb) in pluginCallbacks) {
+                btService?.registerPlugin(id, cb)
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -45,11 +72,11 @@ class PluginHostService : Service() {
 
     private val hostBinder = object : IGlassPluginHost.Stub() {
         override fun registerGlassPlugin(pluginId: String, callback: IGlassPluginCallback) {
-            btService?.registerPlugin(pluginId, callback)
+            registerWithBt(pluginId, callback)
         }
 
         override fun unregisterGlassPlugin(pluginId: String) {
-            btService?.unregisterPlugin(pluginId)
+            unregisterWithBt(pluginId)
         }
 
         override fun sendToPhone(pluginId: String, message: GlassPluginMessage): Boolean {
@@ -68,10 +95,9 @@ class PluginHostService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             val action = intent.action ?: return
             val pkg = intent.data?.schemeSpecificPart ?: return
-            // Catch plugin APKs (com.glasshole.plugin.*) AND plugin-hosting
-            // apps like the Stream Player (com.glasshole.streamplayer.*).
             if (!pkg.startsWith("com.glasshole.")) return
             Log.i(TAG, "Package change ($action): $pkg — rediscovering plugins")
+            // Give the PM a moment to finish settling before we rebind.
             Handler(Looper.getMainLooper()).postDelayed({
                 discoverAndBindPlugins()
             }, 500)
@@ -85,7 +111,7 @@ class PluginHostService : Service() {
         val btIntent = Intent(this, BluetoothListenerService::class.java)
         bindService(btIntent, btConnection, Context.BIND_AUTO_CREATE)
 
-        // Listen for plugin reinstalls so we rebind them without a reboot.
+        // Listen for plugin reinstalls so we rebind their AIDL callbacks.
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_REPLACED)
             addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -116,37 +142,58 @@ class PluginHostService : Service() {
         for (info in resolved) {
             val serviceInfo = info.serviceInfo ?: continue
             val metaData = serviceInfo.metaData ?: continue
-
-            // Already connected — don't rebind a working plugin.
-            val id = metaData.getString(GlassPluginConstants.META_PLUGIN_ID)
-            if (id != null && pluginConnections.containsKey(id)) continue
             val pluginId = metaData.getString(GlassPluginConstants.META_PLUGIN_ID) ?: continue
 
-            val connection = object : ServiceConnection {
-                override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-                    val callback = IGlassPluginCallback.Stub.asInterface(binder)
-                    btService?.registerPlugin(pluginId, callback)
-                    Log.i(TAG, "Glass plugin connected: $pluginId")
-                }
+            // Home-owned IDs and base-service IDs are handled in the base
+            // app — skip any old external plugin APK that still claims one
+            // of them to avoid double-handling.
+            if (pluginId in HOME_OWNED_PLUGIN_IDS) continue
+            if (pluginId in BASE_SERVICE_PLUGIN_IDS) continue
 
-                override fun onServiceDisconnected(name: ComponentName?) {
-                    btService?.unregisterPlugin(pluginId)
-                    pluginConnections.remove(pluginId)
-                }
+            // If we're already bound to this plugin, skip — a future disconnect
+            // will retry.
+            if (pluginConnections.containsKey(pluginId)) continue
+
+            bindPlugin(pluginId, serviceInfo.packageName, serviceInfo.name)
+        }
+    }
+
+    private fun bindPlugin(pluginId: String, packageName: String, className: String) {
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                val callback = IGlassPluginCallback.Stub.asInterface(binder)
+                registerWithBt(pluginId, callback)
+                Log.i(TAG, "Glass plugin connected: $pluginId")
             }
 
-            val bindIntent = Intent(GlassPluginConstants.ACTION_GLASS_PLUGIN).apply {
-                setClassName(serviceInfo.packageName, serviceInfo.name)
+            override fun onServiceDisconnected(name: ComponentName?) {
+                Log.i(TAG, "Glass plugin disconnected: $pluginId — will retry")
+                unregisterWithBt(pluginId)
+                try { unbindService(this) } catch (_: Exception) {}
+                pluginConnections.remove(pluginId)
+                // Plugin process died (crash or package replaced) — try to
+                // rebind after a short delay so it restarts and re-registers.
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!pluginConnections.containsKey(pluginId)) {
+                        bindPlugin(pluginId, packageName, className)
+                    }
+                }, 750)
             }
+        }
 
-            try {
-                if (bindService(bindIntent, connection, Context.BIND_AUTO_CREATE)) {
-                    pluginConnections[pluginId] = connection
-                    Log.i(TAG, "Bound to glass plugin: $pluginId")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error binding to glass plugin $pluginId: ${e.message}")
+        val bindIntent = Intent(GlassPluginConstants.ACTION_GLASS_PLUGIN).apply {
+            setClassName(packageName, className)
+        }
+
+        try {
+            if (bindService(bindIntent, connection, Context.BIND_AUTO_CREATE)) {
+                pluginConnections[pluginId] = connection
+                Log.i(TAG, "Bound to glass plugin: $pluginId")
+            } else {
+                Log.w(TAG, "bindService returned false for $pluginId")
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error binding to glass plugin $pluginId: ${e.message}")
         }
     }
 }

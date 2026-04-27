@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Info "i" in a circle — for About device. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:pathData="M12,3 a9,9 0 1 0 0,18 a9,9 0 1 0 0,-18 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M11,10 h2 v7 h-2 z M11,7 h2 v2 h-2 z" />
+</vector>

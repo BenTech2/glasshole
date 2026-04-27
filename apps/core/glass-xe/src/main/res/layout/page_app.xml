@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center">
+
+    <!-- 110dp icon tile sized for Glass XE's 360px-tall display: ×1.5
+         density gives 165px, plus the cover-flow center emphasis (×1.22)
+         leaves the active page at ~200px so the label still fits below
+         and neighbors stay visible. -->
+    <ImageView
+        android:id="@+id/appIcon"
+        android:layout_width="110dp"
+        android:layout_height="110dp"
+        android:background="@drawable/app_icon_tile"
+        android:padding="10dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="App icon" />
+
+    <TextView
+        android:id="@+id/appLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:fontFamily="sans-serif-medium"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="" />
+
+</LinearLayout>

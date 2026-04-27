@@ -27,6 +27,11 @@
                 <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
             </intent-filter>
             <meta-data android:name="com.glasshole.plugin.ID" android:value="broadcast" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="Broadcast" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="RTMP live streamer with optional on-glass chat overlay" />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA"
+                android:resource="@raw/plugin_schema" />
         </service>
 
         <activity

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "interval_ms",
+      "type": "slider",
+      "label": "Location update interval (ms)",
+      "min": 1000,
+      "max": 10000,
+      "step": 500,
+      "default": 3000
+    }
+  ],
+  "workers": [
+    {
+      "primitive": "location-stream",
+      "params": {
+        "start_trigger": "START",
+        "stop_trigger": "STOP",
+        "emit_type": "LOCATION_UPDATE",
+        "interval_ms": "${interval_ms}",
+        "min_interval_ms": 1500
+      }
+    }
+  ]
+}

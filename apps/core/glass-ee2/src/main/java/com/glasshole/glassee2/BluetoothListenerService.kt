@@ -32,6 +32,16 @@ class BluetoothListenerService : Service() {
 
     companion object {
         private const val TAG = "GlassHoleBT"
+        /**
+         * Plugin IDs whose messages the base app handles itself (via the
+         * Home card surface) instead of AIDL-binding an external plugin APK.
+         */
+        private val HOME_OWNED_PLUGIN_IDS = setOf("media", "nav")
+        /**
+         * Plugin IDs handled by a base-app service helper (no Home card, no
+         * external APK). Lives on the BT thread; replies via sendPluginMessage.
+         */
+        private val BASE_SERVICE_PLUGIN_IDS = setOf("gallery", "device")
         val APP_UUID: UUID = UUID.fromString("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         private const val SERVICE_NAME = "GlassHole"
         private const val FOREGROUND_ID = 1
@@ -63,6 +73,18 @@ class BluetoothListenerService : Service() {
 
     // Plugin callbacks (AIDL)
     private val pluginCallbacks = ConcurrentHashMap<String, IGlassPluginCallback>()
+
+    // Base-app passive services (formerly separate plugin APKs).
+    private val galleryHandler: GalleryHandler by lazy {
+        GalleryHandler(this) { type, payload ->
+            sendPluginMessage("gallery", type, payload)
+        }
+    }
+    private val deviceHandler: DeviceHandler by lazy {
+        DeviceHandler(this) { type, payload ->
+            sendPluginMessage("device", type, payload)
+        }
+    }
 
     inner class LocalBinder : Binder() {
         fun getService(): BluetoothListenerService = this@BluetoothListenerService
@@ -237,6 +259,20 @@ class BluetoothListenerService : Service() {
         }
     }
 
+    fun sendNotifDismiss(notifKey: String): Boolean {
+        val os = outputStream ?: return false
+        return try {
+            val escaped = notifKey.replace("\\", "\\\\").replace("\n", "\\n")
+            os.write("NOTIF_DISMISS:$escaped\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+            Log.i(TAG, "NOTIF_DISMISS sent: $notifKey")
+            true
+        } catch (e: IOException) {
+            Log.e(TAG, "Send notif dismiss failed: ${e.message}")
+            false
+        }
+    }
+
     /** Called by NotificationDisplayActivity when the user taps "Watch on Glass". */
     fun playStreamLocally(url: String) {
         val payload = JSONObject().apply { put("url", url) }.toString()
@@ -274,9 +310,56 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Auto-start ${if (enabled) "enabled" else "disabled"}")
                 sendBaseStateToPhone()
             }
+            "SET_NAV_KEEP_SCREEN_ON" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_NAV_KEEP_SCREEN_ON, enabled).apply()
+                Log.i(TAG, "Nav keep-screen-on ${if (enabled) "enabled" else "disabled"}")
+                sendBaseStateToPhone()
+            }
+            "SET_NAV_WAKE_ON_UPDATE" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, enabled).apply()
+                Log.i(TAG, "Nav wake-on-update ${if (enabled) "enabled" else "disabled"}")
+                sendBaseStateToPhone()
+            }
+            "SET_WAKE_TO_TIME_CARD" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_WAKE_TO_TIME_CARD, enabled).apply()
+                Log.i(TAG, "Wake-to-time-card ${if (enabled) "enabled" else "disabled"}")
+                sendBaseStateToPhone()
+            }
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
             else -> Log.d(TAG, "Unknown base message: $type")
+        }
+    }
+
+    private fun maybeWakeForNavUpdate() {
+        val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        if (!prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false)) return
+        // Brief wake lock with ACQUIRE_CAUSES_WAKEUP — if the screen is off,
+        // this pops the display back on long enough for HomeActivity's
+        // showWhenLocked + turnScreenOn manifest flags to bring the nav card
+        // to the foreground.
+        @Suppress("DEPRECATION")
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "GlassHole:NavWake"
+            )
+            wl.acquire(3_000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "Nav wake lock failed: ${e.message}")
         }
     }
 
@@ -327,6 +410,9 @@ class BluetoothListenerService : Service() {
         val json = JSONObject().apply {
             put("tiltWake", prefs.getBoolean(BaseSettings.KEY_TILT_WAKE, false))
             put("autoStart", prefs.getBoolean(BaseSettings.KEY_AUTO_START, true))
+            put("navKeepScreenOn", prefs.getBoolean(BaseSettings.KEY_NAV_KEEP_SCREEN_ON, false))
+            put("navWakeOnUpdate", prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false))
+            put("wakeToTimeCard", prefs.getBoolean(BaseSettings.KEY_WAKE_TO_TIME_CARD, false))
         }.toString()
         sendPluginMessage("base", "STATE", json)
     }
@@ -347,8 +433,31 @@ class BluetoothListenerService : Service() {
             }
             os.write("INFO:$json\n".toByteArray(Charsets.UTF_8))
             os.flush()
+            // Don't piggyback PLUGIN_LIST onto every INFO response — phone
+            // heartbeats every 10s and the directory is ~8KB. Sent once on
+            // connect (handleConnection) instead.
         } catch (e: Exception) {
             Log.e(TAG, "Send info failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Emit the current PLUGIN_LIST — one line of JSON listing every
+     * installed plugin's id / name / description / version / has_schema.
+     * Phone's PluginDirectory consumes this and drives the dynamic
+     * settings UI off it.
+     */
+    private fun sendPluginList() {
+        val os = outputStream ?: return
+        try {
+            val entries = com.glasshole.glass.sdk.PluginDirectoryScanner.scan(this)
+            val json = com.glasshole.glass.sdk.PluginDirectoryScanner.toJson(entries)
+            val escaped = json.replace("\\", "\\\\").replace("\n", "\\n")
+            os.write("PLUGIN_LIST:$escaped\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+            Log.i(TAG, "PLUGIN_LIST sent (${entries.size} plugins)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Send plugin list failed: ${e.message}")
         }
     }
 
@@ -365,6 +474,17 @@ class BluetoothListenerService : Service() {
                         return@Thread
                     }
 
+                    if (!adapter.isEnabled) {
+                        Log.w(TAG, "Bluetooth is off — attempting to enable")
+                        try { @Suppress("DEPRECATION") adapter.enable() } catch (_: Exception) {}
+                        var waited = 0
+                        while (running && !adapter.isEnabled && waited < 6_000) {
+                            try { Thread.sleep(500) } catch (_: InterruptedException) { break }
+                            waited += 500
+                        }
+                        if (!adapter.isEnabled) continue
+                    }
+
                     serverSocket = adapter.listenUsingRfcommWithServiceRecord(SERVICE_NAME, APP_UUID)
                     clientSocket = serverSocket?.accept()
                     try { serverSocket?.close() } catch (_: IOException) {}
@@ -374,6 +494,11 @@ class BluetoothListenerService : Service() {
                     Log.d(TAG, "Phone connected!")
                     messageListener?.onConnectionStateChanged(true)
                     notifyPluginsConnectionChanged(true)
+
+                    // Send the directory once on connect — used to ride
+                    // along on every INFO_REQ but that was burning ~8KB
+                    // per heartbeat.
+                    sendPluginList()
 
                     handleConnection(clientSocket!!)
 
@@ -415,7 +540,13 @@ class BluetoothListenerService : Service() {
                     line.startsWith("NOTIF:") -> {
                         val json = line.removePrefix("NOTIF:")
                             .replace("\\n", "\n").replace("\\\\", "\\")
+                        com.glasshole.glassee2.home.NotificationStore.put(json)
                         showRichNotification(json)
+                    }
+                    line.startsWith("NOTIF_REMOVED:") -> {
+                        val key = line.removePrefix("NOTIF_REMOVED:")
+                            .replace("\\n", "\n").replace("\\\\", "\\")
+                        com.glasshole.glassee2.home.NotificationStore.remove(key)
                     }
                     line.startsWith("MSG:") -> {
                         val message = line.removePrefix("MSG:")
@@ -432,6 +563,16 @@ class BluetoothListenerService : Service() {
                     }
                     line == "INFO_REQ" -> {
                         sendInfo()
+                    }
+                    line.startsWith("HOME_TZ:") -> {
+                        val tz = line.removePrefix("HOME_TZ:").trim()
+                        if (tz.isNotEmpty()) {
+                            com.glasshole.glassee2.home.HomePrefs.setTimezone(this, tz)
+                        }
+                    }
+                    line == "HOME_RESET_ADMIN_PROMPT" -> {
+                        com.glasshole.glassee2.home.HomePrefs.resetAdminPrompt(this)
+                        Log.i(TAG, "HOME_RESET_ADMIN_PROMPT — admin prompt will re-show")
                     }
                     line.startsWith("INSTALL:") -> {
                         handleInstall(line, reader)
@@ -458,6 +599,33 @@ class BluetoothListenerService : Service() {
         // without requiring any plugin package to be present.
         if (pluginId == "base") {
             handleBaseMessage(type, payload)
+            return
+        }
+
+        // Home-owned plugin IDs: route directly to the base-app broadcast
+        // so HomeActivity can pick up media / nav updates. External plugin
+        // APKs for these IDs are retired — we intentionally ignore any
+        // still-installed old versions to avoid double-rendering.
+        if (pluginId in HOME_OWNED_PLUGIN_IDS) {
+            if (pluginId == "nav" && type == "NAV_UPDATE") maybeWakeForNavUpdate()
+            val intent = Intent(GlassPluginConstants.ACTION_MESSAGE_FROM_PHONE).apply {
+                setPackage(packageName) // local-only broadcast
+                putExtra(GlassPluginConstants.EXTRA_PLUGIN_ID, pluginId)
+                putExtra(GlassPluginConstants.EXTRA_MESSAGE_TYPE, type)
+                putExtra(GlassPluginConstants.EXTRA_PAYLOAD, payload)
+            }
+            sendBroadcast(intent)
+            return
+        }
+
+        // Base-app service plugins: handed to an in-process helper instead
+        // of AIDL-binding a retired plugin APK. Same "ignore any stale APK"
+        // guarantee as HOME_OWNED_PLUGIN_IDS.
+        if (pluginId in BASE_SERVICE_PLUGIN_IDS) {
+            when (pluginId) {
+                "gallery" -> galleryHandler.handleMessage(type, payload)
+                "device" -> deviceHandler.handleMessage(type, payload)
+            }
             return
         }
 
@@ -607,8 +775,18 @@ class BluetoothListenerService : Service() {
             return "success:su"
         }
 
-        // Path 3: ACTION_VIEW intent via FileProvider. EE2 with REQUEST_INSTALL_PACKAGES
-        // granted will show the system installer prompt on the glass display.
+        // Path 3: ACTION_VIEW intent via FileProvider. EE2 needs REQUEST_INSTALL_PACKAGES
+        // granted or the installer silently refuses. If it isn't granted, show
+        // our own explainer dialog that jumps straight to the right settings page —
+        // the system installer's error is unhelpful on glass.
+        if (!packageManager.canRequestPackageInstalls()) {
+            val permIntent = Intent(this, InstallPermissionActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try { startActivity(permIntent) } catch (_: Exception) {}
+            return "needs_install_permission"
+        }
+
         return try {
             val apkUri = androidx.core.content.FileProvider.getUriForFile(
                 this, "${packageName}.fileprovider", apkFile
@@ -618,7 +796,7 @@ class BluetoothListenerService : Service() {
                 flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
             }
             startActivity(installIntent)
-            "prompt_shown:needs_unknown_sources"
+            "prompt_shown"
         } catch (e: Exception) {
             Log.e(TAG, "Install trigger failed: ${e.message}")
             "failed:${e.message}"

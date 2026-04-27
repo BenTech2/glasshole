@@ -30,7 +30,10 @@ class MainActivity : AppCompatActivity() {
 
         val externalUrl = intent?.getStringExtra(EXTRA_URL)
         if (!externalUrl.isNullOrBlank()) {
-            handleScannedUrl(externalUrl)
+            // Phone-share path: hand the URL to the player and finish so we
+            // don't sit on the back stack as a "YouTube found, loading..."
+            // ghost screen the user has to swipe past on close.
+            handleScannedUrl(externalUrl, finishAfter = true)
             return
         }
 
@@ -43,7 +46,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         val externalUrl = intent?.getStringExtra(EXTRA_URL)
         if (!externalUrl.isNullOrBlank()) {
-            handleScannedUrl(externalUrl)
+            handleScannedUrl(externalUrl, finishAfter = true)
         }
     }
 
@@ -68,7 +71,9 @@ class MainActivity : AppCompatActivity() {
         if (result != null) {
             scannerLaunched = false
             if (result.contents != null) {
-                handleScannedUrl(result.contents)
+                // QR-scan path: keep MainActivity alive so the user lands
+                // back here when they close the player and can re-scan.
+                handleScannedUrl(result.contents, finishAfter = false)
             } else {
                 statusText.text = "Tap to scan again"
             }
@@ -77,7 +82,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun handleScannedUrl(url: String) {
+    private fun handleScannedUrl(url: String, finishAfter: Boolean) {
         Log.d(TAG, "Scanned URL: $url")
 
         val platform = StreamResolver.identify(url)
@@ -93,6 +98,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         startActivity(intent)
+        if (finishAfter) finish()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {

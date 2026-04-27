@@ -1,17 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.glasshole.glassxe">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="com.google.android.glass.permission.DEVELOPMENT" />
+    <!-- Gallery handler: scans /sdcard/{Pictures,Movies,DCIM} on request.
+         Install-time on API 19; GalleryPermissionActivity only matters on
+         API 23+ when XE runs on an upgraded ROM. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Device handler (formerly plugin-device-glass): brightness, screen
+         timeout, time/timezone sync, sleep-now. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.SET_TIME" />
+    <uses-permission android:name="android.permission.SET_TIME_ZONE" />
 
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/ic_dialog_info"
         android:label="GlassHole"
+        android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.DeviceDefault">
 
         <!-- Glass Development Kit — provides CardBuilder + TimelineManager. -->
@@ -23,15 +36,22 @@
             android:name="com.google.android.glass.TouchEnabledApplication"
             android:value="true" />
 
+        <!-- Card-based home. XE is API 19, well below the API 27 needed
+             for android:showWhenLocked / turnScreenOn; the equivalents
+             are set programmatically in HomeActivity.onCreate. -->
         <activity
-            android:name=".MainActivity"
+            android:name=".home.HomeActivity"
             android:label="GlassHole"
-            android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "ok glass, open glasshole" voice trigger from the GDK
+                 launcher's voice menu. Inherited from the old MainActivity
+                 since that's gone now. -->
             <intent-filter>
                 <action android:name="com.google.android.glass.action.VOICE_TRIGGER" />
             </intent-filter>
@@ -41,8 +61,27 @@
         </activity>
 
         <activity
+            android:name=".home.NotificationDrawerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <activity
+            android:name=".home.AppDrawerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <activity
+            android:name=".home.SettingsDrawerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <!-- Own task affinity so dismissing returns to whatever task was
+             foreground when the notification arrived. -->
+        <activity
             android:name=".NotificationDisplayActivity"
             android:exported="false"
+            android:taskAffinity=":notif"
+            android:excludeFromRecents="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
         <activity
@@ -52,14 +91,27 @@
             android:noHistory="true"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
+        <activity
+            android:name=".InstallPermissionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog" />
+
+        <!-- Headless permission shim. HomeActivity's storage prompt fires
+             this directly via startActivity when the user taps "Enable",
+             so it's `exported="false"` and has no LAUNCHER intent-filter —
+             we don't want a redundant "Gallery Access" tile in the stock
+             Glass launcher now that the base app drives the prompt. -->
+        <activity
+            android:name=".GalleryPermissionActivity"
+            android:label="Gallery Access"
+            android:exported="false" />
+
         <service
             android:name=".BluetoothListenerService"
             android:exported="true"
             android:stopWithTask="false" />
-
-        <service
-            android:name=".PluginHostService"
-            android:exported="true" />
 
         <receiver
             android:name=".PluginMessageReceiver"
@@ -69,8 +121,38 @@
             </intent-filter>
         </receiver>
 
+        <!-- HomeDeviceAdminReceiver lives in the launcher-flavor overlay
+             only — it backs swipe-down lockNow(). Standalone never invokes
+             that path, so the receiver, the "Enable sleep?" prompt, and
+             BIND_DEVICE_ADMIN are all skipped there. -->
+
+        <service
+            android:name=".PluginHostService"
+            android:exported="true" />
+
+        <service
+            android:name=".TiltWakeService"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <!-- Optional accessibility service: lets the user swipe down from the
+             stock Glass launcher's clock screen to sleep the display. Requires
+             the user to flip the toggle under Settings ▸ Accessibility. -->
+        <service
+            android:name=".SleepAccessibilityService"
+            android:exported="true"
+            android:label="GlassHole Swipe-Down Sleep"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/sleep_accessibility_config" />
+        </service>
+
         <receiver
-            android:name=".BootReceiver"
+            android:name=".TiltWakeBootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
@@ -79,5 +161,15 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

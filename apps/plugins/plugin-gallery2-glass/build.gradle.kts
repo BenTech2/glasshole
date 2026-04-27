@@ -9,7 +9,10 @@ android {
 
     defaultConfig {
         applicationId = "com.glasshole.plugin.gallery2.glass"
-        minSdk = 27
+        // Lowered from 27 → 19 so the cover-flow gallery installs on
+        // Glass XE / EE1 (KitKat) too. translationZ + a few other API 21+
+        // properties are runtime-gated.
+        minSdk = 19
         targetSdk = 34
         versionCode = 4
         versionName = "0.4.0-alpha"
@@ -36,5 +39,5 @@ dependencies {
     implementation(project(":glass-plugin-sdk"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("androidx.viewpager2:viewpager2:1.1.0")
+    implementation("androidx.viewpager2:viewpager2:1.0.0")
 }

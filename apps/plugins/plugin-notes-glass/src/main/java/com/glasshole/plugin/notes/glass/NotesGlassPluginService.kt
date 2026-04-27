@@ -4,6 +4,7 @@ import android.content.Intent
 import android.util.Log
 import com.glasshole.glass.sdk.GlassPluginMessage
 import com.glasshole.glass.sdk.GlassPluginService
+import com.glasshole.glass.sdk.PluginConfigHandler
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -11,12 +12,28 @@ class NotesGlassPluginService : GlassPluginService() {
 
     companion object {
         private const val TAG = "NotesGlassPlugin"
+        const val PREFS_NAME = "notes_settings"
     }
 
     override val pluginId: String = "notes"
 
+    // Routes SCHEMA_REQ / CONFIG_READ / CONFIG_WRITE for the dynamic
+    // settings UI. The schema is the res/raw/plugin_schema.json we ship,
+    // and current values live in SharedPreferences("notes_settings").
+    private val configHandler by lazy {
+        PluginConfigHandler(
+            context = this,
+            prefsName = PREFS_NAME,
+            schemaResId = R.raw.plugin_schema,
+            send = { type, payload ->
+                sendToPhone(GlassPluginMessage(type, payload))
+            }
+        )
+    }
+
     override fun onMessageFromPhone(message: GlassPluginMessage) {
         Log.d(TAG, "Message from phone: type=${message.type}")
+        if (configHandler.handle(message)) return
         when (message.type) {
             "NOTE_CONTENT" -> handleNoteContent(message.payload)
             "NOTE_LIST" -> handleNoteList(message.payload)

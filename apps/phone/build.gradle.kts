@@ -11,8 +11,8 @@ android {
         applicationId = "com.glasshole.phone"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.4.0-alpha"
+        versionCode = 6
+        versionName = "1.0.0-beta"
     }
 
     buildTypes {
@@ -30,12 +30,18 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
+    buildFeatures {
+        // Need BuildConfig.VERSION_NAME on the home screen.
+        buildConfig = true
+    }
 }
 
 dependencies {
     implementation(project(":plugin-sdk"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.11.0")
+    implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("com.google.android.gms:play-services-location:21.1.0")
 }

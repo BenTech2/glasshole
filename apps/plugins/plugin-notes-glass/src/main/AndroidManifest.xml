@@ -17,6 +17,11 @@
                 <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
             </intent-filter>
             <meta-data android:name="com.glasshole.plugin.ID" android:value="notes" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="Notes" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="Quick dictated notes viewable on glass" />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA"
+                android:resource="@raw/plugin_schema" />
         </service>
 
         <activity

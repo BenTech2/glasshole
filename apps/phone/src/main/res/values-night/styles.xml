@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.GlassHole" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#90CAF9</item>
-        <item name="colorPrimaryVariant">#1565C0</item>
-        <item name="colorOnPrimary">#000000</item>
-        <item name="colorSecondary">#81C784</item>
-        <item name="colorSecondaryVariant">#388E3C</item>
-        <item name="colorOnSecondary">#000000</item>
-        <item name="android:statusBarColor">#121212</item>
-        <item name="android:windowBackground">#121212</item>
+    <style name="Theme.GlassHole" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/seed_primary_dark</item>
+        <item name="colorOnPrimary">#001A41</item>
+        <item name="colorPrimaryContainer">@color/seed_primary_container_dark</item>
+        <item name="colorOnPrimaryContainer">#D9E2FF</item>
+        <item name="colorSecondary">@color/seed_secondary_dark</item>
+        <item name="colorOnSecondary">#0E2C5F</item>
+        <item name="android:statusBarColor">?attr/colorSurface</item>
     </style>
 </resources>

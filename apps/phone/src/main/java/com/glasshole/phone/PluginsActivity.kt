@@ -8,58 +8,36 @@ import android.os.Bundle
 import android.os.IBinder
 import android.view.LayoutInflater
 import android.view.View
-import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.glasshole.phone.plugins.broadcast.BroadcastSettingsActivity
+import com.glasshole.phone.plugindir.PluginDirectory
+import com.glasshole.phone.plugindir.PluginSettingsActivity
 import com.glasshole.phone.plugins.calc.CalcHistoryActivity
-import com.glasshole.phone.plugins.chat.ChatSettingsActivity
 import com.glasshole.phone.plugins.notes.NotesActivity
-import com.glasshole.phone.plugins.openclaw.OpenClawSettingsActivity
 import com.glasshole.phone.service.BridgeService
-import org.json.JSONArray
 
 /**
- * Lists the user-launchable GlassHole plugins currently installed on the
- * connected glass. The glass's LIST_PACKAGES response is the source of
- * truth — whatever plugin APKs it reports as installed (excluding the
- * core device / stream / photo-sync packages) show up here with their
- * label, installed version, and an Open button routing to the phone-side
- * companion activity when one exists.
+ * Lists plugins installed on the connected glass. Entirely driven by
+ * [PluginDirectory]: glass base app emits PLUGIN_LIST on connect with
+ * each plugin's id / name / description / version, and we mirror that
+ * into a scrollable list.
+ *
+ * Tapping the settings icon opens the generic [PluginSettingsActivity]
+ * which renders whatever schema the plugin ships — no hardcoded per-
+ * plugin settings map anymore. The "Open" button still points at the
+ * legacy phone-side companion activities for the two plugins that have
+ * them (Notes + Calc) until those also migrate to dynamic surfaces.
  */
 class PluginsActivity : AppCompatActivity() {
 
-    private data class PluginRow(
-        val packageName: String,
-        val label: String,
-        val version: String,
-        val openActivity: Class<*>?,
-        val settingsActivity: Class<*>?
-    )
-
-    // Plugin packages that back core GlassHole functionality — excluded
-    private val CORE_PLUGIN_PACKAGES = setOf(
-        "com.glasshole.plugin.device.glass",
-        "com.glasshole.plugin.gallery.glass"
-    )
-
-    // Glass plugin package → phone-side companion activity, if any.
+    // Glass plugin package → phone-side companion "Open" activity, if any.
+    // These are data-viewer activities (note list, calc history), not settings.
     private val phoneCompanions: Map<String, Class<*>> = mapOf(
         "com.glasshole.plugin.notes.glass" to NotesActivity::class.java,
         "com.glasshole.plugin.calc.glass" to CalcHistoryActivity::class.java
     )
-
-    // Glass plugin package → phone-side settings activity, if any.
-    private val phoneSettings: Map<String, Class<*>> = mapOf(
-        "com.glasshole.plugin.openclaw.glass" to OpenClawSettingsActivity::class.java,
-        "com.glasshole.plugin.chat.glass" to ChatSettingsActivity::class.java,
-        "com.glasshole.plugin.broadcast.glass" to BroadcastSettingsActivity::class.java,
-        "com.glasshole.plugin.broadcast.legacy.glass" to BroadcastSettingsActivity::class.java
-    )
-
-    private val rows = mutableListOf<PluginRow>()
 
     private lateinit var listContainer: LinearLayout
     private lateinit var statusText: TextView
@@ -67,17 +45,15 @@ class PluginsActivity : AppCompatActivity() {
     private var bridgeService: BridgeService? = null
     private var bridgeBound = false
 
+    private val directoryListener: () -> Unit = {
+        runOnUiThread { render() }
+    }
+
     private val bridgeConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             bridgeService = (binder as BridgeService.LocalBinder).getService()
             bridgeBound = true
-            bridgeService?.onPackageList = { json -> runOnUiThread { handlePackageList(json) } }
-            if (bridgeService?.isConnected == true) {
-                statusText.text = "Fetching installed plugins from glass…"
-                bridgeService?.requestPackageList()
-            } else {
-                statusText.text = "Glass not connected — connect to see installed plugins"
-            }
+            render()
         }
         override fun onServiceDisconnected(name: ComponentName?) {
             bridgeService = null
@@ -93,56 +69,65 @@ class PluginsActivity : AppCompatActivity() {
 
         listContainer = findViewById(R.id.pluginsList)
         statusText = findViewById(R.id.pluginsStatus)
+    }
 
-        renderList()
+    override fun onStart() {
+        super.onStart()
+        bindService(Intent(this, BridgeService::class.java), bridgeConnection, Context.BIND_AUTO_CREATE)
+        PluginDirectory.addListener(directoryListener)
+        render()
+    }
 
-        bindService(
-            Intent(this, BridgeService::class.java),
-            bridgeConnection,
-            Context.BIND_AUTO_CREATE
-        )
+    override fun onStop() {
+        super.onStop()
+        if (bridgeBound) { unbindService(bridgeConnection); bridgeBound = false }
+        PluginDirectory.removeListener(directoryListener)
     }
 
     override fun onSupportNavigateUp(): Boolean {
-        finish()
-        return true
+        finish(); return true
     }
 
-    override fun onDestroy() {
-        if (bridgeBound) {
-            bridgeService?.onPackageList = null
-            unbindService(bridgeConnection)
-            bridgeBound = false
+    private fun render() {
+        val entries = PluginDirectory.all()
+        val bridgeConnected = bridgeService?.isConnected == true
+        statusText.text = when {
+            entries.isNotEmpty() ->
+                "${entries.size} plugin${if (entries.size == 1) "" else "s"} installed on glass"
+            bridgeConnected ->
+                "No plugins discovered yet — waiting for glass to send directory…"
+            else ->
+                "Glass not connected — connect to see installed plugins"
         }
-        super.onDestroy()
-    }
 
-    private fun renderList() {
         listContainer.removeAllViews()
         val inflater = LayoutInflater.from(this)
-        for (p in rows) {
+        for (e in entries) {
             val row = inflater.inflate(R.layout.item_plugin, listContainer, false)
-            row.findViewById<TextView>(R.id.pluginName).text = p.label
-            row.findViewById<TextView>(R.id.pluginDescription).text = p.packageName
-
-            val versionView = row.findViewById<TextView>(R.id.pluginVersion)
-            versionView.text = if (p.version.isNotEmpty()) "v${p.version} on glass" else "Installed on glass"
+            row.findViewById<TextView>(R.id.pluginName).text =
+                if (e.name.isNotEmpty()) e.name else e.id
+            row.findViewById<TextView>(R.id.pluginDescription).text =
+                if (e.description.isNotEmpty()) e.description else e.packageName
+            row.findViewById<TextView>(R.id.pluginVersion).text =
+                if (e.version.isNotEmpty()) "v${e.version} on glass" else "Installed on glass"
 
             val openBtn = row.findViewById<View>(R.id.pluginOpenButton)
-            if (p.openActivity != null) {
+            val companion = phoneCompanions[e.packageName]
+            if (companion != null) {
                 openBtn.visibility = View.VISIBLE
-                openBtn.setOnClickListener {
-                    startActivity(Intent(this, p.openActivity))
-                }
+                openBtn.setOnClickListener { startActivity(Intent(this, companion)) }
             } else {
                 openBtn.visibility = View.GONE
             }
 
             val settingsBtn = row.findViewById<ImageButton>(R.id.pluginSettingsButton)
-            if (p.settingsActivity != null) {
+            if (e.hasSchema) {
                 settingsBtn.visibility = View.VISIBLE
                 settingsBtn.setOnClickListener {
-                    startActivity(Intent(this, p.settingsActivity))
+                    startActivity(
+                        Intent(this, PluginSettingsActivity::class.java)
+                            .putExtra(PluginSettingsActivity.EXTRA_PLUGIN_ID, e.id)
+                    )
                 }
             } else {
                 settingsBtn.visibility = View.GONE
@@ -150,38 +135,5 @@ class PluginsActivity : AppCompatActivity() {
 
             listContainer.addView(row)
         }
-    }
-
-    private fun handlePackageList(json: String) {
-        rows.clear()
-        try {
-            val arr = JSONArray(json)
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                val pkg = obj.optString("pkg")
-                if (!pkg.startsWith("com.glasshole.plugin.")) continue
-                if (pkg in CORE_PLUGIN_PACKAGES) continue
-
-                rows.add(
-                    PluginRow(
-                        packageName = pkg,
-                        label = obj.optString("label", pkg),
-                        version = obj.optString("version", ""),
-                        openActivity = phoneCompanions[pkg],
-                        settingsActivity = phoneSettings[pkg]
-                    )
-                )
-            }
-            rows.sortBy { it.label.lowercase() }
-        } catch (e: Exception) {
-            statusText.text = "Bad package list: ${e.message}"
-            return
-        }
-        statusText.text = if (rows.isEmpty()) {
-            "No plugins installed on glass"
-        } else {
-            "${rows.size} plugin${if (rows.size == 1) "" else "s"} installed on glass"
-        }
-        renderList()
     }
 }

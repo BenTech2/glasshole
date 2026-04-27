@@ -16,7 +16,7 @@ import android.widget.ListView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.glasshole.phone.service.NotificationForwardingService
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 
 class NotificationAppsActivity : AppCompatActivity() {
 
@@ -48,7 +48,7 @@ class NotificationAppsActivity : AppCompatActivity() {
         val searchBox = findViewById<EditText>(R.id.searchBox)
         val listView = findViewById<ListView>(R.id.appsList)
         val emptyView = findViewById<TextView>(R.id.emptyView)
-        val advancedSwitch = findViewById<SwitchMaterial>(R.id.advancedSwitch)
+        val advancedSwitch = findViewById<MaterialSwitch>(R.id.advancedSwitch)
         countText = findViewById(R.id.countText)
 
         adapter = AppsAdapter()

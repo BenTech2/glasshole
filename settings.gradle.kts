@@ -60,7 +60,21 @@ include(":plugin-openclaw-glass")
 project(":plugin-openclaw-glass").projectDir = file("apps/plugins/plugin-openclaw-glass")
 include(":plugin-chat-glass")
 project(":plugin-chat-glass").projectDir = file("apps/plugins/plugin-chat-glass")
+// plugin-nav-glass — retired in M3 of the Home rework. Nav now lives as
+// a card inside HomeActivity. Source kept for reference; removed from
+// the build.
+// include(":plugin-nav-glass")
+// project(":plugin-nav-glass").projectDir = file("apps/plugins/plugin-nav-glass")
+include(":plugin-compass-glass")
+project(":plugin-compass-glass").projectDir = file("apps/plugins/plugin-compass-glass")
+// plugin-media-glass — retired in M2 of the Home rework. Media now lives
+// inside the base app as a card in HomeActivity. Source kept for
+// reference; removed from the build.
+// include(":plugin-media-glass")
+// project(":plugin-media-glass").projectDir = file("apps/plugins/plugin-media-glass")
 include(":plugin-broadcast-glass")
 project(":plugin-broadcast-glass").projectDir = file("apps/plugins/plugin-broadcast-glass")
+include(":plugin-opencv-glass")
+project(":plugin-opencv-glass").projectDir = file("apps/plugins/plugin-opencv-glass")
 include(":plugin-broadcast-legacy-glass")
 project(":plugin-broadcast-legacy-glass").projectDir = file("apps/plugins/plugin-broadcast-legacy-glass")

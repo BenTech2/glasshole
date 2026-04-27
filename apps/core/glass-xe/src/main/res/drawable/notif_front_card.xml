@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Front notification card. Same rounded-top-corner shape as the back
+     stack cards so the deck reads as one piece, but black fill so the
+     active card stays the most prominent. The bottom edge of the
+     stroke is pushed past the bottom of the view via a negative inset
+     so the card "spills off" the bottom of the screen — top and sides
+     are bordered, bottom is open. XE is API 19, so we can't clip the
+     picture to the outline at runtime; the picture's square corners
+     show through the rounded background, which is acceptable since
+     XE notifications rarely include pictures. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:bottom="-2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#000000" />
+            <stroke
+                android:width="1dp"
+                android:color="#80FFFFFF" />
+            <corners
+                android:topLeftRadius="4dp"
+                android:topRightRadius="4dp"
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp" />
+        </shape>
+    </item>
+</layer-list>

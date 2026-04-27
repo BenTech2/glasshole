@@ -25,16 +25,43 @@ class PluginHostService : Service() {
 
     companion object {
         private const val TAG = "GlassHoleGlassHost"
+        private val HOME_OWNED_PLUGIN_IDS = setOf("media", "nav")
+        private val BASE_SERVICE_PLUGIN_IDS = setOf("gallery")
     }
 
     private var btService: BluetoothListenerService? = null
     private var btBound = false
     private val pluginConnections = mutableMapOf<String, ServiceConnection>()
 
+    /**
+     * Mirrors whatever we've asked BluetoothListenerService to register,
+     * so that when BT (re)connects we can replay the registrations. The
+     * host service starts [BluetoothListenerService] asynchronously via
+     * bindService, which means plugins that call register through our
+     * AIDL host binder in the race window would otherwise be dropped on
+     * the floor.
+     */
+    private val pluginCallbacks = mutableMapOf<String, IGlassPluginCallback>()
+
+    private fun registerWithBt(pluginId: String, callback: IGlassPluginCallback) {
+        pluginCallbacks[pluginId] = callback
+        btService?.registerPlugin(pluginId, callback)
+    }
+
+    private fun unregisterWithBt(pluginId: String) {
+        pluginCallbacks.remove(pluginId)
+        btService?.unregisterPlugin(pluginId)
+    }
+
     private val btConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             btService = (binder as BluetoothListenerService.LocalBinder).getService()
             btBound = true
+            // Replay every plugin callback we cached while BT was down so
+            // messages routed to those plugin IDs actually reach them.
+            for ((id, cb) in pluginCallbacks) {
+                btService?.registerPlugin(id, cb)
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -45,11 +72,11 @@ class PluginHostService : Service() {
 
     private val hostBinder = object : IGlassPluginHost.Stub() {
         override fun registerGlassPlugin(pluginId: String, callback: IGlassPluginCallback) {
-            btService?.registerPlugin(pluginId, callback)
+            registerWithBt(pluginId, callback)
         }
 
         override fun unregisterGlassPlugin(pluginId: String) {
-            btService?.unregisterPlugin(pluginId)
+            unregisterWithBt(pluginId)
         }
 
         override fun sendToPhone(pluginId: String, message: GlassPluginMessage): Boolean {
@@ -117,6 +144,12 @@ class PluginHostService : Service() {
             val metaData = serviceInfo.metaData ?: continue
             val pluginId = metaData.getString(GlassPluginConstants.META_PLUGIN_ID) ?: continue
 
+            // Home-owned IDs and base-service IDs are handled in the base
+            // app — skip any old external plugin APK that still claims one
+            // of them to avoid double-handling.
+            if (pluginId in HOME_OWNED_PLUGIN_IDS) continue
+            if (pluginId in BASE_SERVICE_PLUGIN_IDS) continue
+
             // If we're already bound to this plugin, skip — a future disconnect
             // will retry.
             if (pluginConnections.containsKey(pluginId)) continue
@@ -129,13 +162,13 @@ class PluginHostService : Service() {
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 val callback = IGlassPluginCallback.Stub.asInterface(binder)
-                btService?.registerPlugin(pluginId, callback)
+                registerWithBt(pluginId, callback)
                 Log.i(TAG, "Glass plugin connected: $pluginId")
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
                 Log.i(TAG, "Glass plugin disconnected: $pluginId — will retry")
-                btService?.unregisterPlugin(pluginId)
+                unregisterWithBt(pluginId)
                 try { unbindService(this) } catch (_: Exception) {}
                 pluginConnections.remove(pluginId)
                 // Plugin process died (crash or package replaced) — try to

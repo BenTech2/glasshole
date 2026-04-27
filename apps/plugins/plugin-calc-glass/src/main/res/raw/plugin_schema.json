@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "max_history",
+      "type": "slider",
+      "label": "History entries to keep on phone",
+      "min": 20,
+      "max": 500,
+      "step": 20,
+      "default": 100
+    }
+  ],
+  "workers": [
+    {
+      "primitive": "history-store",
+      "params": {
+        "trigger": "RESULT",
+        "prefs_name": "calc_history",
+        "prefs_key": "history",
+        "max_entries": "${max_history}"
+      }
+    }
+  ]
+}

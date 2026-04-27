@@ -6,14 +6,19 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.glasshole.phone.bt.ProtocolCodec
+import com.glasshole.phone.debug.NotificationReplayStore
 import com.glasshole.phone.service.BridgeService
 import com.glasshole.phone.service.NotificationForwardingService
+import com.google.android.material.materialswitch.MaterialSwitch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -28,11 +33,30 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var sendStreamButton: Button
     private lateinit var sendMultiButton: Button
     private lateinit var sendImageButton: Button
+    private lateinit var resetAdminPromptButton: Button
     private lateinit var statusText: TextView
+
+    private lateinit var captureSwitch: MaterialSwitch
+    private lateinit var captureLimitSpinner: Spinner
+    private lateinit var captureCountText: TextView
+    private lateinit var clearCacheButton: Button
+    private lateinit var replaySpinner: Spinner
+    private lateinit var replayButton: Button
+    private lateinit var replayRefreshButton: Button
+    private var replayEntries: List<NotificationReplayStore.Entry> = emptyList()
+
+    // Cache-limit dropdown options. -1 maps to UNLIMITED in the store.
+    private val limitOptions = listOf(100, 250, 500, 1000, NotificationReplayStore.UNLIMITED)
+    private val limitLabels = listOf("100", "250", "500", "1000", "Unlimited")
 
     private var bridgeService: BridgeService? = null
     private var bridgeBound = false
     private var testCounter = 0
+
+    // Cached test images, fetched eagerly so the test-send buttons
+    // don't block on a network round-trip when tapped.
+    @Volatile private var cachedTestImageBase64: String? = null
+    @Volatile private var cachedYoutubeThumbBase64: String? = null
 
     private val bridgeConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -59,7 +83,16 @@ class DebugActivity : AppCompatActivity() {
         sendStreamButton = findViewById(R.id.debugSendStreamButton)
         sendMultiButton = findViewById(R.id.debugSendMultiButton)
         sendImageButton = findViewById(R.id.debugSendImageButton)
+        resetAdminPromptButton = findViewById(R.id.debugResetAdminPromptButton)
         statusText = findViewById(R.id.debugStatusText)
+
+        captureSwitch = findViewById(R.id.debugCaptureSwitch)
+        captureLimitSpinner = findViewById(R.id.debugCaptureLimitSpinner)
+        captureCountText = findViewById(R.id.debugCaptureCount)
+        clearCacheButton = findViewById(R.id.debugClearCacheButton)
+        replaySpinner = findViewById(R.id.debugReplaySpinner)
+        replayButton = findViewById(R.id.debugReplayButton)
+        replayRefreshButton = findViewById(R.id.debugReplayRefreshButton)
 
         sendButton.setOnClickListener { sendVariant(Variant.PLAIN) }
         sendReplyButton.setOnClickListener { sendVariant(Variant.REPLY) }
@@ -67,12 +100,68 @@ class DebugActivity : AppCompatActivity() {
         sendStreamButton.setOnClickListener { sendVariant(Variant.STREAM) }
         sendMultiButton.setOnClickListener { sendVariant(Variant.MULTI) }
         sendImageButton.setOnClickListener { sendVariant(Variant.IMAGE) }
+        resetAdminPromptButton.setOnClickListener { sendResetAdminPrompt() }
+
+        setupCaptureControls()
 
         bindService(
             Intent(this, BridgeService::class.java),
             bridgeConnection,
             Context.BIND_AUTO_CREATE
         )
+
+        prefetchTestImages()
+    }
+
+    private fun prefetchTestImages() {
+        Thread {
+            if (cachedTestImageBase64 == null) {
+                cachedTestImageBase64 = fetchAndEncode(
+                    "https://upload.wikimedia.org/wikipedia/en/2/27/Bliss_%28Windows_XP%29.png"
+                )
+            }
+            if (cachedYoutubeThumbBase64 == null) {
+                // Matches the TEST_VIDEO_ID used by the STREAM variant. A real
+                // YouTube notification attaches this same thumbnail image.
+                cachedYoutubeThumbBase64 = fetchAndEncode(
+                    "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+                )
+            }
+        }.apply { isDaemon = true; start() }
+    }
+
+    private fun fetchAndEncode(urlStr: String): String? {
+        return try {
+            val conn = (java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 5000
+                readTimeout = 8000
+                instanceFollowRedirects = true
+                // Wikimedia rejects default UAs; YouTube doesn't mind but it's
+                // a reasonable default for any debug image fetch.
+                setRequestProperty(
+                    "User-Agent",
+                    "GlassHole-Debug/1.0 (https://github.com/glasshole)"
+                )
+            }
+            val bmp = conn.inputStream.use {
+                android.graphics.BitmapFactory.decodeStream(it)
+            } ?: return null
+            // Keep the payload small — BT pipe chokes on full-res.
+            val maxEdge = 480
+            val longest = maxOf(bmp.width, bmp.height)
+            val scaled = if (longest > maxEdge) {
+                val ratio = maxEdge.toFloat() / longest
+                android.graphics.Bitmap.createScaledBitmap(
+                    bmp, (bmp.width * ratio).toInt(), (bmp.height * ratio).toInt(), true
+                ).also { if (it !== bmp) bmp.recycle() }
+            } else bmp
+            val stream = java.io.ByteArrayOutputStream()
+            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, stream)
+            scaled.recycle()
+            android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override fun onResume() {
@@ -102,6 +191,18 @@ class DebugActivity : AppCompatActivity() {
         sendStreamButton.isEnabled = enabled
         sendMultiButton.isEnabled = enabled
         sendImageButton.isEnabled = enabled
+        resetAdminPromptButton.isEnabled = enabled
+    }
+
+    private fun sendResetAdminPrompt() {
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            updateStatus()
+            return
+        }
+        val ok = bridge.sendResetHomeAdminPrompt()
+        toast(if (ok) "Sent — open GlassHole on the glass" else "Send failed")
     }
 
     private enum class Variant { PLAIN, REPLY, OPEN_PHONE, STREAM, MULTI, IMAGE }
@@ -152,8 +253,13 @@ class DebugActivity : AppCompatActivity() {
             put("text", text)
             put("actions", actions)
             if (variant == Variant.IMAGE) {
-                val picture = generateTestImageBase64()
+                val picture = cachedTestImageBase64 ?: generateTestImageBase64()
                 if (picture != null) put("picture", picture)
+            }
+            if (variant == Variant.STREAM) {
+                // Real YouTube notifications ship a video thumbnail as their
+                // largeIcon/picture; mirror that so the Glass card matches.
+                cachedYoutubeThumbBase64?.let { put("picture", it) }
             }
         }.toString()
 
@@ -318,5 +424,93 @@ class DebugActivity : AppCompatActivity() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    // --- Notification capture / replay (debug) ---
+
+    private fun setupCaptureControls() {
+        // Toggle reflects the persisted opt-in flag.
+        captureSwitch.isChecked = NotificationReplayStore.isEnabled(this)
+        captureSwitch.setOnCheckedChangeListener { _, checked ->
+            NotificationReplayStore.setEnabled(this, checked)
+            updateCaptureCount()
+        }
+
+        // Limit spinner — preselect the saved limit (or "Unlimited" if no
+        // exact match in our discrete list).
+        val adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, limitLabels
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        captureLimitSpinner.adapter = adapter
+        val savedLimit = NotificationReplayStore.getLimit(this)
+        val savedIdx = limitOptions.indexOf(savedLimit).let {
+            if (it >= 0) it else limitOptions.indexOf(NotificationReplayStore.UNLIMITED)
+        }
+        captureLimitSpinner.setSelection(savedIdx)
+        captureLimitSpinner.onItemSelectedListener =
+            object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                    val newLimit = limitOptions[pos]
+                    if (newLimit != NotificationReplayStore.getLimit(this@DebugActivity)) {
+                        NotificationReplayStore.setLimit(this@DebugActivity, newLimit)
+                        updateCaptureCount()
+                    }
+                }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+
+        clearCacheButton.setOnClickListener {
+            NotificationReplayStore.clear(this)
+            refreshReplaySpinner()
+            updateCaptureCount()
+            toast("Cleared")
+        }
+
+        replayRefreshButton.setOnClickListener { refreshReplaySpinner() }
+        replayButton.setOnClickListener { replaySelected() }
+
+        refreshReplaySpinner()
+        updateCaptureCount()
+    }
+
+    private fun updateCaptureCount() {
+        captureCountText.text = "${NotificationReplayStore.count(this)} stored"
+    }
+
+    private fun refreshReplaySpinner() {
+        replayEntries = NotificationReplayStore.todayNewestFirst(this)
+        val labels = if (replayEntries.isEmpty()) {
+            listOf("(no captured notifications today)")
+        } else {
+            replayEntries.map { it.summary() }
+        }
+        val adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, labels
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        replaySpinner.adapter = adapter
+        replayButton.isEnabled = replayEntries.isNotEmpty()
+    }
+
+    private fun replaySelected() {
+        if (replayEntries.isEmpty()) return
+        val idx = replaySpinner.selectedItemPosition.coerceIn(0, replayEntries.size - 1)
+        val entry = replayEntries[idx]
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            return
+        }
+        // Re-key so the glass treats this as a fresh notification rather
+        // than deduping against the original.
+        val replayed = try {
+            JSONObject(entry.json).apply {
+                val originalKey = optString("key", "")
+                put("key", "replay-${System.currentTimeMillis()}-$originalKey")
+            }.toString()
+        } catch (_: Exception) {
+            entry.json
+        }
+        val ok = bridge.sendRaw(ProtocolCodec.encodeNotif(replayed))
+        toast(if (ok) "Replayed" else "Send failed")
     }
 }

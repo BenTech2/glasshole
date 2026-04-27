@@ -23,14 +23,18 @@
                 <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
             </intent-filter>
             <meta-data android:name="com.glasshole.plugin.ID" android:value="gallery2" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="Gallery" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="On-glass photo + video carousel" />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA"
+                android:resource="@raw/plugin_schema" />
         </service>
 
         <activity
             android:name=".CoverFlowActivity"
             android:label="Gallery"
             android:exported="true"
-            android:screenOrientation="landscape"
-            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

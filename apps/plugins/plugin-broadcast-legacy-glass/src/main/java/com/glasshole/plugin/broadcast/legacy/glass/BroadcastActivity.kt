@@ -249,7 +249,9 @@ class BroadcastActivity : Activity() {
                 return
             }
             applyDisplayMode(cfg.displayMode)
-            cam.startStream(cfg.url)
+            val rtmpUrl = cfg.url.replace("\\", "").trim()
+            Log.d(TAG, "Starting RTMP: [$rtmpUrl]")
+            cam.startStream(rtmpUrl)
             streamingStarted = true
             statusText.text = "Connecting to RTMP…"
         } catch (e: Exception) {

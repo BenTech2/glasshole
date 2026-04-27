@@ -41,7 +41,6 @@ class NoteListActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         GlassBaseAppStarter.start(this)
 
         val json = intent.getStringExtra(EXTRA_NOTES_JSON) ?: "[]"

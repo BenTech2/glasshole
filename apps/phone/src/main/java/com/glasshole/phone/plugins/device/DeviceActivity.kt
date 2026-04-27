@@ -11,7 +11,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.glasshole.phone.R
 import com.glasshole.phone.service.BridgeService
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -20,12 +20,10 @@ import java.util.TimeZone
 
 class DeviceActivity : AppCompatActivity() {
 
-    private lateinit var batteryText: TextView
-    private lateinit var glassTimeText: TextView
 
     private lateinit var brightnessSeek: SeekBar
     private lateinit var brightnessLabel: TextView
-    private lateinit var brightnessAutoSwitch: SwitchMaterial
+    private lateinit var brightnessAutoSwitch: MaterialSwitch
 
     private lateinit var volumeSeek: SeekBar
     private lateinit var volumeLabel: TextView
@@ -36,14 +34,16 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var notifTimeoutSeek: SeekBar
     private lateinit var notifTimeoutLabel: TextView
 
-    private lateinit var tiltWakeSwitch: SwitchMaterial
-    private lateinit var autoStartSwitch: SwitchMaterial
-    private lateinit var connectNotifySwitch: SwitchMaterial
+    private lateinit var tiltWakeSwitch: MaterialSwitch
+    private lateinit var autoStartSwitch: MaterialSwitch
+    private lateinit var connectNotifySwitch: MaterialSwitch
+    private lateinit var navKeepScreenOnSwitch: MaterialSwitch
+    private lateinit var navWakeOnUpdateSwitch: MaterialSwitch
+    private lateinit var wakeToTimeCardSwitch: MaterialSwitch
 
     private lateinit var wakeButton: Button
     private lateinit var syncTimeButton: Button
     private lateinit var refreshButton: Button
-    private lateinit var statusText: TextView
 
     private lateinit var timezoneCurrentText: TextView
     private lateinit var timezoneSpinner: Spinner
@@ -51,20 +51,17 @@ class DeviceActivity : AppCompatActivity() {
     private val timezoneIds: List<String> = buildTimezoneList()
 
     // Screen timeout slider uses discrete steps (seconds)
-    private val timeoutSteps = intArrayOf(15, 30, 60, 120, 300, 600, 1200, 1800)
+    private val timeoutSteps = intArrayOf(2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800)
 
     // Notification on-screen timeout steps (seconds)
     private val notifTimeoutSteps = intArrayOf(3, 5, 8, 12, 15, 20, 30, 60)
     private val defaultNotifTimeoutMs = 12_000L
 
-    private val dateFmt = SimpleDateFormat("EEE d MMM yyyy, HH:mm:ss", Locale.getDefault())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_device)
 
-        batteryText = findViewById(R.id.batteryText)
-        glassTimeText = findViewById(R.id.glassTimeText)
         brightnessSeek = findViewById(R.id.brightnessSeek)
         brightnessLabel = findViewById(R.id.brightnessLabel)
         brightnessAutoSwitch = findViewById(R.id.brightnessAutoSwitch)
@@ -77,10 +74,12 @@ class DeviceActivity : AppCompatActivity() {
         tiltWakeSwitch = findViewById(R.id.tiltWakeSwitch)
         autoStartSwitch = findViewById(R.id.autoStartSwitch)
         connectNotifySwitch = findViewById(R.id.connectNotifySwitch)
+        navKeepScreenOnSwitch = findViewById(R.id.navKeepScreenOnSwitch)
+        navWakeOnUpdateSwitch = findViewById(R.id.navWakeOnUpdateSwitch)
+        wakeToTimeCardSwitch = findViewById(R.id.wakeToTimeCardSwitch)
         wakeButton = findViewById(R.id.wakeButton)
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
-        statusText = findViewById(R.id.statusText)
 
         timezoneCurrentText = findViewById(R.id.timezoneCurrentText)
         timezoneSpinner = findViewById(R.id.timezoneSpinner)
@@ -216,6 +215,48 @@ class DeviceActivity : AppCompatActivity() {
                   else "Send failed")
         }
 
+        navKeepScreenOnSwitch.isChecked = prefs.getBoolean("nav_keep_screen_on", false)
+        navKeepScreenOnSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("nav_keep_screen_on", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_NAV_KEEP_SCREEN_ON", json)
+            toast(if (sent) "Keep screen on during nav ${if (isChecked) "enabled" else "disabled"}"
+                  else "Send failed")
+        }
+
+        navWakeOnUpdateSwitch.isChecked = prefs.getBoolean("nav_wake_on_update", false)
+        navWakeOnUpdateSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("nav_wake_on_update", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_NAV_WAKE_ON_UPDATE", json)
+            toast(if (sent) "Wake screen on nav update ${if (isChecked) "enabled" else "disabled"}"
+                  else "Send failed")
+        }
+
+        wakeToTimeCardSwitch.isChecked = prefs.getBoolean("wake_to_time_card", false)
+        wakeToTimeCardSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("wake_to_time_card", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_WAKE_TO_TIME_CARD", json)
+            toast(if (sent) "Show time card on wake ${if (isChecked) "enabled" else "disabled"}"
+                  else "Send failed")
+        }
+
         // Connection-success notifications — local-only (BridgeService reads
         // the same pref on every connect). No round-trip to glass needed to
         // change the setting itself; the actual notifications are fired on
@@ -231,26 +272,28 @@ class DeviceActivity : AppCompatActivity() {
         super.onStart()
         val plugin = DevicePlugin.instance
         if (plugin == null) {
-            statusText.text = "GlassHole service not ready"
+            Toast.makeText(this, "GlassHole service not ready", Toast.LENGTH_SHORT).show()
             return
         }
         plugin.onStateChanged = { state -> runOnUiThread { renderState(state) } }
         plugin.onTimeSyncResult = { success, method ->
             runOnUiThread {
-                statusText.text = when {
+                val msg = when {
                     success && method.isNotEmpty() -> "Time synced via $method"
                     success -> "Time synced"
                     else -> "Time sync unavailable (needs root or signed system app)"
                 }
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
             }
         }
         plugin.onTimezoneSetResult = { success, tz, method ->
             runOnUiThread {
-                statusText.text = when {
+                val msg = when {
                     success && method.isNotEmpty() -> "Timezone $tz set via $method"
                     success -> "Timezone $tz set"
                     else -> "Timezone change failed (needs root or signed system app)"
                 }
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
             }
         }
         plugin.latestState?.let(::renderState)
@@ -265,14 +308,6 @@ class DeviceActivity : AppCompatActivity() {
     }
 
     private fun renderState(state: DeviceState) {
-        batteryText.text = if (state.battery >= 0) {
-            "Battery: ${state.battery}%${if (state.charging) " (charging)" else ""}"
-        } else "Battery: --"
-
-        glassTimeText.text = if (state.glassTimeMillis > 0) {
-            "Glass time: ${dateFmt.format(Date(state.glassTimeMillis))}"
-        } else "Glass time: --"
-
         brightnessSeek.max = state.brightnessMax.coerceAtLeast(1)
         if (state.brightness in 0..state.brightnessMax) {
             brightnessSeek.progress = state.brightness
@@ -301,8 +336,6 @@ class DeviceActivity : AppCompatActivity() {
         timezoneCurrentText.text = if (state.timezone.isNotEmpty()) {
             "Current on glass: ${state.timezone}"
         } else "Current on glass: --"
-
-        statusText.text = "Connected"
     }
 
     // IANA timezone IDs for the spinner. Filters out Java's 3-letter aliases

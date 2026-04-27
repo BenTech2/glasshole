@@ -28,14 +28,13 @@ class ChatActivity : Activity() {
 
     companion object {
         private const val TAG = "ChatActivity"
-        // Absolute floor — used if the phone hasn't told us the configured
-        // cap yet. The phone ships a maxMsgs field with every message;
-        // anything outside this hard max gets clamped for safety.
-        private const val FALLBACK_MAX_MESSAGES = 200
+        private const val DEFAULT_MAX_MESSAGES = 200
         private const val ABSOLUTE_MAX_MESSAGES = 1000
+        private const val DEFAULT_FONT_SIZE = 14
     }
 
-    private var maxMessages = FALLBACK_MAX_MESSAGES
+    private var maxMessages = DEFAULT_MAX_MESSAGES
+    private var fontSizeSp = DEFAULT_FONT_SIZE
 
     private lateinit var scroll: ScrollView
     private lateinit var container: LinearLayout
@@ -59,13 +58,13 @@ class ChatActivity : Activity() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.getStringExtra(ChatGlassPluginService.EXTRA_KIND)) {
                 "chat" -> {
-                    val cap = intent.getIntExtra(ChatGlassPluginService.EXTRA_MAX_MSGS, 0)
-                    if (cap in 10..ABSOLUTE_MAX_MESSAGES) maxMessages = cap
+                    // Reload display prefs per message so slider changes take
+                    // effect on the very next chat line without a restart.
+                    reloadDisplayPrefs()
                     appendChat(
                         user = intent.getStringExtra(ChatGlassPluginService.EXTRA_USER) ?: "",
                         text = intent.getStringExtra(ChatGlassPluginService.EXTRA_TEXT) ?: "",
-                        color = intent.getStringExtra(ChatGlassPluginService.EXTRA_COLOR) ?: "",
-                        sizeSp = intent.getIntExtra(ChatGlassPluginService.EXTRA_SIZE, 0)
+                        color = intent.getStringExtra(ChatGlassPluginService.EXTRA_COLOR) ?: ""
                     )
                 }
                 "status" -> setStatus(
@@ -75,14 +74,33 @@ class ChatActivity : Activity() {
         }
     }
 
+    private fun reloadDisplayPrefs() {
+        val prefs = getSharedPreferences(
+            ChatGlassPluginService.PREFS_NAME, Context.MODE_PRIVATE
+        )
+        val size = prefs.getInt("font_size", DEFAULT_FONT_SIZE)
+        fontSizeSp = if (size in 8..40) size else DEFAULT_FONT_SIZE
+        val cap = prefs.getInt("max_messages", DEFAULT_MAX_MESSAGES)
+        maxMessages = cap.coerceIn(10, ABSOLUTE_MAX_MESSAGES)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_chat)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Opt-in: keep screen on only when the plugin's toggle is on.
+        // Otherwise the system screen-timeout from the phone's Glass
+        // Settings applies like any other activity.
+        val prefs = getSharedPreferences(
+            ChatGlassPluginService.PREFS_NAME, Context.MODE_PRIVATE
+        )
+        if (prefs.getBoolean("keep_screen_on", false)) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
 
         scroll = findViewById(R.id.chatScroll)
         container = findViewById(R.id.chatContainer)
         status = findViewById(R.id.statusText)
+        reloadDisplayPrefs()
 
         val filter = IntentFilter(ChatGlassPluginService.ACTION_CHAT_EVENT)
         if (Build.VERSION.SDK_INT >= 33) {
@@ -182,7 +200,7 @@ class ChatActivity : Activity() {
         }
     }
 
-    private fun appendChat(user: String, text: String, color: String, sizeSp: Int) {
+    private fun appendChat(user: String, text: String, color: String) {
         main.post {
             status.visibility = View.GONE
 
@@ -207,7 +225,7 @@ class ChatActivity : Activity() {
                 spanned.append(text)
                 setText(spanned)
                 setTextColor(Color.WHITE)
-                textSize = if (sizeSp in 8..40) sizeSp.toFloat() else 14f
+                textSize = fontSizeSp.toFloat()
                 setPadding(0, 4, 0, 4)
             }
             container.addView(row)

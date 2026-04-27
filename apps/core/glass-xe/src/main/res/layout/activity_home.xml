@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    android:focusable="false"
+    android:focusableInTouchMode="false"
+    android:descendantFocusability="blocksDescendants">
+
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/cardPager"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:focusable="false"
+        android:focusableInTouchMode="false"
+        android:descendantFocusability="blocksDescendants" />
+
+    <include
+        android:id="@+id/mediaOverlay"
+        layout="@layout/overlay_media_controls"
+        android:visibility="gone" />
+
+    <!-- Idle-dim sleep overlay. Full-screen solid black drawn over every
+         other view; paired with screenBrightness=0 so the display really
+         does look off, even on panels whose backlight doesn't go dark
+         with 0.0 brightness alone. Any touch input raises it. -->
+    <View
+        android:id="@+id/sleepOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FF000000"
+        android:visibility="gone" />
+
+</FrameLayout>

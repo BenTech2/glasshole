@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "bot_token",
+      "type": "password",
+      "label": "Telegram bot token",
+      "default": ""
+    },
+    {
+      "key": "chat_id",
+      "type": "text",
+      "label": "Telegram chat ID",
+      "default": ""
+    },
+    {
+      "key": "kickstart_message",
+      "type": "text",
+      "label": "Kickstart message",
+      "default": "Hey, let's chat."
+    }
+  ],
+  "workers": [
+    {
+      "primitive": "http-post",
+      "params": {
+        "trigger": "KICKSTART",
+        "url": "https://api.telegram.org/bot${bot_token}/sendMessage",
+        "content_type": "application/json",
+        "body": {
+          "chat_id": "${chat_id}",
+          "text": "${kickstart_message}"
+        }
+      }
+    }
+  ]
+}

@@ -15,14 +15,18 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
+import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.glasshole.phone.model.GlassInfo
 import com.glasshole.phone.plugins.device.DeviceActivity
+import com.glasshole.phone.plugins.stream.PlaybackState
+import com.glasshole.phone.plugins.stream.StreamPlugin
 import com.glasshole.phone.service.BridgeService
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
 import com.glasshole.phone.service.NotificationForwardingService
 import com.glasshole.phone.service.PluginHostService
 
@@ -54,7 +58,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var openDeviceButton: Button
     private lateinit var openApkManagerButton: Button
     private lateinit var openDebugButton: Button
-    private lateinit var themeToggle: ImageButton
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
 
@@ -126,6 +129,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             refreshPluginCount()
+            // PluginHostService just instantiated all built-in plugins
+            // (including StreamPlugin), so its companion `instance` is now
+            // non-null. Re-run the Now Playing wiring — the first attempt
+            // in onCreate ran before the host bound, so StreamPlugin.instance
+            // was null and the callback never got registered.
+            bindNowPlayingCard()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -135,7 +144,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        applySavedTheme()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
@@ -172,9 +180,7 @@ class MainActivity : AppCompatActivity() {
         openDebugButton.setOnClickListener {
             startActivity(Intent(this, DebugActivity::class.java))
         }
-        themeToggle.setOnClickListener { toggleTheme() }
 
-        updateThemeIcon()
         checkPermissionsAndLoadDevices()
 
         // Route AppLog.log(...) from plugins/services to the on-screen panel.
@@ -195,6 +201,10 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { handlePackageListForCount(json) }
         }
         refreshPluginCount()
+        // Same idempotent re-bind as in pluginHostConnection — covers the
+        // case where another activity overwrote the callback or the
+        // StreamPlugin instance arrived after onCreate.
+        bindNowPlayingCard()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -212,7 +222,6 @@ class MainActivity : AppCompatActivity() {
         logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
         updateConnectionUI(isConnected)
         updateNotifAccessStatus()
-        updateThemeIcon()
         loadPairedDevices()
 
         connectButton.setOnClickListener { toggleConnection() }
@@ -237,7 +246,12 @@ class MainActivity : AppCompatActivity() {
         openDebugButton.setOnClickListener {
             startActivity(Intent(this, DebugActivity::class.java))
         }
-        themeToggle.setOnClickListener { toggleTheme() }
+        // Layout was re-inflated — re-bind the Now Playing card so the
+        // StreamPlugin callback points at the freshly-inflated views.
+        // Without this, fold→unfold (or vice versa) leaves the listener
+        // pointing at detached views from the old layout and the card
+        // never updates again until the activity is recreated.
+        bindNowPlayingCard()
     }
 
     private fun bindViews() {
@@ -255,33 +269,10 @@ class MainActivity : AppCompatActivity() {
         openDeviceButton = findViewById(R.id.openDeviceButton)
         openApkManagerButton = findViewById(R.id.openApkManagerButton)
         openDebugButton = findViewById(R.id.openDebugButton)
-        themeToggle = findViewById(R.id.themeToggle)
         logText = findViewById(R.id.logText)
         logScroll = findViewById(R.id.logScroll)
-    }
-
-    // --- Theme ---
-
-    private fun applySavedTheme() {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val isDark = prefs.getBoolean("dark_mode", true)
-        AppCompatDelegate.setDefaultNightMode(
-            if (isDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
-        )
-    }
-
-    private fun toggleTheme() {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val isDark = prefs.getBoolean("dark_mode", true)
-        prefs.edit().putBoolean("dark_mode", !isDark).apply()
-        AppCompatDelegate.setDefaultNightMode(
-            if (!isDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
-        )
-    }
-
-    private fun updateThemeIcon() {
-        val isDark = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean("dark_mode", true)
-        themeToggle.setImageResource(if (isDark) R.drawable.ic_sun else R.drawable.ic_moon)
+        findViewById<TextView>(R.id.versionLabel)?.text = "v${BuildConfig.VERSION_NAME}"
+        bindNowPlayingCard()
     }
 
     // --- Notification access ---
@@ -502,6 +493,134 @@ class MainActivity : AppCompatActivity() {
             unbindService(pluginHostConnection)
             pluginHostBound = false
         }
+        StreamPlugin.instance?.onPlaybackState = null
+        nowPlayingHideHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
+    }
+
+    // --- Now Playing card ---
+
+    private val nowPlayingHideHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    /** Cached duration for the latest state, used to format SeekBar drags
+     *  while the user is dragging (and we're not pulling fresh values). */
+    @Volatile private var lastDurationMs: Long = 0L
+    @Volatile private var seekBarTracking = false
+
+    private fun bindNowPlayingCard() {
+        val card = findViewById<MaterialCardView?>(R.id.nowPlayingCard) ?: return
+        val title = findViewById<TextView>(R.id.nowPlayingTitle)
+        val subtitle = findViewById<TextView>(R.id.nowPlayingSubtitle)
+        val pos = findViewById<TextView>(R.id.nowPlayingPosition)
+        val dur = findViewById<TextView>(R.id.nowPlayingDuration)
+        val seek = findViewById<SeekBar>(R.id.nowPlayingSeek)
+        val playPause = findViewById<MaterialButton>(R.id.nowPlayingPlayPause)
+        val rewind = findViewById<MaterialButton>(R.id.nowPlayingRewind)
+        val forward = findViewById<MaterialButton>(R.id.nowPlayingForward)
+        val prev = findViewById<MaterialButton>(R.id.nowPlayingPrev)
+        val next = findViewById<MaterialButton>(R.id.nowPlayingNext)
+        val close = findViewById<MaterialButton>(R.id.nowPlayingClose)
+
+        playPause.setOnClickListener {
+            val plugin = StreamPlugin.instance ?: return@setOnClickListener
+            if (plugin.lastState?.isPlaying == true) plugin.pause() else plugin.play()
+        }
+        rewind.setOnClickListener { StreamPlugin.instance?.seekRelative(-10_000L) }
+        forward.setOnClickListener { StreamPlugin.instance?.seekRelative(10_000L) }
+        prev.setOnClickListener { StreamPlugin.instance?.prev() }
+        next.setOnClickListener { StreamPlugin.instance?.next() }
+        close.setOnClickListener { StreamPlugin.instance?.stop() }
+
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onStartTrackingTouch(sb: SeekBar?) { seekBarTracking = true }
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser && lastDurationMs > 0) {
+                    val ms = (progress.toLong() * lastDurationMs / 1000L)
+                    pos.text = formatDuration(ms)
+                }
+            }
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                seekBarTracking = false
+                if (lastDurationMs > 0) {
+                    val ms = (sb!!.progress.toLong() * lastDurationMs / 1000L)
+                    StreamPlugin.instance?.seekTo(ms)
+                }
+            }
+        })
+
+        // Render whatever the plugin already has (in case we missed earlier
+        // ticks before the activity bound) and subscribe for updates.
+        renderNowPlaying(StreamPlugin.instance?.lastState, card, title, subtitle,
+            pos, dur, seek, playPause, rewind, forward, prev, next)
+        StreamPlugin.instance?.onPlaybackState = { state ->
+            runOnUiThread {
+                renderNowPlaying(state, card, title, subtitle,
+                    pos, dur, seek, playPause, rewind, forward, prev, next)
+            }
+        }
+    }
+
+    private fun renderNowPlaying(
+        state: PlaybackState?,
+        card: MaterialCardView,
+        titleView: TextView,
+        subtitle: TextView,
+        pos: TextView,
+        dur: TextView,
+        seek: SeekBar,
+        playPause: MaterialButton,
+        rewind: MaterialButton,
+        forward: MaterialButton,
+        prev: MaterialButton,
+        next: MaterialButton
+    ) {
+        nowPlayingHideHandler.removeCallbacksAndMessages(null)
+        if (state == null) {
+            card.visibility = View.GONE
+            return
+        }
+        card.visibility = View.VISIBLE
+        titleView.text = state.title.ifEmpty { "Streaming" }
+        subtitle.text = when {
+            state.isLive -> "Live"
+            state.hasQueue -> "Track ${state.cursor + 1} of ${state.queueSize}"
+            else -> if (state.isPlaying) "Playing" else "Paused"
+        }
+
+        lastDurationMs = state.durationMs
+        if (!seekBarTracking) {
+            if (state.durationMs > 0) {
+                seek.progress = ((state.positionMs.toDouble() / state.durationMs) * 1000)
+                    .toInt().coerceIn(0, 1000)
+            } else {
+                seek.progress = 0
+            }
+        }
+        seek.isEnabled = state.canSeek
+        pos.text = formatDuration(state.positionMs)
+        dur.text = if (state.durationMs > 0) formatDuration(state.durationMs) else "—"
+
+        val playIcon = if (state.isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+        playPause.setIconResource(playIcon)
+
+        rewind.isEnabled = state.canSeek
+        forward.isEnabled = state.canSeek
+        prev.visibility = if (state.hasQueue) View.VISIBLE else View.GONE
+        next.visibility = if (state.hasQueue) View.VISIBLE else View.GONE
+
+        // Auto-hide if the glass goes silent (e.g. we missed PLAYBACK_END
+        // because BT dropped). The state tick is 3s, so 10s of no inbound
+        // state = three missed ticks → safe to hide.
+        nowPlayingHideHandler.postDelayed({
+            card.visibility = View.GONE
+        }, 10_000L)
+    }
+
+    private fun formatDuration(ms: Long): String {
+        val totalSec = (ms / 1000L).coerceAtLeast(0L)
+        val h = totalSec / 3600L
+        val m = (totalSec % 3600L) / 60L
+        val s = totalSec % 60L
+        return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
+               else String.format("%d:%02d", m, s)
     }
 }

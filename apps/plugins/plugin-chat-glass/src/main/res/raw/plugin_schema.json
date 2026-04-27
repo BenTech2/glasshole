@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "platform",
+      "type": "radio",
+      "label": "Chat source",
+      "default": "twitch",
+      "options": [
+        { "value": "twitch", "label": "Twitch" },
+        { "value": "youtube", "label": "YouTube" }
+      ]
+    },
+    {
+      "key": "twitch_channel",
+      "type": "text",
+      "label": "Twitch channel",
+      "visible_when": { "key": "platform", "eq": "twitch" }
+    },
+    {
+      "key": "youtube_api_key",
+      "type": "password",
+      "label": "YouTube Data API key",
+      "visible_when": { "key": "platform", "eq": "youtube" }
+    },
+    {
+      "key": "youtube_video",
+      "type": "text",
+      "label": "YouTube live video URL or ID",
+      "visible_when": { "key": "platform", "eq": "youtube" }
+    },
+    {
+      "key": "font_size",
+      "type": "slider",
+      "label": "Font size (sp)",
+      "min": 10,
+      "max": 24,
+      "step": 2,
+      "default": 14
+    },
+    {
+      "key": "max_messages",
+      "type": "slider",
+      "label": "Chat cache (messages)",
+      "min": 50,
+      "max": 1000,
+      "step": 50,
+      "default": 200
+    },
+    {
+      "key": "keep_screen_on",
+      "type": "checkbox",
+      "label": "Keep screen on while viewing chat",
+      "default": false
+    }
+  ],
+  "workers": [
+    {
+      "primitive": "chat-twitch",
+      "enabled_when": { "key": "platform", "eq": "twitch" },
+      "params": {
+        "start_trigger": "START",
+        "stop_trigger": "STOP",
+        "channel": "${twitch_channel}",
+        "emit_type": "CHAT",
+        "status_type": "STATUS"
+      }
+    },
+    {
+      "primitive": "chat-youtube",
+      "enabled_when": { "key": "platform", "eq": "youtube" },
+      "params": {
+        "start_trigger": "START",
+        "stop_trigger": "STOP",
+        "api_key": "${youtube_api_key}",
+        "video": "${youtube_video}",
+        "emit_type": "CHAT",
+        "status_type": "STATUS"
+      }
+    }
+  ]
+}
