@@ -279,7 +279,8 @@ class MainActivity : AppCompatActivity() {
         openDebugButton = findViewById(R.id.openDebugButton)
         logText = findViewById(R.id.logText)
         logScroll = findViewById(R.id.logScroll)
-        findViewById<TextView>(R.id.versionLabel)?.text = "v${BuildConfig.VERSION_NAME}"
+        findViewById<TextView>(R.id.versionLabel)?.text =
+            "v${BuildConfig.VERSION_NAME} build ${BuildConfig.VERSION_CODE}"
         bindNowPlayingCard()
     }
 

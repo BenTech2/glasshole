@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+apply(from = "${rootDir}/build-versioning.gradle.kts")
+
 android {
     namespace = "com.glasshole.phone"
     compileSdk = 34
@@ -11,8 +13,8 @@ android {
         applicationId = "com.glasshole.phone"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.0.0-beta"
+        versionCode = (project.extra["computedVersionCode"] as Int)
+        versionName = (project.extra["computedVersionName"] as String)
     }
 
     buildTypes {

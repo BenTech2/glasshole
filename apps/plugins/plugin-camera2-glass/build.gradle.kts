@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+apply(from = "${rootDir}/build-versioning.gradle.kts")
+
 android {
     namespace = "com.glasshole.plugin.camera2.glass"
     compileSdk = 34
@@ -12,8 +14,8 @@ android {
         // EE2 is API 27 — this plugin targets EE2 only. Camera2 API ships on API 21+.
         minSdk = 27
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.4.0-alpha"
+        versionCode = (project.extra["computedVersionCode"] as Int)
+        versionName = (project.extra["computedVersionName"] as String)
     }
 
     buildTypes {

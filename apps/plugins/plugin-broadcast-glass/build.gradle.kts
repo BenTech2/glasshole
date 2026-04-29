@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+apply(from = "${rootDir}/build-versioning.gradle.kts")
+
 android {
     namespace = "com.glasshole.plugin.broadcast.glass"
     compileSdk = 34
@@ -13,8 +15,8 @@ android {
         // expects API 21+ plus some API 26 MediaCodec behaviour.
         minSdk = 27
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.4.0-alpha"
+        versionCode = (project.extra["computedVersionCode"] as Int)
+        versionName = (project.extra["computedVersionName"] as String)
     }
 
     buildTypes {
