@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Phone-side network security policy.
+
+  Modern Android (API 28+) blocks cleartext HTTP by default. The
+  GlassHole gallery WiFi-LAN transfer uses plain HTTP from a tiny
+  embedded server on the glass — not HTTPS, because the glass
+  doesn't have a cert and the traffic is local-only. We tag this
+  config as a base-config + cleartextTrafficPermitted="true" so
+  the gallery's HttpURLConnection calls don't get blocked.
+
+  Scope: domain-config can't take CIDRs, so we permit cleartext
+  globally and rely on the gallery URLs only ever pointing at the
+  glass's LAN IP. (URL token in the path is a sanity guard, not
+  a security control.)
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

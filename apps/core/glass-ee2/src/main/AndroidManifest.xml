@@ -7,6 +7,10 @@
     <!-- Used by the Glass Device Info dump (DEVICE_INFO_REQ) to read
          IP / SSID / link speed / RSSI from WifiManager.connectionInfo. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Gallery WiFi-LAN transfer: glass spins up an HTTP server on
+         the local network and the phone pulls thumbnails / full files
+         from there instead of base64-over-BT-RFCOMM. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />

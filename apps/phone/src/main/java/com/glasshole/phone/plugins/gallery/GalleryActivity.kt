@@ -26,8 +26,10 @@ import com.glasshole.phone.R
 import java.io.File
 import java.io.FileInputStream
 import java.text.SimpleDateFormat
+import java.util.Collections
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 class GalleryActivity : AppCompatActivity() {
 
@@ -132,10 +134,12 @@ class GalleryActivity : AppCompatActivity() {
     private fun onListUpdated(list: List<GalleryItem>) {
         items = list
         adapter.notifyDataSetChanged()
+        val transport = if (GalleryPlugin.instance?.wifiBaseUrl?.isNotEmpty() == true)
+            " · WiFi-LAN" else " · BT only"
         statusText.text = if (list.isEmpty())
-            "No media on glass yet"
+            "No media on glass yet$transport"
         else
-            "${list.size} items — tap to open, long-press to delete"
+            "${list.size} items — tap to open, long-press to delete$transport"
     }
 
     private fun openFull(item: GalleryItem) {
@@ -277,6 +281,19 @@ class GalleryActivity : AppCompatActivity() {
             .show()
     }
 
+    // In-memory cache + dedup set so the same thumb URL isn't fetched
+    // multiple times as the GridView recycles views during scroll.
+    private val thumbCache = Collections.synchronizedMap(LinkedHashMap<String, android.graphics.Bitmap>())
+    private val inflightThumbs = Collections.synchronizedSet(mutableSetOf<String>())
+    /** WiFi thumb fetches that have failed once — we don't retry, just
+     *  fall back to the embedded base64 thumb. Avoids a thundering
+     *  herd of doomed requests when the phone is on a different
+     *  network than the glass. */
+    private val failedThumbUrls = Collections.synchronizedSet(mutableSetOf<String>())
+    private val thumbExecutor = Executors.newFixedThreadPool(4) { r ->
+        Thread(r, "GalleryThumbFetch").apply { isDaemon = true }
+    }
+
     private inner class ThumbAdapter : BaseAdapter() {
         override fun getCount(): Int = items.size
         override fun getItem(position: Int) = items[position]
@@ -291,9 +308,28 @@ class GalleryActivity : AppCompatActivity() {
             val badge = view.findViewById<TextView>(R.id.thumbBadge)
             val nameText = view.findViewById<TextView>(R.id.thumbName)
 
-            val bmp = decodeThumb(item.thumbBase64)
-            if (bmp != null) image.setImageBitmap(bmp)
-            else image.setImageResource(android.R.drawable.ic_menu_gallery)
+            // Tag tracks the row's current item so a slow HTTP fetch
+            // landing after the row was recycled doesn't paint the
+            // wrong image.
+            image.tag = item.id
+
+            val cached = thumbCache[item.id]
+            if (cached != null) {
+                image.setImageBitmap(cached)
+            } else {
+                // Set base64 fallback FIRST so the cell never flashes
+                // empty. The HTTP fetch (if any) will overwrite when it
+                // lands.
+                val fallback = decodeThumb(item.thumbBase64)
+                if (fallback != null) image.setImageBitmap(fallback)
+                else image.setImageResource(android.R.drawable.ic_menu_gallery)
+
+                val url = item.thumbUrl
+                if (url != null && url !in failedThumbUrls && url !in inflightThumbs) {
+                    inflightThumbs.add(url)
+                    thumbExecutor.submit { fetchThumbAsync(item, url) }
+                }
+            }
 
             badge.visibility = if (item.type == "video") View.VISIBLE else View.GONE
             nameText.text = "${formatSize(item.size)} · ${dateFmt.format(Date(item.timestamp))}"
@@ -307,6 +343,34 @@ class GalleryActivity : AppCompatActivity() {
                 val bytes = Base64.decode(base64, Base64.NO_WRAP)
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             } catch (_: Exception) { null }
+        }
+
+        private fun fetchThumbAsync(item: GalleryItem, url: String) {
+            try {
+                val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 3000
+                    readTimeout = 8000
+                }
+                try {
+                    conn.connect()
+                    if (conn.responseCode != 200) throw java.io.IOException("HTTP ${conn.responseCode}")
+                    val bytes = conn.inputStream.use { it.readBytes() }
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+                    thumbCache[item.id] = bmp
+                    runOnUiThread {
+                        // Repaint any visible cell still bound to this id.
+                        adapter.notifyDataSetChanged()
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (_: Exception) {
+                failedThumbUrls.add(url)
+                // No need to invalidate — the base64 fallback is already
+                // showing.
+            } finally {
+                inflightThumbs.remove(url)
+            }
         }
 
         private fun formatSize(bytes: Long): String {

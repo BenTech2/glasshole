@@ -20,8 +20,17 @@ data class GalleryItem(
     val size: Long,
     val timestamp: Long,
     val path: String,
-    /** base64 JPEG, 120×120 square */
-    val thumbBase64: String
+    /** base64 JPEG, 120×120 square. Always present (works without
+     *  WiFi); used as the fallback if [thumbUrl] is null or fails. */
+    val thumbBase64: String,
+    /** WiFi-LAN URL the phone can fetch the thumbnail from. Only set
+     *  when both glass and phone have WiFi and the LIST included it. */
+    val thumbUrl: String? = null,
+    /** WiFi-LAN URL for the full file, if WiFi was advertised. Used as
+     *  a hint — the actual full-file fetch still goes through
+     *  GET_FULL → WIFI_OFFER so the glass server can guard with a
+     *  fresh check. */
+    val fileUrl: String? = null
 )
 
 class GalleryPlugin : PhonePlugin {
@@ -40,6 +49,14 @@ class GalleryPlugin : PhonePlugin {
 
     @Volatile
     var items: List<GalleryItem> = emptyList()
+        private set
+
+    /** WiFi-LAN base URL the glass advertised (e.g.
+     *  http://192.168.x.x:port). Empty when WiFi isn't available on
+     *  one or both ends. The activity reads this to show a "WiFi LAN"
+     *  status indicator. */
+    @Volatile
+    var wifiBaseUrl: String = ""
         private set
 
     // id → FileOutputStream for chunked downloads in progress
@@ -69,6 +86,10 @@ class GalleryPlugin : PhonePlugin {
             "CHUNK" -> handleChunk(message.payload)
             "END" -> handleEnd(message.payload)
             "DELETE_ACK" -> handleDeleteAck(message.payload)
+            // Glass advertised a WiFi-LAN download URL. Fetch it via
+            // HTTP — much faster than base64-over-BT — and fall back to
+            // GET_FULL_BT if the URL isn't reachable from this network.
+            "WIFI_OFFER" -> handleWifiOffer(message.payload)
             else -> Log.d(TAG, "Unknown message: ${message.type}")
         }
     }
@@ -108,6 +129,7 @@ class GalleryPlugin : PhonePlugin {
     private fun handleList(payload: String) {
         try {
             val obj = JSONObject(payload)
+            wifiBaseUrl = obj.optString("wifi_base_url", "")
             val arr = obj.optJSONArray("items") ?: JSONArray()
             val list = mutableListOf<GalleryItem>()
             for (i in 0 until arr.length()) {
@@ -120,14 +142,20 @@ class GalleryPlugin : PhonePlugin {
                         size = o.optLong("size", 0L),
                         timestamp = o.optLong("ts", 0L),
                         path = o.optString("path", ""),
-                        thumbBase64 = o.optString("thumb", "")
+                        thumbBase64 = o.optString("thumb", ""),
+                        thumbUrl = o.optString("thumb_url", "").ifEmpty { null },
+                        fileUrl = o.optString("file_url", "").ifEmpty { null }
                     )
                 )
             }
             items = list
             onListChanged?.invoke(list)
-            Log.i(TAG, "Gallery list: ${list.size} items")
-            AppLog.log("Gallery", "Received list: ${list.size} items")
+            Log.i(TAG, "Gallery list: ${list.size} items, wifi=${wifiBaseUrl.isNotEmpty()}")
+            AppLog.log(
+                "Gallery",
+                "Received list: ${list.size} items" +
+                    if (wifiBaseUrl.isNotEmpty()) " (WiFi-LAN at $wifiBaseUrl)" else ""
+            )
         } catch (e: Exception) {
             Log.e(TAG, "LIST parse failed: ${e.message}")
         }
@@ -177,6 +205,69 @@ class GalleryPlugin : PhonePlugin {
         } catch (e: Exception) {
             Log.e(TAG, "END failed: ${e.message}")
         }
+    }
+
+    private fun handleWifiOffer(payload: String) {
+        Thread {
+            var fellBack = false
+            try {
+                val obj = JSONObject(payload)
+                val id = obj.getString("id")
+                val url = obj.getString("url")
+                val total = obj.optLong("size", 0L)
+                val item = items.firstOrNull { it.id == id }
+                if (item == null) {
+                    Log.w(TAG, "WIFI_OFFER for unknown id $id")
+                    return@Thread
+                }
+                val target = cachedFile(item)
+                target.parentFile?.mkdirs()
+
+                AppLog.log("Gallery", "WiFi download: ${item.name} from $url")
+                val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 4000
+                    readTimeout = 30_000
+                    instanceFollowRedirects = false
+                }
+                try {
+                    conn.connect()
+                    if (conn.responseCode != 200) {
+                        throw java.io.IOException("HTTP ${conn.responseCode}")
+                    }
+                    conn.inputStream.use { input ->
+                        java.io.FileOutputStream(target).use { out ->
+                            val buf = ByteArray(64 * 1024)
+                            var received = 0L
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n <= 0) break
+                                out.write(buf, 0, n)
+                                received += n
+                                onDownloadProgress?.invoke(id, received, total)
+                            }
+                        }
+                    }
+                    AppLog.log(
+                        "Gallery",
+                        "WiFi download complete: ${item.name} (${target.length() / 1024} KB)"
+                    )
+                    onDownloadComplete?.invoke(id, target)
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "WiFi download failed, falling back to BT: ${e.message}")
+                AppLog.log("Gallery", "WiFi failed (${e.message}) — retrying over BT")
+                fellBack = true
+                try {
+                    val obj = JSONObject(payload)
+                    val id = obj.getString("id")
+                    val retry = JSONObject().apply { put("id", id) }.toString()
+                    sender(PluginMessage("GET_FULL_BT", retry))
+                } catch (_: Exception) {}
+            }
+            if (fellBack) return@Thread
+        }.apply { isDaemon = true; name = "GalleryWifiFetch"; start() }
     }
 
     private fun handleDeleteAck(payload: String) {
