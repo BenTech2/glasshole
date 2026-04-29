@@ -83,6 +83,12 @@ class CameraActivity : Activity() {
          *  in-flight recording and saves the clip. */
         const val ACTION_STOP_RECORDING =
             "com.glasshole.plugin.camera2.glass.action.STOP_RECORDING"
+        /** Phone-triggered timed recording. Activity opens straight into
+         *  recording mode, runs for [EXTRA_DURATION_MS], then stops and
+         *  finishes itself (one-shot semantics). */
+        const val ACTION_RECORD_TIMED =
+            "com.glasshole.plugin.camera2.glass.action.RECORD_TIMED"
+        const val EXTRA_DURATION_MS = "duration_ms"
         // WRITE_EXTERNAL_STORAGE is only a runtime permission on API ≤ 28.
         // On API 29+ scoped storage lets us write to DCIM without it, so we
         // build the list dynamically.
@@ -165,6 +171,13 @@ class CameraActivity : Activity() {
      *  hit the button, instead of stranded on the camera preview. */
     private var oneShotMode = false
 
+    /** Duration of a phone-triggered timed recording. Set when the
+     *  activity is launched with ACTION_RECORD_TIMED; the
+     *  startRecording onConfigured callback schedules a stopRecording
+     *  this many ms later. 0 means "no timed stop" (i.e. not in
+     *  timed-record mode). */
+    private var timedRecordDurationMs = 0L
+
     private val settingsPrefs by lazy {
         getSharedPreferences(Camera2PluginService.PREFS_NAME, MODE_PRIVATE)
     }
@@ -216,14 +229,23 @@ class CameraActivity : Activity() {
         // ACTION_RECORD_HOLD when the user has been holding the camera
         // key past the long-press threshold globally. Skip preview and
         // start recording the moment the camera device is open.
-        if (intent?.action == ACTION_RECORD_HOLD) {
+        // ACTION_RECORD_TIMED is the phone-triggered cousin — fixed
+        // duration instead of held until release.
+        if (intent?.action == ACTION_RECORD_HOLD ||
+            intent?.action == ACTION_RECORD_TIMED) {
             recordOnReady = true
             recordingArmed = true
         }
+        if (intent?.action == ACTION_RECORD_TIMED) {
+            timedRecordDurationMs = intent.getLongExtra(EXTRA_DURATION_MS, 5_000L)
+        }
 
-        // Any one-shot launch (camera-button still, hold-to-record)
-        // auto-finishes after the capture/clip is saved.
-        oneShotMode = quickCaptureMode || intent?.action == ACTION_RECORD_HOLD
+        // Any one-shot launch (camera-button still, hold-to-record,
+        // phone-triggered timed record) auto-finishes after the
+        // capture/clip is saved.
+        oneShotMode = quickCaptureMode ||
+            intent?.action == ACTION_RECORD_HOLD ||
+            intent?.action == ACTION_RECORD_TIMED
 
         backGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(
@@ -847,6 +869,19 @@ class CameraActivity : Activity() {
                             mediaRecorder?.start()
                             statusText.text = "● Recording…"
                             updateModeText()
+                            // Phone-triggered timed recording: schedule
+                            // an auto-stop now that the recorder is
+                            // really running. We can't schedule earlier
+                            // because mediaRecorder.stop() before start
+                            // raises IllegalStateException.
+                            if (timedRecordDurationMs > 0L) {
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    if (isRecording) {
+                                        recordingArmed = false
+                                        stopRecording()
+                                    }
+                                }, timedRecordDurationMs)
+                            }
                         }
                     }
                     override fun onConfigureFailed(session: CameraCaptureSession) {

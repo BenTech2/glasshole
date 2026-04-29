@@ -19,6 +19,7 @@ import com.glasshole.phone.debug.NotificationReplayStore
 import com.glasshole.phone.service.BridgeService
 import com.glasshole.phone.service.NotificationForwardingService
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.slider.Slider
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -35,6 +36,13 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var sendImageButton: Button
     private lateinit var resetAdminPromptButton: Button
     private lateinit var statusText: TextView
+
+    // Actions group
+    private lateinit var wakeGlassButton: Button
+    private lateinit var takePictureButton: Button
+    private lateinit var recordVideoButton: Button
+    private lateinit var recordDurationSlider: Slider
+    private lateinit var recordDurationLabel: TextView
 
     private lateinit var captureSwitch: MaterialSwitch
     private lateinit var captureLimitSpinner: Spinner
@@ -86,6 +94,12 @@ class DebugActivity : AppCompatActivity() {
         resetAdminPromptButton = findViewById(R.id.debugResetAdminPromptButton)
         statusText = findViewById(R.id.debugStatusText)
 
+        wakeGlassButton = findViewById(R.id.debugWakeGlassButton)
+        takePictureButton = findViewById(R.id.debugTakePictureButton)
+        recordVideoButton = findViewById(R.id.debugRecordVideoButton)
+        recordDurationSlider = findViewById(R.id.debugRecordDurationSlider)
+        recordDurationLabel = findViewById(R.id.debugRecordDurationLabel)
+
         captureSwitch = findViewById(R.id.debugCaptureSwitch)
         captureLimitSpinner = findViewById(R.id.debugCaptureLimitSpinner)
         captureCountText = findViewById(R.id.debugCaptureCount)
@@ -103,6 +117,7 @@ class DebugActivity : AppCompatActivity() {
         resetAdminPromptButton.setOnClickListener { sendResetAdminPrompt() }
 
         setupCaptureControls()
+        setupActions()
 
         bindService(
             Intent(this, BridgeService::class.java),
@@ -192,6 +207,44 @@ class DebugActivity : AppCompatActivity() {
         sendMultiButton.isEnabled = enabled
         sendImageButton.isEnabled = enabled
         resetAdminPromptButton.isEnabled = enabled
+        wakeGlassButton.isEnabled = enabled
+        takePictureButton.isEnabled = enabled
+        recordVideoButton.isEnabled = enabled
+    }
+
+    private fun setupActions() {
+        recordDurationSlider.addOnChangeListener { _, value, _ ->
+            recordDurationLabel.text = "${value.toInt()}s"
+        }
+        wakeGlassButton.setOnClickListener {
+            sendPluginAction("device", "WAKE", "", "Wake sent")
+        }
+        takePictureButton.setOnClickListener {
+            sendPluginAction("camera2", "CAPTURE_STILL", "", "Capture sent")
+        }
+        recordVideoButton.setOnClickListener {
+            val seconds = recordDurationSlider.value.toInt().coerceAtLeast(1)
+            val payload = JSONObject().apply {
+                put("duration_ms", seconds * 1000L)
+            }.toString()
+            sendPluginAction("camera2", "RECORD_VIDEO", payload, "Recording ${seconds}s")
+        }
+    }
+
+    private fun sendPluginAction(
+        pluginId: String,
+        type: String,
+        payload: String,
+        successMessage: String
+    ) {
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            updateStatus()
+            return
+        }
+        val ok = bridge.sendPluginMessage(pluginId, type, payload)
+        toast(if (ok) successMessage else "Send failed")
     }
 
     private fun sendResetAdminPrompt() {

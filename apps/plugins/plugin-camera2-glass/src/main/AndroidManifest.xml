@@ -94,6 +94,10 @@
                 <action android:name="com.glasshole.plugin.camera2.glass.action.STOP_RECORDING" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <intent-filter android:priority="1000">
+                <action android:name="com.glasshole.plugin.camera2.glass.action.RECORD_TIMED" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- Catches the global camera-button broadcast (hardware key on
