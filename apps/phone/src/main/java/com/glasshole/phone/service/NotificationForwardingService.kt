@@ -174,6 +174,22 @@ class NotificationForwardingService : NotificationListenerService() {
             return
         }
 
+        // Skip foreground-service status notifications — they're the
+        // persistent "I'm running" indicator a service shows while it's
+        // alive (Google Messages "Device pairing — connected to web",
+        // Spotify offline-sync, download manager, location-sharing
+        // sticky, etc.). The user already has them on the phone; we
+        // don't need to spam the glass every time one re-renders.
+        // FLAG_LOCAL_ONLY would be the correct signal but Google
+        // Messages's pairing notification doesn't set it; FLAG_
+        // FOREGROUND_SERVICE catches the same family. Per-app bypass
+        // via silentAllowedApps for users who genuinely want these.
+        if (pkg !in silentAllowedApps &&
+            (notification.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+            Log.d(TAG, "Skipping FOREGROUND_SERVICE notification from $pkg")
+            return
+        }
+
         // Skip media playback "now playing" cards (YouTube, Spotify, Pocket Casts,
         // etc.). These are transport-control notifications attached to a
         // MediaSession — not user-facing alerts — so forwarding them to the
@@ -198,9 +214,30 @@ class NotificationForwardingService : NotificationListenerService() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channelId = notification.channelId
                 if (channelId != null) {
+                    // Try the direct path first (only works for our own
+                    // app's channels on most builds). When that returns
+                    // null, fall back to the listener's Ranking API
+                    // which DOES expose the originating app's channel
+                    // importance — required because most cross-app
+                    // channels (e.g. Google Messages's
+                    // bugle_connected_to_web_channel_v1) come back null
+                    // through the direct call.
                     val nm = getSystemService(NotificationManager::class.java)
-                    val channel = nm?.getNotificationChannel(channelId)
-                    if (channel != null && channel.importance < NotificationManager.IMPORTANCE_DEFAULT) {
+                    var importance = nm?.getNotificationChannel(channelId)?.importance
+                        ?: NotificationManager.IMPORTANCE_UNSPECIFIED
+                    if (importance == NotificationManager.IMPORTANCE_UNSPECIFIED) {
+                        try {
+                            val rankingMap = currentRanking
+                            val ranking = android.service.notification.NotificationListenerService.Ranking()
+                            if (rankingMap?.getRanking(sbn.key, ranking) == true) {
+                                importance = ranking.channel?.importance
+                                    ?: NotificationManager.IMPORTANCE_UNSPECIFIED
+                            }
+                        } catch (_: Exception) {}
+                    }
+                    if (importance != NotificationManager.IMPORTANCE_UNSPECIFIED &&
+                        importance < NotificationManager.IMPORTANCE_DEFAULT) {
+                        Log.d(TAG, "Skipping low-importance ($importance) channel from $pkg")
                         return
                     }
                 }
