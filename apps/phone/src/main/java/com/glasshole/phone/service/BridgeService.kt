@@ -38,6 +38,11 @@ class BridgeService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "glasshole_bridge"
         private const val HEARTBEAT_INTERVAL = 10_000L
+        // Background battery sample cadence. Coarse — we want a rolling
+        // history that survives across activity opens/closes, not a
+        // live readout. The device-info activity does its own 5s poll
+        // when it's foreground; both paths write to the same store.
+        private const val BATTERY_POLL_INTERVAL_MS = 60_000L
         // If we've heard nothing back from the glass for this long, assume
         // the glass-side socket is dead even if writes still appear to
         // succeed (BT RFCOMM buffers can mask a half-closed connection,
@@ -72,6 +77,30 @@ class BridgeService : Service() {
     private var bluetoothSocket: BluetoothSocket? = null
     private var outputStream: OutputStream? = null
     @Volatile private var btConnected = false
+    /** Latest GlassInfo from the heartbeat. The Glass Device Info
+     *  page and the BatteryHistoryStore both look up the current
+     *  device id from here. */
+    @Volatile var lastGlassInfo: GlassInfo? = null
+        private set
+    /** Stable ID for the connected glass — serial when present, falls
+     *  back to model+android. Used as the file key for
+     *  BatteryHistoryStore so each glass keeps its own log. */
+    val currentDeviceId: String
+        get() {
+            val info = lastGlassInfo ?: return ""
+            val serial = info.serial
+            if (serial.isNotBlank() && serial != "?" && serial != "unknown") return serial
+            return "${info.model}-${info.androidVersion}".trim('-').ifEmpty { "" }
+        }
+    private val batteryPollHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val batteryPollRunnable = object : Runnable {
+        override fun run() {
+            if (btConnected) {
+                requestBatteryInfo()
+                batteryPollHandler.postDelayed(this, BATTERY_POLL_INTERVAL_MS)
+            }
+        }
+    }
     @Volatile private var running = false
     private var readerThread: Thread? = null
     private var heartbeatThread: Thread? = null
@@ -494,6 +523,12 @@ class BridgeService : Service() {
         pluginRouter?.notifyConnectionChanged(true)
         workerManager.onConnectionChanged(true)
         updateNotification("Connected to ${device.name}")
+        // Background battery sampling for the history graph. First
+        // request fires after a brief delay so the heartbeat INFO can
+        // populate lastGlassInfo first (we need a device id to file
+        // the sample under).
+        batteryPollHandler.removeCallbacks(batteryPollRunnable)
+        batteryPollHandler.postDelayed(batteryPollRunnable, 5_000L)
         notifyConnectionSuccess(device.name ?: "Glass")
 
         wireNotificationListener()
@@ -510,6 +545,7 @@ class BridgeService : Service() {
     fun disconnectBluetooth() {
         autoReconnect = false
         btConnected = false
+        batteryPollHandler.removeCallbacks(batteryPollRunnable)
         reconnectThread?.interrupt()
         reconnectThread = null
         heartbeatThread?.interrupt()
@@ -667,14 +703,37 @@ class BridgeService : Service() {
             }
             is DecodedMessage.Info -> {
                 val info = GlassInfo.fromJson(msg.json)
+                lastGlassInfo = info
                 log("Glass info: ${info.model} (battery: ${info.battery}%)")
                 onGlassInfo?.invoke(info)
+                // Heartbeat INFO already carries the battery percent —
+                // log it so the history is fresh even if the
+                // device-info activity has never been opened.
+                if (info.battery in 0..100) {
+                    val deviceId = currentDeviceId
+                    if (deviceId.isNotEmpty()) {
+                        com.glasshole.phone.widget.BatteryHistoryStore.get(this)
+                            .add(deviceId, System.currentTimeMillis(), info.battery.toFloat())
+                    }
+                }
             }
             is DecodedMessage.DeviceInfo -> {
                 onGlassDeviceInfo?.invoke(msg.json)
             }
             is DecodedMessage.BatteryInfo -> {
                 onGlassBatteryInfo?.invoke(msg.json)
+                // Persist for the history graph. The activity also
+                // calls add() from its 5s in-app poll; both writers
+                // hit the same per-device file.
+                try {
+                    val percent = org.json.JSONObject(msg.json)
+                        .opt("percent")?.toString()?.toFloatOrNull()
+                    val deviceId = currentDeviceId
+                    if (percent != null && deviceId.isNotEmpty()) {
+                        com.glasshole.phone.widget.BatteryHistoryStore.get(this)
+                            .add(deviceId, System.currentTimeMillis(), percent)
+                    }
+                } catch (_: Exception) {}
             }
             is DecodedMessage.InstallAck -> {
                 log("Install result: ${msg.status}")

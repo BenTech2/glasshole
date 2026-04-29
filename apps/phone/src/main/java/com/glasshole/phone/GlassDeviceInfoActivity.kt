@@ -11,10 +11,14 @@ import android.os.Looper
 import android.text.format.Formatter
 import android.view.LayoutInflater
 import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.LinearLayout
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.glasshole.phone.service.BridgeService
+import com.glasshole.phone.widget.BatteryHistoryStore
 import com.glasshole.phone.widget.BatteryHistoryView
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -42,9 +46,29 @@ class GlassDeviceInfoActivity : AppCompatActivity() {
 
     companion object {
         private const val BATTERY_POLL_MS = 5000L
-        // Cap the in-memory history so the buffer doesn't grow unbounded
-        // if the user leaves the page open for hours. ~1h at 5s spacing.
-        private const val MAX_HISTORY_SAMPLES = 720
+        private const val PREFS_NAME = "glass_device_info"
+        private const val PREF_WINDOW_MS = "battery_window_ms"
+        private const val PREF_RETENTION_MS = "battery_retention_ms"
+
+        private data class WindowChoice(val label: String, val ms: Long)
+        private val WINDOW_CHOICES = listOf(
+            WindowChoice("30 minutes", BatteryHistoryStore.WINDOW_30M),
+            WindowChoice("1 hour", BatteryHistoryStore.WINDOW_1H),
+            WindowChoice("6 hours", BatteryHistoryStore.WINDOW_6H),
+            WindowChoice("24 hours", BatteryHistoryStore.WINDOW_24H),
+            WindowChoice("7 days", BatteryHistoryStore.WINDOW_7D),
+            WindowChoice("All", BatteryHistoryStore.WINDOW_ALL)
+        )
+        private data class RetentionChoice(val label: String, val ms: Long)
+        private val RETENTION_CHOICES = listOf(
+            RetentionChoice("1 hour", 60L * 60_000L),
+            RetentionChoice("24 hours", 24L * 60 * 60_000L),
+            RetentionChoice("7 days", 7L * 24 * 60 * 60_000L),
+            RetentionChoice("30 days", 30L * 24 * 60 * 60_000L),
+            // "Indefinite" is bounded in practice by file size; pick a
+            // sensible cap (~1 year) to avoid an unbounded log.
+            RetentionChoice("Indefinite", 365L * 24 * 60 * 60_000L)
+        )
         // Stable display order. Keys not in this list still get rendered
         // at the bottom (catch-all so unknown sections aren't silently
         // dropped if the glass adds a new one later).
@@ -68,11 +92,17 @@ class GlassDeviceInfoActivity : AppCompatActivity() {
     private var bridgeService: BridgeService? = null
     private var bridgeBound = false
 
-    // Battery section is special-cased so the graph + history persist
-    // across the lightweight refreshes.
+    // Battery section is special-cased so the graph + controls persist
+    // across the lightweight refreshes. History itself lives in the
+    // BatteryHistoryStore (per-device file); the activity just chooses
+    // a window and renders.
     private var batteryRowsContainer: LinearLayout? = null
     private var batteryGraph: BatteryHistoryView? = null
-    private val batteryHistory = mutableListOf<BatteryHistoryView.Sample>()
+    private var batteryWindowSpinner: Spinner? = null
+    private var batteryRetentionSpinner: Spinner? = null
+    private val historyStore by lazy { BatteryHistoryStore.get(this) }
+    private val prefs by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
+    @Volatile private var selectedWindowMs: Long = BatteryHistoryStore.WINDOW_1H
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val batteryPollRunnable = object : Runnable {
@@ -193,8 +223,72 @@ class GlassDeviceInfoActivity : AppCompatActivity() {
             .inflate(R.layout.item_device_info_battery, container, false)
         batteryRowsContainer = card.findViewById(R.id.batteryRows)
         batteryGraph = card.findViewById(R.id.batteryHistoryView)
+        batteryWindowSpinner = card.findViewById(R.id.batteryWindowSpinner)
+        batteryRetentionSpinner = card.findViewById(R.id.batteryRetentionSpinner)
+
+        // Window (zoom) picker — drives which slice of stored samples
+        // the graph displays. Persisted in SharedPreferences so the
+        // user's choice survives activity reopens.
+        selectedWindowMs = prefs.getLong(PREF_WINDOW_MS, BatteryHistoryStore.WINDOW_1H)
+        val windowAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            WINDOW_CHOICES.map { it.label }
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        batteryWindowSpinner?.adapter = windowAdapter
+        batteryWindowSpinner?.setSelection(
+            WINDOW_CHOICES.indexOfFirst { it.ms == selectedWindowMs }.coerceAtLeast(0)
+        )
+        batteryWindowSpinner?.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, position: Int, id: Long) {
+                selectedWindowMs = WINDOW_CHOICES[position].ms
+                prefs.edit().putLong(PREF_WINDOW_MS, selectedWindowMs).apply()
+                refreshBatteryGraph()
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+
+        // Retention picker — bounds the per-device file's age. Applied
+        // immediately by trimming the store; subsequent samples roll
+        // out at the chosen cadence.
+        val retentionMs = prefs.getLong(PREF_RETENTION_MS, BatteryHistoryStore.DEFAULT_RETENTION_MS)
+        historyStore.setRetentionMs(retentionMs)
+        val retentionAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            RETENTION_CHOICES.map { it.label }
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        batteryRetentionSpinner?.adapter = retentionAdapter
+        batteryRetentionSpinner?.setSelection(
+            RETENTION_CHOICES.indexOfFirst { it.ms == retentionMs }.coerceAtLeast(2)  // default 7 days
+        )
+        batteryRetentionSpinner?.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, position: Int, id: Long) {
+                val ms = RETENTION_CHOICES[position].ms
+                historyStore.setRetentionMs(ms)
+                prefs.edit().putLong(PREF_RETENTION_MS, ms).apply()
+                refreshBatteryGraph()
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+
         applyBatterySnapshot(obj)
         container.addView(card)
+    }
+
+    private fun deviceId(): String =
+        bridgeService?.currentDeviceId.orEmpty()
+
+    /** Pull the current window's samples from the store and repaint
+     *  the graph. Called on every battery refresh and on each
+     *  spinner change. */
+    private fun refreshBatteryGraph() {
+        val graph = batteryGraph ?: return
+        val id = deviceId()
+        if (id.isEmpty()) return
+        val samples = historyStore.read(id, selectedWindowMs)
+            .map { BatteryHistoryView.Sample(it.timeMs, it.percent) }
+        graph.setSamples(samples)
     }
 
     /** Called on every BATTERY_INFO_REQ tick. Re-renders the battery
@@ -211,11 +305,15 @@ class GlassDeviceInfoActivity : AppCompatActivity() {
 
         val percent = obj.opt("percent")?.toString()?.toFloatOrNull()
             ?: obj.opt("level")?.toString()?.toFloatOrNull()
-        if (percent != null) {
-            batteryHistory.add(BatteryHistoryView.Sample(System.currentTimeMillis(), percent))
-            while (batteryHistory.size > MAX_HISTORY_SAMPLES) batteryHistory.removeAt(0)
-            batteryGraph?.setSamples(batteryHistory.toList())
+        val id = deviceId()
+        if (percent != null && id.isNotEmpty()) {
+            // Persist the activity's 5s sample for higher resolution
+            // while the page is open. BridgeService independently logs
+            // a 60s sample in the background; both writers hit the
+            // same per-device file.
+            historyStore.add(id, System.currentTimeMillis(), percent)
         }
+        refreshBatteryGraph()
     }
 
     private fun populateRows(rows: LinearLayout, obj: JSONObject) {
