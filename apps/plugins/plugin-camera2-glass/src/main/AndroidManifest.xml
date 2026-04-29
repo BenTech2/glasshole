@@ -82,7 +82,32 @@
                 <action android:name="android.intent.action.CAMERA_BUTTON" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+
+            <!-- Hold-to-record control actions, fired by the
+                 accessibility service when the user globally
+                 press-and-holds the camera key. -->
+            <intent-filter android:priority="1000">
+                <action android:name="com.glasshole.plugin.camera2.glass.action.RECORD_HOLD" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter android:priority="1000">
+                <action android:name="com.glasshole.plugin.camera2.glass.action.STOP_RECORDING" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
+
+        <!-- Catches the global camera-button broadcast (hardware key on
+             EE2, plus any app/system source that fires ACTION_CAMERA_BUTTON).
+             High priority so we win over the stock Glass camera if both
+             are installed. The receiver re-launches CameraActivity in
+             quick-capture mode. -->
+        <receiver
+            android:name=".CameraButtonReceiver"
+            android:exported="true">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.CAMERA_BUTTON" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
