@@ -67,6 +67,13 @@ class GalleryPlugin : PhonePlugin {
     var onDownloadComplete: ((id: String, file: File) -> Unit)? = null
     var onDeleteResult: ((id: String, ok: Boolean) -> Unit)? = null
 
+    /** Glass replied to UPLOAD_OFFER. `wifiUrl` is non-null when wifi
+     *  is available; null means BT chunk path. */
+    var onUploadReady: ((wifiUrl: String?) -> Unit)? = null
+    /** Per-file ack from glass (BT path only — Wi-Fi uploads are
+     *  acked synchronously in the HTTP response). */
+    var onUploadAck: ((name: String, ok: Boolean, message: String?) -> Unit)? = null
+
     override fun onCreate(context: Context, sender: PluginSender) {
         this.appContext = context.applicationContext
         this.sender = sender
@@ -90,6 +97,8 @@ class GalleryPlugin : PhonePlugin {
             // HTTP — much faster than base64-over-BT — and fall back to
             // GET_FULL_BT if the URL isn't reachable from this network.
             "WIFI_OFFER" -> handleWifiOffer(message.payload)
+            "UPLOAD_READY" -> handleUploadReady(message.payload)
+            "UPLOAD_ACK" -> handleUploadAck(message.payload)
             else -> Log.d(TAG, "Unknown message: ${message.type}")
         }
     }
@@ -116,6 +125,29 @@ class GalleryPlugin : PhonePlugin {
         AppLog.log("Gallery", "Deleting: ${item?.name ?: id}")
         val payload = JSONObject().apply { put("id", id) }.toString()
         return sender(PluginMessage("DELETE", payload))
+    }
+
+    fun requestUploadOffer(): Boolean {
+        AppLog.log("Gallery", "Requesting upload transport from glass")
+        return sender(PluginMessage("UPLOAD_OFFER", ""))
+    }
+
+    fun sendUploadStart(name: String, type: String, size: Long, md5: String): Boolean {
+        val payload = JSONObject().apply {
+            put("name", name)
+            put("type", type)
+            put("size", size)
+            put("md5", md5)
+        }.toString()
+        return sender(PluginMessage("UPLOAD_START", payload))
+    }
+
+    fun sendUploadDataChunk(base64: String): Boolean =
+        sender(PluginMessage("UPLOAD_DATA", base64))
+
+    fun sendUploadEnd(name: String): Boolean {
+        val payload = JSONObject().apply { put("name", name) }.toString()
+        return sender(PluginMessage("UPLOAD_END", payload))
     }
 
     fun cachedFile(item: GalleryItem): File {
@@ -268,6 +300,31 @@ class GalleryPlugin : PhonePlugin {
             }
             if (fellBack) return@Thread
         }.apply { isDaemon = true; name = "GalleryWifiFetch"; start() }
+    }
+
+    private fun handleUploadReady(payload: String) {
+        try {
+            val obj = JSONObject(payload)
+            val wifi = obj.optBoolean("wifi", false)
+            val url = obj.optString("url", "").ifEmpty { null }
+            AppLog.log("Gallery", "UPLOAD_READY wifi=$wifi" + if (url != null) " ($url)" else "")
+            onUploadReady?.invoke(if (wifi) url else null)
+        } catch (e: Exception) {
+            Log.w(TAG, "UPLOAD_READY parse failed: ${e.message}")
+            onUploadReady?.invoke(null)
+        }
+    }
+
+    private fun handleUploadAck(payload: String) {
+        try {
+            val obj = JSONObject(payload)
+            val name = obj.optString("name", "")
+            val ok = obj.optBoolean("ok", false)
+            val message = obj.optString("message", "").ifEmpty { null }
+            AppLog.log("Gallery", "UPLOAD_ACK $name ok=$ok" +
+                if (message != null) " ($message)" else "")
+            onUploadAck?.invoke(name, ok, message)
+        } catch (_: Exception) {}
     }
 
     private fun handleDeleteAck(payload: String) {

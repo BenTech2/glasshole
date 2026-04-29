@@ -59,14 +59,32 @@ class GalleryHandler(
 
     /** Persistent HTTP server. Lazily started on the first LIST_REQ
      *  when WiFi is up; reused for the lifetime of the process. The
-     *  server resolves ids by calling back into [mediaIndex]. */
+     *  server resolves ids by calling back into [mediaIndex] and
+     *  accepts uploads via [acceptUpload]. */
     private val httpServer by lazy {
         GalleryHttpServer(
             resolveFile = { id -> mediaIndex[id]?.let { File(it) }?.takeIf { it.exists() } },
-            generateThumbBytes = { file -> generateThumbBytes(file) }
+            generateThumbBytes = { file -> generateThumbBytes(file) },
+            acceptUpload = { name, type, staged -> acceptUpload(name, type, staged) }
         )
     }
     @Volatile private var httpServerStarted = false
+
+    /** Active BT upload session, if any. Single-flight — concurrent
+     *  uploads aren't supported on the BT pipe. */
+    @Volatile private var btUpload: BtUploadSession? = null
+
+    private class BtUploadSession(
+        val name: String,
+        val type: String,
+        val expectedSize: Long,
+        val expectedMd5: String?,
+        val target: File,
+        val out: java.io.FileOutputStream
+    ) {
+        var received: Long = 0
+        val md5 = java.security.MessageDigest.getInstance("MD5")
+    }
 
     fun handleMessage(type: String, payload: String) {
         Log.d(TAG, "Message from phone: type=$type")
@@ -77,6 +95,10 @@ class GalleryHandler(
             "GET_FULL" -> handleGetFull(payload, allowWifi = true)
             "GET_FULL_BT" -> handleGetFull(payload, allowWifi = false)
             "DELETE" -> handleDelete(payload)
+            "UPLOAD_OFFER" -> handleUploadOffer()
+            "UPLOAD_START" -> handleUploadStart(payload)
+            "UPLOAD_DATA" -> handleUploadData(payload)
+            "UPLOAD_END" -> handleUploadEnd(payload)
             else -> Log.w(TAG, "Unknown message type: $type")
         }
     }
@@ -339,6 +361,172 @@ class GalleryHandler(
             Log.e(TAG, "DELETE failed: ${e.message}")
         }
     }
+
+    // --- UPLOAD ---
+    //
+    // Two transports, mirroring the download path:
+    //   • WiFi: phone POSTs to `httpServer.uploadUrl(...)`, the
+    //     `acceptUpload` callback below does the file move + index
+    //     refresh, and the response is the per-file ack.
+    //   • BT:   phone sends UPLOAD_START → UPLOAD_DATA × N → UPLOAD_END.
+    //     We persist chunks under [btUpload] and reply UPLOAD_ACK on
+    //     END (or on early failure).
+
+    private fun handleUploadOffer() {
+        val ip = wifiIpString()
+        if (ip != null) {
+            if (!httpServerStarted) {
+                httpServer.start()
+                httpServerStarted = true
+            }
+            val json = JSONObject().apply {
+                put("wifi", true)
+                put("url", httpServer.uploadUrl(ip))
+            }.toString()
+            send("UPLOAD_READY", json)
+            Log.i(TAG, "UPLOAD_READY (wifi at ${httpServer.uploadUrl(ip)})")
+        } else {
+            val json = JSONObject().apply { put("wifi", false) }.toString()
+            send("UPLOAD_READY", json)
+            Log.i(TAG, "UPLOAD_READY (BT only — wifi unavailable)")
+        }
+    }
+
+    /**
+     * Wi-Fi upload arrived as a fully-staged file. Move it into the
+     * appropriate scanned directory so the next LIST picks it up.
+     */
+    private fun acceptUpload(name: String, type: String, staged: File): File? {
+        return try {
+            val target = chooseUploadTarget(name, type)
+            target.parentFile?.mkdirs()
+            // Try rename (zero-copy). If it crosses filesystems, fall
+            // back to copy + delete.
+            if (!staged.renameTo(target)) {
+                staged.inputStream().use { input ->
+                    target.outputStream().use { out -> input.copyTo(out) }
+                }
+                staged.delete()
+            }
+            // Refresh the in-memory index so a subsequent LIST_REQ
+            // surfaces the new file even before a scan walk.
+            mediaIndex[shortId(target.absolutePath)] = target.absolutePath
+            Log.i(TAG, "Wi-Fi upload accepted: ${target.absolutePath}")
+            target
+        } catch (e: Exception) {
+            Log.e(TAG, "acceptUpload failed: ${e.message}")
+            try { staged.delete() } catch (_: Exception) {}
+            null
+        }
+    }
+
+    private fun chooseUploadTarget(rawName: String, type: String): File {
+        val safeName = rawName
+            .replace('/', '_').replace('\\', '_').replace(':', '_')
+            .ifEmpty { "phone-upload-${System.currentTimeMillis()}" }
+        // Land alongside the camera plugin's own captures, in /sdcard/DCIM/Camera —
+        // matches what the user expects to see in the Glass gallery.
+        val baseDir = "/sdcard/DCIM/Camera"
+        var candidate = File(baseDir, safeName)
+        if (!candidate.exists()) return candidate
+        // Disambiguate "name (1).jpg", "name (2).jpg", ...
+        val dot = safeName.lastIndexOf('.')
+        val stem = if (dot > 0) safeName.substring(0, dot) else safeName
+        val ext = if (dot > 0) safeName.substring(dot) else ""
+        var n = 1
+        while (true) {
+            candidate = File(baseDir, "$stem ($n)$ext")
+            if (!candidate.exists()) return candidate
+            n++
+        }
+    }
+
+    private fun handleUploadStart(payload: String) {
+        try {
+            val obj = JSONObject(payload)
+            val name = obj.getString("name")
+            val type = obj.optString("type", "image")
+            val size = obj.optLong("size", 0L)
+            val md5 = obj.optString("md5", "").ifEmpty { null }
+
+            // If a previous session was still open (rare — would only
+            // happen on a phone-side retry), close it cleanly.
+            btUpload?.let { try { it.out.close() } catch (_: Exception) {} }
+
+            val target = chooseUploadTarget(name, type)
+            target.parentFile?.mkdirs()
+            btUpload = BtUploadSession(
+                name = name,
+                type = type,
+                expectedSize = size,
+                expectedMd5 = md5,
+                target = target,
+                out = java.io.FileOutputStream(target)
+            )
+            Log.i(TAG, "BT UPLOAD_START: $name → ${target.absolutePath} ($size bytes)")
+        } catch (e: Exception) {
+            Log.e(TAG, "UPLOAD_START failed: ${e.message}")
+            sendUploadAck(payload.tryName(), ok = false, message = "start failed")
+        }
+    }
+
+    private fun handleUploadData(payload: String) {
+        val s = btUpload ?: return
+        try {
+            // Chunk format mirrors INSTALL_DATA — payload is base64.
+            val bytes = android.util.Base64.decode(payload, android.util.Base64.NO_WRAP)
+            s.out.write(bytes)
+            s.received += bytes.size
+            s.md5.update(bytes)
+        } catch (e: Exception) {
+            Log.e(TAG, "UPLOAD_DATA write failed: ${e.message}")
+        }
+    }
+
+    private fun handleUploadEnd(payload: String) {
+        val s = btUpload ?: run {
+            Log.w(TAG, "UPLOAD_END without active session")
+            return
+        }
+        btUpload = null
+        try {
+            try { s.out.flush() } catch (_: Exception) {}
+            try { s.out.close() } catch (_: Exception) {}
+
+            val gotMd5 = s.md5.digest().joinToString("") { "%02x".format(it) }
+            val md5Ok = s.expectedMd5 == null || s.expectedMd5.equals(gotMd5, ignoreCase = true)
+            val sizeOk = s.expectedSize == 0L || s.received == s.expectedSize
+            if (!md5Ok || !sizeOk) {
+                Log.e(TAG, "UPLOAD_END verification failed: " +
+                    "size=${s.received}/${s.expectedSize} md5=$gotMd5/${s.expectedMd5}")
+                try { s.target.delete() } catch (_: Exception) {}
+                sendUploadAck(s.name, ok = false, message = "verification failed")
+                return
+            }
+            mediaIndex[shortId(s.target.absolutePath)] = s.target.absolutePath
+            Log.i(TAG, "BT upload complete: ${s.target.absolutePath} (${s.received} bytes)")
+            sendUploadAck(s.name, ok = true, path = s.target.absolutePath)
+        } catch (e: Exception) {
+            Log.e(TAG, "UPLOAD_END failed: ${e.message}")
+            sendUploadAck(s.name, ok = false, message = e.message ?: "end failed")
+        }
+    }
+
+    private fun sendUploadAck(name: String, ok: Boolean, path: String? = null, message: String? = null) {
+        val obj = JSONObject().apply {
+            put("name", name)
+            put("ok", ok)
+            if (path != null) put("path", path)
+            if (message != null) put("message", message)
+        }.toString()
+        send("UPLOAD_ACK", obj)
+    }
+
+    /** Tiny helper for the START failure path where we only have the
+     *  raw payload string in hand. */
+    private fun String.tryName(): String = try {
+        JSONObject(this).optString("name", "?")
+    } catch (_: Exception) { "?" }
 
     private fun shortId(path: String): String {
         val bytes = MessageDigest.getInstance("MD5").digest(path.toByteArray())

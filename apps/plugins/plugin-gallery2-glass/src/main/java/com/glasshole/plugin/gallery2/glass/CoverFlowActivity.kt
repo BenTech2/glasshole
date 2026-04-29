@@ -46,6 +46,15 @@ class CoverFlowActivity : Activity() {
     private var downY = 0f
     private var swiped = false
 
+    /**
+     * EE2 reverses gallery swipe direction relative to other
+     * carousels (see handleGesture / onKeyDown). EE1 and XE keep the
+     * project-standard convention because their raw MotionEvent
+     * touchpad already feels right in the original direction.
+     * Detected by API level — EE2 is the only edition at API 27+.
+     */
+    private val galleryReverseSwipe: Boolean = Build.VERSION.SDK_INT >= 27
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_cover_flow)
@@ -201,15 +210,19 @@ class CoverFlowActivity : Activity() {
                     finish()
                     return true
                 }
-                // Forward swipe (finger right, dx > 0) advances to the
-                // next item — matches every other carousel surface in the
-                // app (Home cover-flow drawer, Settings drawer) and the
-                // KEYCODE_TAB path below. Earlier the sign was flipped
-                // for an "album paging" feel but it was inconsistent with
-                // the rest of the system.
+                // EE2 only: gallery is the one carousel where the
+                // convention is intentionally inverted from Home /
+                // Settings / App drawer. With newest-first sort,
+                // swipe-forward → position +1 lands on an OLDER photo
+                // which feels counterintuitive when the content is
+                // directional. EE1/XE keep the convention because
+                // their physical touchpad reports raw MotionEvents
+                // and the user found the original direction correct
+                // there. EE2 reverses it to glideBy(-1) on forward.
                 if (!swiped && abs(dx) > 30f && abs(dx) > abs(dy)) {
                     swiped = true
-                    glideBy(if (dx > 0f) 1 else -1)
+                    val forward = if (galleryReverseSwipe) -1 else 1
+                    glideBy(if (dx > 0f) forward else -forward)
                     return true
                 }
             }
@@ -231,12 +244,20 @@ class CoverFlowActivity : Activity() {
                 true
             }
             KeyEvent.KEYCODE_TAB -> {
-                val dir = if (event?.isShiftPressed == true) -1 else 1
+                // EE2 only: inverted from other carousels — see
+                // handleGesture above for the rationale. EE1/XE keep
+                // the project standard.
+                val forward = if (galleryReverseSwipe) -1 else 1
+                val dir = if (event?.isShiftPressed == true) -forward else forward
                 glideBy(dir)
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { glideBy(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { glideBy(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                glideBy(if (galleryReverseSwipe) -1 else 1); true
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                glideBy(if (galleryReverseSwipe) 1 else -1); true
+            }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_BACK -> { finish(); true }
             else -> super.onKeyDown(keyCode, event)
