@@ -7,6 +7,13 @@
         android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- Lets us set CaptureRequest.LED_TRANSMIT = OFF to suppress the
+         camera privacy LED. Permission is signature|privileged on stock
+         Glass EE2 so the runtime grant request silently denies — but
+         the manifest entry, the runtime request flow, and the LED_TRANSMIT
+         capture request key plumbing are all in place for any future
+         platform-signed / rooted build. -->
+    <uses-permission android:name="android.permission.CAMERA_DISABLE_TRANSMIT_LED" />
 
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.any" android:required="true" />
@@ -112,6 +119,16 @@
                 <action android:name="android.intent.action.CAMERA_BUTTON" />
             </intent-filter>
         </receiver>
+
+        <!-- Runtime-permission shim for CAMERA_DISABLE_TRANSMIT_LED. Fires
+             ActivityCompat.requestPermissions; on stock Glass EE2 the
+             system silently denies (signature|privileged), but the same
+             entry point can be re-fired on a future privileged build. -->
+        <activity
+            android:name=".CameraLedPermissionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

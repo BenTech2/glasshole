@@ -64,7 +64,8 @@ class PluginHostService : Service() {
         DevicePlugin(),
         GalleryPlugin(),
         NavPlugin(),
-        MediaPlugin()
+        MediaPlugin(),
+        com.glasshole.phone.plugins.camera2.Camera2Plugin()
     )
 
     // Local binder for in-process binding (MainActivity)

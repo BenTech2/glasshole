@@ -10,6 +10,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.glasshole.phone.R
+import com.glasshole.phone.plugins.camera2.Camera2Plugin
+import com.glasshole.phone.plugins.camera2.CameraLedStatus
 import com.glasshole.phone.service.BridgeService
 import com.google.android.material.materialswitch.MaterialSwitch
 import org.json.JSONObject
@@ -44,6 +46,10 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var wakeButton: Button
     private lateinit var syncTimeButton: Button
     private lateinit var refreshButton: Button
+
+    private lateinit var cameraLedSwitch: MaterialSwitch
+    private lateinit var cameraLedStatusText: TextView
+    private lateinit var cameraLedRequestPermButton: Button
 
     private lateinit var timezoneCurrentText: TextView
     private lateinit var timezoneSpinner: Spinner
@@ -80,6 +86,10 @@ class DeviceActivity : AppCompatActivity() {
         wakeButton = findViewById(R.id.wakeButton)
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
+
+        cameraLedSwitch = findViewById(R.id.cameraLedSwitch)
+        cameraLedStatusText = findViewById(R.id.cameraLedStatusText)
+        cameraLedRequestPermButton = findViewById(R.id.cameraLedRequestPermButton)
 
         timezoneCurrentText = findViewById(R.id.timezoneCurrentText)
         timezoneSpinner = findViewById(R.id.timezoneSpinner)
@@ -266,6 +276,56 @@ class DeviceActivity : AppCompatActivity() {
             prefs.edit().putBoolean("connect_notify_enabled", isChecked).apply()
             toast("Connection notifications ${if (isChecked) "enabled" else "disabled"}")
         }
+
+        setupCameraLedControls()
+    }
+
+    private fun setupCameraLedControls() {
+        // Cached UI state — show what we last heard from glass before
+        // a fresh status arrives.
+        Camera2Plugin.instance?.latestLedStatus?.let { renderLedStatus(it) }
+            ?: run { cameraLedStatusText.text = "Status: --" }
+
+        cameraLedSwitch.setOnCheckedChangeListener { _, isChecked ->
+            val plugin = Camera2Plugin.instance
+            if (plugin == null) {
+                toast("GlassHole service not ready")
+                return@setOnCheckedChangeListener
+            }
+            plugin.setDisableLed(isChecked)
+            toast(
+                if (isChecked) "LED disable requested — check status"
+                else "LED disable cleared"
+            )
+        }
+
+        cameraLedRequestPermButton.setOnClickListener {
+            val plugin = Camera2Plugin.instance
+            if (plugin == null) {
+                toast("GlassHole service not ready")
+                return@setOnClickListener
+            }
+            plugin.requestLedPerm()
+            toast("Permission prompt fired on glass")
+        }
+    }
+
+    private fun renderLedStatus(status: CameraLedStatus) {
+        // Set switch without firing the listener.
+        cameraLedSwitch.setOnCheckedChangeListener(null)
+        cameraLedSwitch.isChecked = status.enabled
+        cameraLedSwitch.setOnCheckedChangeListener { _, isChecked ->
+            Camera2Plugin.instance?.setDisableLed(isChecked)
+        }
+
+        val parts = mutableListOf<String>()
+        parts += if (status.permissionGranted) "permission granted"
+                 else "permission denied"
+        parts += if (status.supported) "HAL supports override"
+                 else "HAL doesn't expose LED control"
+        cameraLedStatusText.text = "Status: ${parts.joinToString(" · ")}"
+        // Hide the request-perm button if we already hold it.
+        cameraLedRequestPermButton.isEnabled = !status.permissionGranted
     }
 
     override fun onStart() {
@@ -298,6 +358,12 @@ class DeviceActivity : AppCompatActivity() {
         }
         plugin.latestState?.let(::renderState)
         plugin.requestState()
+
+        // Camera LED status — subscribe + ask for a fresh value.
+        Camera2Plugin.instance?.let { cam ->
+            cam.onLedStatus = { st -> runOnUiThread { renderLedStatus(st) } }
+            cam.queryLedStatus()
+        }
     }
 
     override fun onStop() {
@@ -305,6 +371,7 @@ class DeviceActivity : AppCompatActivity() {
         DevicePlugin.instance?.onStateChanged = null
         DevicePlugin.instance?.onTimeSyncResult = null
         DevicePlugin.instance?.onTimezoneSetResult = null
+        Camera2Plugin.instance?.onLedStatus = null
     }
 
     private fun renderState(state: DeviceState) {

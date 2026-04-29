@@ -650,6 +650,34 @@ class CameraActivity : Activity() {
 
     private fun applyModeFlags(builder: CaptureRequest.Builder) {
         builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+        applyLedControl(builder)
+    }
+
+    /**
+     * Sets `CaptureRequest.LED_TRANSMIT = OFF` if the user has toggled
+     * the privacy-LED override and we hold the
+     * CAMERA_DISABLE_TRANSMIT_LED permission. The Key field is `@hide`,
+     * so we read it via reflection — Camera2 quietly ignores unknown
+     * keys, and the camera HAL on stock Glass EE2 doesn't advertise
+     * LED_TRANSMIT in LED_AVAILABLE_LEDS anyway, so this is a no-op
+     * there. Mechanism is in place for any future privileged build.
+     */
+    private fun applyLedControl(builder: CaptureRequest.Builder) {
+        val prefs = getSharedPreferences(Camera2PluginService.PREFS_NAME, MODE_PRIVATE)
+        if (!prefs.getBoolean(Camera2PluginService.KEY_DISABLE_LED, false)) return
+        if (checkSelfPermission(Camera2PluginService.PERM_DISABLE_LED) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        try {
+            val ledKey = CaptureRequest::class.java
+                .getDeclaredField("LED_TRANSMIT")
+                .apply { isAccessible = true }
+                .get(null)
+            @Suppress("UNCHECKED_CAST")
+            builder.set(ledKey as CaptureRequest.Key<Byte>, 0.toByte())
+            Log.d(TAG, "LED_TRANSMIT set to OFF on capture builder")
+        } catch (e: Exception) {
+            Log.d(TAG, "LED_TRANSMIT reflection skipped: ${e.message}")
+        }
     }
 
     // --- Still capture ---
