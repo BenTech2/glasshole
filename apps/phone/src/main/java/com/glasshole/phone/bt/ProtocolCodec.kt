@@ -74,6 +74,10 @@ object ProtocolCodec {
 
     fun encodeInfoReq(): String = "INFO_REQ\n"
 
+    fun encodeDeviceInfoReq(): String = "DEVICE_INFO_REQ\n"
+
+    fun encodeBatteryInfoReq(): String = "BATTERY_INFO_REQ\n"
+
     fun encodePing(): String = "PING\n"
     fun encodePong(): String = "PONG\n"
 
@@ -126,6 +130,8 @@ object ProtocolCodec {
             line.startsWith("NOTIF:") -> DecodedMessage.RichNotif(unescape(line.removePrefix("NOTIF:")))
             line.startsWith("MSG:") -> DecodedMessage.Notification(unescape(line.removePrefix("MSG:")))
             line.startsWith("REPLY:") -> DecodedMessage.Reply(unescape(line.removePrefix("REPLY:")))
+            line.startsWith("DEVICE_INFO:") -> DecodedMessage.DeviceInfo(line.removePrefix("DEVICE_INFO:"))
+            line.startsWith("BATTERY_INFO:") -> DecodedMessage.BatteryInfo(line.removePrefix("BATTERY_INFO:"))
             line.startsWith("INFO:") -> DecodedMessage.Info(line.removePrefix("INFO:"))
             line.startsWith("INSTALL_ACK:") -> DecodedMessage.InstallAck(line.removePrefix("INSTALL_ACK:"))
             line.startsWith("INSTALL:") -> {
@@ -178,6 +184,8 @@ sealed class DecodedMessage {
     data class RichNotif(val json: String) : DecodedMessage()
     data class Reply(val text: String) : DecodedMessage()
     data class Info(val json: String) : DecodedMessage()
+    data class DeviceInfo(val json: String) : DecodedMessage()
+    data class BatteryInfo(val json: String) : DecodedMessage()
     object Ping : DecodedMessage()
     object Pong : DecodedMessage()
     object InfoReq : DecodedMessage()

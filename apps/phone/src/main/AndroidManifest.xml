@@ -80,6 +80,12 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".GlassDeviceInfoActivity"
+            android:exported="false"
+            android:label="Glass device info"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
             android:name=".PluginsActivity"
             android:exported="false"
             android:label="Plugins"

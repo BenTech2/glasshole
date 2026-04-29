@@ -387,6 +387,14 @@
                         android:layout_marginBottom="8dp" />
 
                     <com.google.android.material.button.MaterialButton
+                        android:id="@+id/openGlassDeviceInfoButton"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Glass device info"
+                        android:layout_marginBottom="8dp" />
+
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/openApkManagerButton"
                         style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"

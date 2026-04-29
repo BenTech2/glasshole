@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Binder
 import android.os.Build
@@ -508,6 +509,232 @@ class BluetoothListenerService : Service() {
         }
     }
 
+    /**
+     * Heavyweight device-info dump for the phone's Glass Device Info
+     * page. Gathered on demand via DEVICE_INFO_REQ — kept off the
+     * heartbeat so we don't burn ~3KB of bandwidth every 10s.
+     */
+    private fun sendDeviceInfo() {
+        val os = outputStream ?: return
+        try {
+            val json = gatherDeviceInfo().toString()
+            os.write("DEVICE_INFO:$json\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+        } catch (e: Exception) {
+            Log.e(TAG, "Send device info failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Battery-only refresh — just the battery section, used for the
+     * live graph in the phone's Glass Device Info page. Tiny payload
+     * (~200 bytes) so polling every 5s costs nothing.
+     */
+    private fun sendBatteryInfo() {
+        val os = outputStream ?: return
+        try {
+            val json = gatherBatteryInfo().toString()
+            os.write("BATTERY_INFO:$json\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+        } catch (e: Exception) {
+            Log.e(TAG, "Send battery info failed: ${e.message}")
+        }
+    }
+
+    private fun gatherDeviceInfo(): JSONObject {
+        val root = JSONObject()
+        root.put("hardware", gatherHardwareInfo())
+        root.put("os", gatherOsInfo())
+        root.put("network", gatherNetworkInfo())
+        root.put("battery", gatherBatteryInfo())
+        root.put("storage", gatherStorageInfo())
+        root.put("memory", gatherMemoryInfo())
+        root.put("misc", gatherMiscInfo())
+        return root
+    }
+
+    private fun gatherHardwareInfo(): JSONObject = JSONObject().apply {
+        put("manufacturer", Build.MANUFACTURER)
+        put("brand", Build.BRAND)
+        put("model", Build.MODEL)
+        put("device", Build.DEVICE)
+        put("product", Build.PRODUCT)
+        put("board", Build.BOARD)
+        put("hardware", Build.HARDWARE)
+        put("bootloader", Build.BOOTLOADER)
+        put("serial", try { @Suppress("DEPRECATION") Build.SERIAL } catch (_: Exception) { "?" })
+        put("supported_abis",
+            if (Build.VERSION.SDK_INT >= 21) Build.SUPPORTED_ABIS.joinToString()
+            else @Suppress("DEPRECATION") "${Build.CPU_ABI}, ${Build.CPU_ABI2}"
+        )
+        val dm = resources.displayMetrics
+        put("display_density_dpi", dm.densityDpi)
+        put("display_width_px", dm.widthPixels)
+        put("display_height_px", dm.heightPixels)
+    }
+
+    private fun gatherOsInfo(): JSONObject = JSONObject().apply {
+        put("android_version", Build.VERSION.RELEASE)
+        put("sdk_int", Build.VERSION.SDK_INT)
+        put("codename", Build.VERSION.CODENAME)
+        put("build_id", Build.ID)
+        put("build_type", Build.TYPE)
+        put("build_tags", Build.TAGS)
+        put("fingerprint", Build.FINGERPRINT)
+        put("display_id", Build.DISPLAY)
+        put("incremental", Build.VERSION.INCREMENTAL)
+        try { put("security_patch", Build.VERSION.SECURITY_PATCH) } catch (_: Exception) {}
+        try {
+            val kernel = java.io.File("/proc/version").readText().trim()
+            put("kernel", kernel)
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherNetworkInfo(): JSONObject = JSONObject().apply {
+        try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val info = wifi.connectionInfo
+            if (info != null) {
+                val ip = info.ipAddress
+                if (ip != 0) {
+                    put("wifi_ip", android.text.format.Formatter.formatIpAddress(ip))
+                }
+                put("wifi_ssid", info.ssid?.removeSurrounding("\""))
+                put("wifi_bssid", info.bssid)
+                put("wifi_link_speed_mbps", info.linkSpeed)
+                put("wifi_rssi_dbm", info.rssi)
+                if (Build.VERSION.SDK_INT >= 21) {
+                    try { put("wifi_frequency_mhz", info.frequency) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            for (iface in java.net.NetworkInterface.getNetworkInterfaces()) {
+                if (iface.isLoopback) continue
+                val name = iface.name
+                val mac = iface.hardwareAddress?.joinToString(":") { "%02x".format(it) } ?: ""
+                if (mac.isNotEmpty() && mac != "00:00:00:00:00:00") {
+                    put("${name}_mac", mac)
+                }
+                for (addr in iface.inetAddresses) {
+                    if (addr.isLoopbackAddress) continue
+                    val key = if (addr is java.net.Inet6Address) "${name}_ipv6" else "${name}_ipv4"
+                    put(key, addr.hostAddress?.substringBefore('%'))
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherBatteryInfo(): JSONObject = JSONObject().apply {
+        try {
+            // BatteryManager.getIntProperty / isCharging arrived in API 21
+            // and 23 respectively. EE1/XE are API 19 — they get only the
+            // sticky-broadcast extras (which exist on every Android since
+            // forever).
+            if (Build.VERSION.SDK_INT >= 21) {
+                val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
+                try { put("percent", bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)) } catch (_: Exception) {}
+                if (Build.VERSION.SDK_INT >= 23) {
+                    try { put("charging", bm.isCharging) } catch (_: Exception) {}
+                }
+                arrayOf(
+                    "current_now_uA" to BatteryManager.BATTERY_PROPERTY_CURRENT_NOW,
+                    "current_avg_uA" to BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE,
+                    "charge_counter_uAh" to BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER
+                ).forEach { (key, prop) ->
+                    try {
+                        val v = bm.getIntProperty(prop)
+                        if (v != Int.MIN_VALUE) put(key, v)
+                    } catch (_: Exception) {}
+                }
+                try {
+                    val energy = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER)
+                    if (energy != Long.MIN_VALUE) put("energy_counter_nWh", energy)
+                } catch (_: Exception) {}
+                if (Build.VERSION.SDK_INT >= 28) {
+                    try {
+                        val rem = bm.computeChargeTimeRemaining()
+                        if (rem > 0) put("charge_time_remaining_ms", rem)
+                    } catch (_: Exception) {}
+                }
+            }
+            val sticky = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            if (sticky != null) {
+                val voltage = sticky.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1)
+                if (voltage > 0) put("voltage_mV", voltage)
+                val temp = sticky.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1)
+                if (temp >= 0) put("temperature_c", temp / 10.0)
+                put("health", batteryHealthString(
+                    sticky.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)
+                ))
+                sticky.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY)?.let {
+                    put("technology", it)
+                }
+                put("plugged", batteryPluggedString(
+                    sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
+                ))
+                val level = sticky.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = sticky.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+                if (level >= 0) put("level", level)
+                if (scale > 0) put("scale", scale)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherStorageInfo(): JSONObject = JSONObject().apply {
+        try {
+            val internal = android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath)
+            put("internal_total_bytes", internal.totalBytes)
+            put("internal_available_bytes", internal.availableBytes)
+        } catch (_: Exception) {}
+        try {
+            val ext = android.os.Environment.getExternalStorageDirectory()
+            if (ext != null) {
+                val externalFs = android.os.StatFs(ext.absolutePath)
+                put("external_total_bytes", externalFs.totalBytes)
+                put("external_available_bytes", externalFs.availableBytes)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherMemoryInfo(): JSONObject = JSONObject().apply {
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val mi = android.app.ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            put("total_bytes", mi.totalMem)
+            put("available_bytes", mi.availMem)
+            put("low_memory", mi.lowMemory)
+            put("threshold_bytes", mi.threshold)
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherMiscInfo(): JSONObject = JSONObject().apply {
+        put("uptime_ms", android.os.SystemClock.elapsedRealtime())
+        put("flavor", BuildConfig.FLAVOR)
+        put("app_version", BuildConfig.VERSION_NAME)
+        put("timezone", java.util.TimeZone.getDefault().id)
+    }
+
+    private fun batteryHealthString(health: Int): String = when (health) {
+        BatteryManager.BATTERY_HEALTH_COLD -> "cold"
+        BatteryManager.BATTERY_HEALTH_DEAD -> "dead"
+        BatteryManager.BATTERY_HEALTH_GOOD -> "good"
+        BatteryManager.BATTERY_HEALTH_OVERHEAT -> "overheat"
+        BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "over-voltage"
+        BatteryManager.BATTERY_HEALTH_UNKNOWN -> "unknown"
+        BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "failure"
+        else -> "unknown ($health)"
+    }
+
+    private fun batteryPluggedString(plugged: Int): String = when (plugged) {
+        0 -> "not plugged"
+        BatteryManager.BATTERY_PLUGGED_AC -> "AC"
+        BatteryManager.BATTERY_PLUGGED_USB -> "USB"
+        BatteryManager.BATTERY_PLUGGED_WIRELESS -> "wireless"
+        else -> "unknown ($plugged)"
+    }
+
     private fun sendPluginList() {
         val os = outputStream ?: return
         try {
@@ -624,6 +851,12 @@ class BluetoothListenerService : Service() {
                     }
                     line == "INFO_REQ" -> {
                         sendInfo()
+                    }
+                    line == "DEVICE_INFO_REQ" -> {
+                        sendDeviceInfo()
+                    }
+                    line == "BATTERY_INFO_REQ" -> {
+                        sendBatteryInfo()
                     }
                     line.startsWith("HOME_TZ:") -> {
                         val tz = line.removePrefix("HOME_TZ:").trim()

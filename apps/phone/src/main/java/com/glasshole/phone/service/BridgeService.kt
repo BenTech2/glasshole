@@ -105,6 +105,11 @@ class BridgeService : Service() {
     var onLog: ((String) -> Unit)? = null
     var onConnectionChanged: ((Boolean) -> Unit)? = null
     var onGlassInfo: ((GlassInfo) -> Unit)? = null
+    /** Raw DEVICE_INFO json — consumed by GlassDeviceInfoActivity. */
+    var onGlassDeviceInfo: ((String) -> Unit)? = null
+    /** Raw BATTERY_INFO json — lightweight 5s poll for the live battery
+     *  graph + values inside GlassDeviceInfoActivity. */
+    var onGlassBatteryInfo: ((String) -> Unit)? = null
     var onNotificationReply: ((String) -> Unit)? = null
 
     // APK manager callbacks
@@ -665,6 +670,12 @@ class BridgeService : Service() {
                 log("Glass info: ${info.model} (battery: ${info.battery}%)")
                 onGlassInfo?.invoke(info)
             }
+            is DecodedMessage.DeviceInfo -> {
+                onGlassDeviceInfo?.invoke(msg.json)
+            }
+            is DecodedMessage.BatteryInfo -> {
+                onGlassBatteryInfo?.invoke(msg.json)
+            }
             is DecodedMessage.InstallAck -> {
                 log("Install result: ${msg.status}")
                 onInstallResult?.invoke(msg.status)
@@ -732,6 +743,20 @@ class BridgeService : Service() {
     }
 
     fun requestGlassInfo() = sendRaw(ProtocolCodec.encodeInfoReq())
+
+    /** Ask Glass for the extensive device-info dump (hardware, OS,
+     *  network, advanced battery, storage, memory) used by the
+     *  Glass Device Info page. Heavier than the heartbeat INFO so
+     *  it's a separate command, polled only while that page is open. */
+    fun requestDeviceInfo(): Boolean =
+        sendRaw(ProtocolCodec.encodeDeviceInfoReq())
+
+    /** Lighter-weight battery-only refresh — just the battery section
+     *  of the device info, no kernel string / network scan / etc.
+     *  Polled every few seconds while the device-info page is open
+     *  to drive the live battery graph. */
+    fun requestBatteryInfo(): Boolean =
+        sendRaw(ProtocolCodec.encodeBatteryInfoReq())
 
     /** Ask Glass Home to clear its "already prompted" flag for the
      *  device-admin dialog so the next HomeActivity open re-asks. */

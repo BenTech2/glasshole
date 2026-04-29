@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A single key/value row inside a Glass Device Info section card.
+     Selectable so the user can long-press a value (MAC / IP / fingerprint)
+     to copy it. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingTop="6dp"
+    android:paddingBottom="6dp"
+    android:gravity="top"
+    android:baselineAligned="false">
+
+    <TextView
+        android:id="@+id/rowKey"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="0.45"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:textColor="?attr/colorOnSurfaceVariant" />
+
+    <TextView
+        android:id="@+id/rowValue"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="0.55"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:textColor="?attr/colorOnSurface"
+        android:textIsSelectable="true"
+        android:fontFamily="monospace"
+        android:textSize="13sp" />
+</LinearLayout>

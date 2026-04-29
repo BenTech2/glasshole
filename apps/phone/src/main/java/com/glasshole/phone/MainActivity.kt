@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var notifAccessButton: Button
     private lateinit var notifAppsButton: Button
     private lateinit var openGalleryButton: Button
+    private lateinit var openGlassDeviceInfoButton: Button
     private lateinit var openPluginsButton: Button
     private lateinit var openDeviceButton: Button
     private lateinit var openApkManagerButton: Button
@@ -168,6 +169,9 @@ class MainActivity : AppCompatActivity() {
         openGalleryButton.setOnClickListener {
             startActivity(Intent(this, com.glasshole.phone.plugins.gallery.GalleryActivity::class.java))
         }
+        openGlassDeviceInfoButton.setOnClickListener {
+            startActivity(Intent(this, GlassDeviceInfoActivity::class.java))
+        }
         openPluginsButton.setOnClickListener {
             startActivity(Intent(this, PluginsActivity::class.java))
         }
@@ -234,6 +238,9 @@ class MainActivity : AppCompatActivity() {
         openGalleryButton.setOnClickListener {
             startActivity(Intent(this, com.glasshole.phone.plugins.gallery.GalleryActivity::class.java))
         }
+        openGlassDeviceInfoButton.setOnClickListener {
+            startActivity(Intent(this, GlassDeviceInfoActivity::class.java))
+        }
         openPluginsButton.setOnClickListener {
             startActivity(Intent(this, PluginsActivity::class.java))
         }
@@ -265,6 +272,7 @@ class MainActivity : AppCompatActivity() {
         notifAccessButton = findViewById(R.id.notifAccessButton)
         notifAppsButton = findViewById(R.id.notifAppsButton)
         openGalleryButton = findViewById(R.id.openGalleryButton)
+        openGlassDeviceInfoButton = findViewById(R.id.openGlassDeviceInfoButton)
         openPluginsButton = findViewById(R.id.openPluginsButton)
         openDeviceButton = findViewById(R.id.openDeviceButton)
         openApkManagerButton = findViewById(R.id.openApkManagerButton)
