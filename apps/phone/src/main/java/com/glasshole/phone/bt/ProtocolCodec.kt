@@ -26,6 +26,16 @@ package com.glasshole.phone.bt
  *   PLUGIN_LIST:<json>                          - Glass tells phone which plugins
  *                                                 are installed (name / description /
  *                                                 version). Sent on connect.
+ *   LIVE_CAM_START / LIVE_CAM_STOP              - Phone asks for / ends a debug live
+ *                                                 camera stream (Wi-Fi LAN, MJPEG).
+ *   LIVE_CAM_URL:<url>                          - Glass replies with stream URL.
+ *   LIVE_CAM_ERR:<reason>                       - Glass refuses (no_wifi / camera_busy).
+ *   LIVE_SCREEN_START / LIVE_SCREEN_STOP        - Phone asks for / ends a debug live
+ *                                                 screen-mirror stream (EE2 only).
+ *   LIVE_SCREEN_URL:<url>                       - Glass replies with stream URL.
+ *   LIVE_SCREEN_ERR:<reason>                    - Glass refuses (no_wifi /
+ *                                                 unsupported_edition / consent_denied
+ *                                                 / capture_failed / user_revoked).
  *
  *   Dynamic-plugin message types riding the existing PLUGIN envelope:
  *     PLUGIN:<id>:SCHEMA_REQ:""                 - Phone asks a plugin for its settings
@@ -80,6 +90,15 @@ object ProtocolCodec {
 
     fun encodePing(): String = "PING\n"
     fun encodePong(): String = "PONG\n"
+
+    // Live debug streams. Camera works on EE1/EE2/XE; screen mirror is
+    // EE2-only — glass replies LIVE_SCREEN_ERR:unsupported_edition on
+    // the older editions. Both require Wi-Fi on the same LAN; otherwise
+    // glass replies *_ERR:no_wifi.
+    fun encodeLiveCamStart(): String = "LIVE_CAM_START\n"
+    fun encodeLiveCamStop(): String = "LIVE_CAM_STOP\n"
+    fun encodeLiveScreenStart(): String = "LIVE_SCREEN_START\n"
+    fun encodeLiveScreenStop(): String = "LIVE_SCREEN_STOP\n"
 
     fun encodeInstallStart(filename: String, size: Long, md5: String): String =
         "INSTALL:$filename:$size:$md5\n"
@@ -170,6 +189,14 @@ object ProtocolCodec {
             line.startsWith("PLUGIN_LIST:") -> {
                 DecodedMessage.PluginList(unescape(line.removePrefix("PLUGIN_LIST:")))
             }
+            line.startsWith("LIVE_CAM_URL:") ->
+                DecodedMessage.LiveCamUrl(line.removePrefix("LIVE_CAM_URL:"))
+            line.startsWith("LIVE_CAM_ERR:") ->
+                DecodedMessage.LiveCamErr(line.removePrefix("LIVE_CAM_ERR:"))
+            line.startsWith("LIVE_SCREEN_URL:") ->
+                DecodedMessage.LiveScreenUrl(line.removePrefix("LIVE_SCREEN_URL:"))
+            line.startsWith("LIVE_SCREEN_ERR:") ->
+                DecodedMessage.LiveScreenErr(line.removePrefix("LIVE_SCREEN_ERR:"))
             line == "PING" -> DecodedMessage.Ping
             line == "PONG" -> DecodedMessage.Pong
             line == "INFO_REQ" -> DecodedMessage.InfoReq
@@ -204,5 +231,9 @@ sealed class DecodedMessage {
     ) : DecodedMessage()
     data class NotifDismiss(val notifKey: String) : DecodedMessage()
     data class PluginList(val json: String) : DecodedMessage()
+    data class LiveCamUrl(val url: String) : DecodedMessage()
+    data class LiveCamErr(val reason: String) : DecodedMessage()
+    data class LiveScreenUrl(val url: String) : DecodedMessage()
+    data class LiveScreenErr(val reason: String) : DecodedMessage()
     data class Unknown(val raw: String) : DecodedMessage()
 }

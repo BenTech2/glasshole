@@ -87,6 +87,13 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".LiveStreamActivity"
+            android:exported="false"
+            android:label="Glass live stream"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:parentActivityName=".DebugActivity" />
+
+        <activity
             android:name=".PluginsActivity"
             android:exported="false"
             android:label="Plugins"

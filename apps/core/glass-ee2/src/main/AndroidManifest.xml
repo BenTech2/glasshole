@@ -28,6 +28,14 @@
          AUTO_TIME otherwise. -->
     <uses-permission android:name="android.permission.SET_TIME" />
     <uses-permission android:name="android.permission.SET_TIME_ZONE" />
+    <!-- Live camera/screen debug streams: phone's Debug screen can ask
+         the glass to expose a raw camera feed or screen mirror over the
+         local network. Camera permission is only needed for the live
+         stream; we open Camera1 in a headless capture session.
+         Screen mirror uses MediaProjection — gated by the system consent
+         dialog at runtime, no manifest permission required. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -89,6 +97,16 @@
             android:noHistory="true"
             android:theme="@android:style/Theme.DeviceDefault.Dialog" />
 
+        <!-- Fires the system MediaProjection consent dialog so the user
+             can grant the screen-mirror debug stream. No own UI; the
+             system dialog is the only thing the user sees. -->
+        <activity
+            android:name=".ProjectionConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Headless permission shim. HomeActivity's storage prompt fires
              this directly via startActivity when the user taps "Enable",
              so it's `exported="false"` and has no LAUNCHER intent-filter —
@@ -98,6 +116,13 @@
             android:name=".GalleryPermissionActivity"
             android:label="Gallery Access"
             android:exported="false" />
+
+        <activity
+            android:name=".CameraPermissionActivity"
+            android:label="Camera Access"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
 
         <service
             android:name=".BluetoothListenerService"
@@ -133,6 +158,7 @@
         <service
             android:name=".SleepAccessibilityService"
             android:exported="true"
+            android:directBootAware="true"
             android:label="GlassHole Swipe-Down Sleep"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>

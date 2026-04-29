@@ -8,6 +8,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.glasshole.glass.sdk.GlassPluginConstants
 
 /**
@@ -40,7 +41,21 @@ class SleepAccessibilityService : AccessibilityService() {
         private const val TAG = "GlassHoleSleepA11y"
         private const val GLASS_LAUNCHER_PKG = "com.google.android.glass.launcher"
         private const val CAMERA_PLUGIN_PKG = "com.glasshole.plugin.camera2.glass"
+        private const val SYSTEMUI_PKG = "com.android.systemui"
+        private const val MEDIA_PROJECTION_DIALOG_CLASS =
+            "com.android.systemui.media.MediaProjectionPermissionActivity"
         private const val LONG_PRESS_THRESHOLD_MS = 500L
+
+        /**
+         * Toggled by [BluetoothListenerService.handleLiveScreenStart] right
+         * before launching ProjectionConsentActivity. While true, the
+         * accessibility service auto-clicks "Start now" when SystemUI's
+         * MediaProjectionPermissionActivity comes into focus, because
+         * Glass's tiny display doesn't expose those buttons reliably to
+         * the touchpad. Cleared by the dialog handler after one click,
+         * or by a 5-second watchdog if the dialog never appears.
+         */
+        @Volatile var autoConfirmProjection: Boolean = false
     }
 
     @Volatile private var currentPackage: String = ""
@@ -71,7 +86,55 @@ class SleepAccessibilityService : AccessibilityService() {
         event ?: return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             currentPackage = event.packageName?.toString() ?: ""
+            // Auto-tap MediaProjection consent: Glass EE2's screen
+            // can't expose the [Start now] button reliably so we
+            // synthesize the click. Only fires when LIVE_SCREEN_START
+            // just asked for it.
+            if (autoConfirmProjection &&
+                event.packageName?.toString() == SYSTEMUI_PKG &&
+                event.className?.toString() == MEDIA_PROJECTION_DIALOG_CLASS) {
+                // Defer slightly so the dialog has finished inflating —
+                // otherwise findAccessibilityNodeInfosByText returns
+                // empty and we fall back to dispatching DPAD_CENTER.
+                mainHandler.postDelayed({ autoConfirmProjectionDialog() }, 200L)
+            }
         }
+    }
+
+    private fun autoConfirmProjectionDialog() {
+        if (!autoConfirmProjection) return
+        val root: AccessibilityNodeInfo = rootInActiveWindow ?: run {
+            Log.w(TAG, "auto-confirm: rootInActiveWindow null")
+            return
+        }
+        // The system dialog labels the accept button "Start now" on
+        // most Android 8 builds. Try a couple of fallbacks just in case
+        // a Glass-flavoured ROM relabels it.
+        for (label in listOf("Start now", "START NOW", "OK", "Allow")) {
+            val nodes = root.findAccessibilityNodeInfosByText(label) ?: continue
+            for (node in nodes) {
+                val cls = node.className?.toString().orEmpty()
+                if (!cls.contains("Button", ignoreCase = true)) continue
+                if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "Auto-confirmed MediaProjection dialog via '$label'")
+                    autoConfirmProjection = false
+                    return
+                }
+                // Some ROMs render the button as non-clickable but
+                // forward clicks to the parent.
+                var parent = node.parent
+                while (parent != null) {
+                    if (parent.isClickable &&
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "Auto-confirmed via parent of '$label'")
+                        autoConfirmProjection = false
+                        return
+                    }
+                    parent = parent.parent
+                }
+            }
+        }
+        Log.w(TAG, "auto-confirm: button not found")
     }
 
     override fun onInterrupt() { /* no-op */ }

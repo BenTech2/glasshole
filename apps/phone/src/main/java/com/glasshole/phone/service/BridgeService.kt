@@ -153,6 +153,16 @@ class BridgeService : Service() {
     // Notification forwarding callback
     var onNotificationFromGlass: ((String) -> Unit)? = null
 
+    // Debug live-stream callbacks. DebugActivity registers these for
+    // the duration of a request — the bridge forwards LIVE_*_URL on
+    // success and LIVE_*_ERR with a short machine-readable reason
+    // string on failure (no_wifi / camera_busy / unsupported_edition /
+    // consent_denied / capture_failed / user_revoked).
+    var onLiveCamUrl: ((String) -> Unit)? = null
+    var onLiveCamErr: ((String) -> Unit)? = null
+    var onLiveScreenUrl: ((String) -> Unit)? = null
+    var onLiveScreenErr: ((String) -> Unit)? = null
+
     val isConnected: Boolean get() = btConnected
 
     /**
@@ -768,6 +778,22 @@ class BridgeService : Service() {
                     log("  ${if (ok) "✓ fired" else "✗ FAILED (no pending action)"}")
                 }
             }
+            is DecodedMessage.LiveCamUrl -> {
+                log("Live cam URL: ${msg.url}")
+                onLiveCamUrl?.invoke(msg.url)
+            }
+            is DecodedMessage.LiveCamErr -> {
+                log("Live cam err: ${msg.reason}")
+                onLiveCamErr?.invoke(msg.reason)
+            }
+            is DecodedMessage.LiveScreenUrl -> {
+                log("Live screen URL: ${msg.url}")
+                onLiveScreenUrl?.invoke(msg.url)
+            }
+            is DecodedMessage.LiveScreenErr -> {
+                log("Live screen err: ${msg.reason}")
+                onLiveScreenErr?.invoke(msg.reason)
+            }
             is DecodedMessage.Pong -> { /* heartbeat alive */ }
             is DecodedMessage.Unknown -> {
                 log("Glass: ${msg.raw}")
@@ -816,6 +842,11 @@ class BridgeService : Service() {
      *  to drive the live battery graph. */
     fun requestBatteryInfo(): Boolean =
         sendRaw(ProtocolCodec.encodeBatteryInfoReq())
+
+    fun sendLiveCamStart(): Boolean = sendRaw(ProtocolCodec.encodeLiveCamStart())
+    fun sendLiveCamStop(): Boolean = sendRaw(ProtocolCodec.encodeLiveCamStop())
+    fun sendLiveScreenStart(): Boolean = sendRaw(ProtocolCodec.encodeLiveScreenStart())
+    fun sendLiveScreenStop(): Boolean = sendRaw(ProtocolCodec.encodeLiveScreenStop())
 
     /** Ask Glass Home to clear its "already prompted" flag for the
      *  device-admin dialog so the next HomeActivity open re-asks. */

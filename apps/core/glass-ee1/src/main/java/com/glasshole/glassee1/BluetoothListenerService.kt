@@ -88,6 +88,14 @@ class BluetoothListenerService : Service() {
         }
     }
 
+    // Debug live-stream camera feature. Lazily-initialised so we don't
+    // open a socket / camera unless the phone actually asks for a
+    // stream. EE1 has no MediaProjection (API 19), so screen mirror
+    // does not exist on this edition.
+    private val cameraLiveSession by lazy {
+        com.glasshole.glass.sdk.CameraLiveSession(this)
+    }
+
     inner class LocalBinder : Binder() {
         fun getService(): BluetoothListenerService = this@BluetoothListenerService
     }
@@ -268,6 +276,39 @@ class BluetoothListenerService : Service() {
         outputStream = null
         clientSocket = null
         serverSocket = null
+        try { cameraLiveSession.stop() } catch (_: Exception) {}
+    }
+
+    // --- Live stream debug feature ---
+
+    private fun sendLine(prefix: String, value: String) {
+        val os = outputStream ?: return
+        try {
+            os.write("$prefix:$value\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+        } catch (e: IOException) {
+            Log.w(TAG, "sendLine $prefix failed: ${e.message}")
+        }
+    }
+
+    private fun handleLiveCamStart() {
+        Thread {
+            when (val st = cameraLiveSession.start()) {
+                is com.glasshole.glass.sdk.CameraLiveSession.Status.Started -> {
+                    sendLine("LIVE_CAM_URL", st.url)
+                    Log.i(TAG, "LIVE_CAM_START → ${st.url}")
+                }
+                com.glasshole.glass.sdk.CameraLiveSession.Status.NoWifi ->
+                    sendLine("LIVE_CAM_ERR", "no_wifi")
+                com.glasshole.glass.sdk.CameraLiveSession.Status.CameraFailed ->
+                    sendLine("LIVE_CAM_ERR", "camera_busy")
+            }
+        }.apply { isDaemon = true; start() }
+    }
+
+    private fun handleLiveCamStop() {
+        cameraLiveSession.stop()
+        Log.i(TAG, "LIVE_CAM_STOP")
     }
 
     // --- Plugin registration (AIDL) ---
@@ -884,6 +925,15 @@ class BluetoothListenerService : Service() {
                         val pkg = line.removePrefix("UNINSTALL:")
                         handleUninstall(pkg)
                     }
+                    line == "LIVE_CAM_START" -> handleLiveCamStart()
+                    line == "LIVE_CAM_STOP" -> handleLiveCamStop()
+                    line == "LIVE_SCREEN_START" -> {
+                        // Screen mirror is EE2-only (needs MediaProjection,
+                        // API 21+). EE1 advertises this clearly so the
+                        // phone can pop a meaningful toast.
+                        sendLine("LIVE_SCREEN_ERR", "unsupported_edition")
+                    }
+                    line == "LIVE_SCREEN_STOP" -> { /* nothing to tear down */ }
                     else -> {
                         messageListener?.onMessageReceived(line)
                     }

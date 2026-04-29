@@ -44,6 +44,11 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var recordDurationSlider: Slider
     private lateinit var recordDurationLabel: TextView
 
+    // Live streams group
+    private lateinit var liveCameraButton: Button
+    private lateinit var liveScreenButton: Button
+    @Volatile private var liveRequestPending: Boolean = false
+
     private lateinit var captureSwitch: MaterialSwitch
     private lateinit var captureLimitSpinner: Spinner
     private lateinit var captureCountText: TextView
@@ -100,6 +105,9 @@ class DebugActivity : AppCompatActivity() {
         recordDurationSlider = findViewById(R.id.debugRecordDurationSlider)
         recordDurationLabel = findViewById(R.id.debugRecordDurationLabel)
 
+        liveCameraButton = findViewById(R.id.debugLiveCameraButton)
+        liveScreenButton = findViewById(R.id.debugLiveScreenButton)
+
         captureSwitch = findViewById(R.id.debugCaptureSwitch)
         captureLimitSpinner = findViewById(R.id.debugCaptureLimitSpinner)
         captureCountText = findViewById(R.id.debugCaptureCount)
@@ -118,6 +126,7 @@ class DebugActivity : AppCompatActivity() {
 
         setupCaptureControls()
         setupActions()
+        setupLiveStreams()
 
         bindService(
             Intent(this, BridgeService::class.java),
@@ -210,6 +219,107 @@ class DebugActivity : AppCompatActivity() {
         wakeGlassButton.isEnabled = enabled
         takePictureButton.isEnabled = enabled
         recordVideoButton.isEnabled = enabled
+        liveCameraButton.isEnabled = enabled && !liveRequestPending
+        liveScreenButton.isEnabled = enabled && !liveRequestPending
+    }
+
+    private fun setupLiveStreams() {
+        liveCameraButton.setOnClickListener { requestLiveStream(camera = true) }
+        liveScreenButton.setOnClickListener { requestLiveStream(camera = false) }
+    }
+
+    private fun requestLiveStream(camera: Boolean) {
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            updateStatus()
+            return
+        }
+        if (liveRequestPending) {
+            toast("Already requesting a stream — give it a moment")
+            return
+        }
+
+        liveRequestPending = true
+        updateStatus()
+
+        // Simple single-shot listeners that clear themselves once a
+        // response (URL or ERR) lands. The glass also has a 30s of
+        // protocol-level latency budget; we add a 12s UI fallback so
+        // a never-ending pending state doesn't block subsequent taps.
+        val timeout = Runnable {
+            runOnUiThread {
+                if (liveRequestPending) {
+                    liveRequestPending = false
+                    bridge.onLiveCamUrl = null
+                    bridge.onLiveCamErr = null
+                    bridge.onLiveScreenUrl = null
+                    bridge.onLiveScreenErr = null
+                    toast("Glass timed out — no response")
+                    updateStatus()
+                }
+            }
+        }
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.postDelayed(timeout, 12_000L)
+
+        val onUrl = { url: String ->
+            handler.removeCallbacks(timeout)
+            runOnUiThread {
+                liveRequestPending = false
+                bridge.onLiveCamUrl = null
+                bridge.onLiveCamErr = null
+                bridge.onLiveScreenUrl = null
+                bridge.onLiveScreenErr = null
+                openLiveStream(url, camera)
+                updateStatus()
+            }
+        }
+        val onErr = { reason: String ->
+            handler.removeCallbacks(timeout)
+            runOnUiThread {
+                liveRequestPending = false
+                bridge.onLiveCamUrl = null
+                bridge.onLiveCamErr = null
+                bridge.onLiveScreenUrl = null
+                bridge.onLiveScreenErr = null
+                toast(liveErrorMessage(reason, camera))
+                updateStatus()
+            }
+        }
+
+        if (camera) {
+            bridge.onLiveCamUrl = onUrl
+            bridge.onLiveCamErr = onErr
+            bridge.sendLiveCamStart()
+        } else {
+            bridge.onLiveScreenUrl = onUrl
+            bridge.onLiveScreenErr = onErr
+            bridge.sendLiveScreenStart()
+        }
+    }
+
+    private fun openLiveStream(url: String, camera: Boolean) {
+        val intent = Intent(this, LiveStreamActivity::class.java).apply {
+            putExtra(LiveStreamActivity.EXTRA_URL, url)
+            putExtra(
+                LiveStreamActivity.EXTRA_KIND,
+                if (camera) LiveStreamActivity.KIND_CAMERA else LiveStreamActivity.KIND_SCREEN
+            )
+        }
+        startActivity(intent)
+    }
+
+    private fun liveErrorMessage(reason: String, camera: Boolean): String = when (reason) {
+        "no_wifi" -> "Glass isn't on Wi-Fi — connect it first"
+        "permission_required" -> "Grant camera permission on glass, then retry"
+        "camera_busy" -> "Camera is in use by another app on glass"
+        "unsupported_edition" -> "Screen mirror only works on Glass EE2"
+        "consent_denied" -> "User denied the screen-record consent on glass"
+        "capture_failed" -> "Glass failed to start screen capture"
+        "user_revoked" -> "User stopped sharing on glass"
+        "launch_failed" -> "Glass couldn't show the consent dialog"
+        else -> if (camera) "Live camera failed: $reason" else "Screen mirror failed: $reason"
     }
 
     private fun setupActions() {

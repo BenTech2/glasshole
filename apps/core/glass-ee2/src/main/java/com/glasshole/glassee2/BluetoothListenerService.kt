@@ -1,5 +1,6 @@
 package com.glasshole.glassee2
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -87,6 +88,13 @@ class BluetoothListenerService : Service() {
             sendPluginMessage("device", type, payload)
         }
     }
+
+    // Debug live-stream features. Lazily-initialised so we don't open a
+    // socket / camera unless the phone actually asks for a stream.
+    private val cameraLiveSession by lazy {
+        com.glasshole.glass.sdk.CameraLiveSession(this)
+    }
+    private val screenLiveSession by lazy { ScreenLiveSession(this) }
 
     inner class LocalBinder : Binder() {
         fun getService(): BluetoothListenerService = this@BluetoothListenerService
@@ -199,6 +207,10 @@ class BluetoothListenerService : Service() {
         outputStream = null
         clientSocket = null
         serverSocket = null
+        // Free the camera + projection if a live stream was running —
+        // a phone disconnect always cancels any debug session.
+        try { cameraLiveSession.stop() } catch (_: Exception) {}
+        try { screenLiveSession.stop() } catch (_: Exception) {}
     }
 
     // --- Plugin registration (AIDL) ---
@@ -648,6 +660,114 @@ class BluetoothListenerService : Service() {
         put("timezone", java.util.TimeZone.getDefault().id)
     }
 
+    // --- Live stream debug features ---
+
+    private fun sendLine(prefix: String, value: String) {
+        val os = outputStream ?: return
+        try {
+            os.write("$prefix:$value\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+        } catch (e: IOException) {
+            Log.w(TAG, "sendLine $prefix failed: ${e.message}")
+        }
+    }
+
+    private fun handleLiveCamStart() {
+        // Runtime permission gate: EE2 is API 27, CAMERA is dangerous
+        // and must be granted explicitly. We pop our own permission
+        // shim activity on the glass and ask the user to retry from
+        // the phone once they've granted it.
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.CAMERA
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            try {
+                val intent = Intent(this, CameraPermissionActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "CameraPermissionActivity launch failed: ${e.message}")
+            }
+            sendLine("LIVE_CAM_ERR", "permission_required")
+            return
+        }
+        // Bounce off the BT reader thread — Camera1 open + parameter
+        // negotiation can block for a couple hundred ms.
+        Thread {
+            when (val st = cameraLiveSession.start()) {
+                is com.glasshole.glass.sdk.CameraLiveSession.Status.Started -> {
+                    sendLine("LIVE_CAM_URL", st.url)
+                    Log.i(TAG, "LIVE_CAM_START → ${st.url}")
+                }
+                com.glasshole.glass.sdk.CameraLiveSession.Status.NoWifi ->
+                    sendLine("LIVE_CAM_ERR", "no_wifi")
+                com.glasshole.glass.sdk.CameraLiveSession.Status.CameraFailed ->
+                    sendLine("LIVE_CAM_ERR", "camera_busy")
+            }
+        }.apply { isDaemon = true; start() }
+    }
+
+    private fun handleLiveCamStop() {
+        cameraLiveSession.stop()
+        Log.i(TAG, "LIVE_CAM_STOP")
+    }
+
+    private fun handleLiveScreenStart() {
+        // Glass EE2's tiny display can't reliably expose the system
+        // MediaProjection consent dialog's [Start now] button to the
+        // touchpad. Arm the accessibility service to auto-click it as
+        // soon as the dialog appears. Watchdog clears the flag if the
+        // dialog never shows so we don't accidentally auto-confirm
+        // some other system dialog later.
+        SleepAccessibilityService.autoConfirmProjection = true
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            SleepAccessibilityService.autoConfirmProjection = false
+        }, 5_000L)
+
+        // 1) Get user consent via the system MediaProjection dialog.
+        //    The activity hands the result back through a static callback,
+        //    which then either starts the streamer or replies with ERR.
+        ProjectionConsentActivity.pendingResult = { code, data ->
+            if (code != Activity.RESULT_OK || data == null) {
+                sendLine("LIVE_SCREEN_ERR", "consent_denied")
+                Log.i(TAG, "LIVE_SCREEN consent denied")
+            } else {
+                screenLiveSession.setConsent(code, data)
+                Thread {
+                    when (val st = screenLiveSession.start(onUserRevoked = {
+                        sendLine("LIVE_SCREEN_ERR", "user_revoked")
+                    })) {
+                        is ScreenLiveSession.Status.Started -> {
+                            sendLine("LIVE_SCREEN_URL", st.url)
+                            Log.i(TAG, "LIVE_SCREEN_START → ${st.url}")
+                        }
+                        ScreenLiveSession.Status.NoWifi ->
+                            sendLine("LIVE_SCREEN_ERR", "no_wifi")
+                        ScreenLiveSession.Status.NoConsent ->
+                            sendLine("LIVE_SCREEN_ERR", "consent_denied")
+                        ScreenLiveSession.Status.CaptureFailed ->
+                            sendLine("LIVE_SCREEN_ERR", "capture_failed")
+                    }
+                }.apply { isDaemon = true; start() }
+            }
+        }
+        try {
+            val intent = Intent(this, ProjectionConsentActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not launch ProjectionConsentActivity: ${e.message}")
+            ProjectionConsentActivity.pendingResult = null
+            sendLine("LIVE_SCREEN_ERR", "launch_failed")
+        }
+    }
+
+    private fun handleLiveScreenStop() {
+        screenLiveSession.stop()
+        Log.i(TAG, "LIVE_SCREEN_STOP")
+    }
+
     private fun batteryHealthString(health: Int): String = when (health) {
         BatteryManager.BATTERY_HEALTH_COLD -> "cold"
         BatteryManager.BATTERY_HEALTH_DEAD -> "dead"
@@ -815,6 +935,10 @@ class BluetoothListenerService : Service() {
                     line.startsWith("UNINSTALL:") -> {
                         handleUninstall(line.removePrefix("UNINSTALL:"))
                     }
+                    line == "LIVE_CAM_START" -> handleLiveCamStart()
+                    line == "LIVE_CAM_STOP" -> handleLiveCamStop()
+                    line == "LIVE_SCREEN_START" -> handleLiveScreenStart()
+                    line == "LIVE_SCREEN_STOP" -> handleLiveScreenStop()
                     else -> {
                         messageListener?.onMessageReceived(line)
                     }
