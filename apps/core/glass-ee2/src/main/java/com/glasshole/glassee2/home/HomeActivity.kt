@@ -629,7 +629,39 @@ class HomeActivity : Activity() {
                 handleCardTap()
                 true
             }
+            // Fallback when the accessibility service isn't enabled —
+            // a11y consumes the key first when it IS enabled, so this
+            // only fires for users who never flipped the a11y toggle.
+            // No hold-to-record support on this fallback path; that
+            // requires the global keyDown/keyUp tracking the a11y
+            // service does. KEYCODE_FOCUS (half-press) consumed for
+            // symmetry so the framework doesn't treat it as focus nav.
+            KeyEvent.KEYCODE_CAMERA, KeyEvent.KEYCODE_FOCUS -> {
+                launchQuickCapture()
+                true
+            }
             else -> super.onKeyDown(keyCode, event)
+        }
+    }
+
+    private fun launchQuickCapture() {
+        val intent = Intent(Intent.ACTION_CAMERA_BUTTON).apply {
+            setPackage("com.glasshole.plugin.camera2.glass")
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Plugin not installed — fall back to the standard "still
+            // image" intent, which any default camera will handle.
+            try {
+                startActivity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            } catch (_: Exception) {}
         }
     }
 
