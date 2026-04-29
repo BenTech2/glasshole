@@ -194,15 +194,18 @@
             android:visibility="gone"
             android:text="" />
 
+        <!-- Empty-state label. Same styling as the media card's
+             "Nothing playing" — centered text on bare black, no card
+             chrome (the front card's rounded background is stripped at
+             bind time when empty). -->
         <TextView
             android:id="@+id/notifEmpty"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:textColor="#666666"
+            android:textColor="#AAAAAA"
             android:textSize="18sp"
-            android:fontFamily="sans-serif-light"
-            android:text="No notifications" />
+            android:text="No Notifications" />
 
     </FrameLayout>
 

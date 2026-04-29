@@ -316,13 +316,17 @@ class CardAdapter(
         val total = NotificationStore.count()
         val front = holder.itemView.findViewById<View>(R.id.notifFrontCard)
         val empty = holder.itemView.findViewById<TextView>(R.id.notifEmpty)
+        val content = holder.itemView.findViewById<View>(R.id.notifContent)
         val picture = holder.itemView.findViewById<ImageView>(R.id.notifPicture)
         val gradient = holder.itemView.findViewById<View>(R.id.notifPictureGradient)
         val stack1 = holder.itemView.findViewById<View>(R.id.notifStack1)
         val stack2 = holder.itemView.findViewById<View>(R.id.notifStack2)
         val stackCount = holder.itemView.findViewById<TextView>(R.id.notifStackCount)
         if (latest == null) {
-            front?.visibility = View.GONE
+            // Strip the card chrome — empty state is just centered text
+            // on bare black, mirroring the media card's "Nothing playing".
+            front?.background = null
+            content?.visibility = View.GONE
             empty?.visibility = View.VISIBLE
             picture?.visibility = View.GONE
             gradient?.visibility = View.GONE
@@ -331,7 +335,10 @@ class CardAdapter(
             stackCount?.visibility = View.GONE
             return
         }
-        front?.visibility = View.VISIBLE
+        // Restore the rounded card chrome — view holders are recycled, so
+        // we have to re-set the drawable each time we have notifications.
+        front?.setBackgroundResource(R.drawable.notif_front_card)
+        content?.visibility = View.VISIBLE
         empty?.visibility = View.GONE
 
         // Time Machine slivers: peek out the top of the front card to imply
