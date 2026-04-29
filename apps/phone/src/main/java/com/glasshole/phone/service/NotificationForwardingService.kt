@@ -1,6 +1,7 @@
 package com.glasshole.phone.service
 
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.Context
@@ -24,6 +25,9 @@ class NotificationForwardingService : NotificationListenerService() {
         private const val TAG = "GlassHoleNLS"
         const val PREFS_NAME = "glasshole_notif_prefs"
         const val PREF_FORWARDED_APPS = "forwarded_apps"
+        /** Subset of forwarded_apps whose silent / low-importance
+         *  notifications also pass the global silent filter. */
+        const val PREF_SILENT_ALLOWED_APPS = "silent_allowed_apps"
 
         @Volatile var instance: NotificationForwardingService? = null
     }
@@ -110,6 +114,7 @@ class NotificationForwardingService : NotificationListenerService() {
 
     // Set of package names to forward (empty = forward all)
     private var forwardedApps: Set<String> = emptySet()
+    private var silentAllowedApps: Set<String> = emptySet()
 
     override fun onCreate() {
         super.onCreate()
@@ -155,6 +160,20 @@ class NotificationForwardingService : NotificationListenerService() {
         // Skip group summaries
         if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
 
+        // Skip notifications the originating app has marked LOCAL_ONLY —
+        // these are explicitly for the phone screen and aren't meant to
+        // be mirrored to companion devices (wearables, glass, etc.).
+        // Catches Google Messages "Device pairing — sent from desktop"
+        // and similar sync/status notifications even when the channel
+        // importance is normal. Per-app silent allowance ALSO bypasses
+        // this — if the user opted an app into "Allow silent" they want
+        // its full output regardless of LOCAL_ONLY.
+        if (pkg !in silentAllowedApps &&
+            (notification.flags and Notification.FLAG_LOCAL_ONLY) != 0) {
+            Log.d(TAG, "Skipping LOCAL_ONLY notification from $pkg")
+            return
+        }
+
         // Skip media playback "now playing" cards (YouTube, Spotify, Pocket Casts,
         // etc.). These are transport-control notifications attached to a
         // MediaSession — not user-facing alerts — so forwarding them to the
@@ -163,6 +182,32 @@ class NotificationForwardingService : NotificationListenerService() {
         // etc.) carry a different category and still go through.
         if (notification.category == Notification.CATEGORY_TRANSPORT) return
         if (extras.containsKey(Notification.EXTRA_MEDIA_SESSION)) return
+
+        // Skip silent / low-importance notifications. These are typically
+        // background sync events ("you sent a message from desktop", "added
+        // to playlist", reaction sync, etc.) that the user has explicitly
+        // told their phone NOT to interrupt them with — forwarding them to
+        // the glass would undo that preference and spam the heads-up
+        // popup. On API 26+ the channel's importance is the source of
+        // truth; below that we fall back to the legacy priority field.
+        //
+        // Per-app override: an app in silentAllowedApps bypasses this filter
+        // — for users who want a specific quiet app's notifications even
+        // though they're flagged silent on the phone.
+        if (pkg !in silentAllowedApps) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channelId = notification.channelId
+                if (channelId != null) {
+                    val nm = getSystemService(NotificationManager::class.java)
+                    val channel = nm?.getNotificationChannel(channelId)
+                    if (channel != null && channel.importance < NotificationManager.IMPORTANCE_DEFAULT) {
+                        return
+                    }
+                }
+            }
+            @Suppress("DEPRECATION")
+            if (notification.priority < Notification.PRIORITY_DEFAULT) return
+        }
 
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
@@ -192,7 +237,15 @@ class NotificationForwardingService : NotificationListenerService() {
             pkg
         }
 
-        Log.i(TAG, "Forwarding: $appName | $title | $messageText")
+        // Channel + flags telemetry helps diagnose "why did this make it
+        // through the filters" without needing to repro under a debugger.
+        val channelInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val cid = notification.channelId ?: "<no-channel>"
+            val nm = getSystemService(NotificationManager::class.java)
+            val imp = nm?.getNotificationChannel(cid)?.importance ?: -1
+            "channel=$cid importance=$imp"
+        } else "channel=<api<26>"
+        Log.i(TAG, "Forwarding: $appName | $title | $messageText [$channelInfo flags=0x${notification.flags.toString(16)}]")
         logActionStructure(notification, pkg)
 
         // Build the structured actions list for this notification
@@ -565,22 +618,39 @@ class NotificationForwardingService : NotificationListenerService() {
         }
     }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        if (sbn.key == latestNotificationKey) {
-            // Keep the reply action even after removal — it often still works
-        }
-        // Google Maps removed its nav notification → trip ended or was
-        // cancelled. Tell the Nav plugin so the glass can go back to idle.
+    override fun onNotificationRemoved(
+        sbn: StatusBarNotification,
+        rankingMap: android.service.notification.NotificationListenerService.RankingMap?,
+        reason: Int
+    ) {
+        // Nav-end signal needs to fire on ANY removal — Google Maps cancels
+        // its nav notification when the trip ends regardless of how the
+        // OS labels the cancel reason.
         if (sbn.packageName == com.glasshole.phone.plugins.nav.NavPlugin.MAPS_PKG) {
             try {
                 com.glasshole.phone.plugins.nav.NavPlugin.instance?.handleMapsRemoved()
             } catch (e: Exception) {
                 Log.w(TAG, "Nav remove failed: ${e.message}")
             }
+            return
         }
-        // Tell the Home notification card that this notification is gone
-        // if its source app is in our forwarded list — ignore removals for
-        // other apps so we don't ship noise over BT.
+
+        // For everything else: only honor user-driven removals. Many apps
+        // (Slack, Messages, Discord, etc.) cancel-and-repost notifications
+        // as background updates — replacement, group optimization, channel
+        // tweaks. Forwarding *those* removals to the glass made entries
+        // vanish from the drawer the user never dismissed.
+        //
+        // Three reasons survive the filter:
+        //   REASON_CANCEL          — user swiped on the phone shade
+        //   REASON_CANCEL_ALL      — user cleared all
+        //   REASON_LISTENER_CANCEL — our own glass-side dismiss action
+        if (reason != REASON_CANCEL &&
+            reason != REASON_CANCEL_ALL &&
+            reason != REASON_LISTENER_CANCEL) {
+            return
+        }
+
         if (sbn.packageName in forwardedApps) {
             try { onNotifRemoved?.invoke(sbn.key) } catch (e: Exception) {
                 Log.w(TAG, "Notif-removed callback failed: ${e.message}")
@@ -665,12 +735,22 @@ class NotificationForwardingService : NotificationListenerService() {
 
     fun getForwardedApps(): Set<String> = forwardedApps
 
+    fun setSilentAllowedApps(apps: Set<String>) {
+        silentAllowedApps = apps
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putStringSet(PREF_SILENT_ALLOWED_APPS, apps)
+            .apply()
+    }
+
+    fun getSilentAllowedApps(): Set<String> = silentAllowedApps
+
     fun reloadForwardedApps() {
         loadForwardedApps()
     }
 
     private fun loadForwardedApps() {
-        forwardedApps = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getStringSet(PREF_FORWARDED_APPS, emptySet()) ?: emptySet()
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        forwardedApps = prefs.getStringSet(PREF_FORWARDED_APPS, emptySet()) ?: emptySet()
+        silentAllowedApps = prefs.getStringSet(PREF_SILENT_ALLOWED_APPS, emptySet()) ?: emptySet()
     }
 }
