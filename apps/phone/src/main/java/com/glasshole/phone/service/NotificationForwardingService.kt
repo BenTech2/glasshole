@@ -301,6 +301,7 @@ class NotificationForwardingService : NotificationListenerService() {
             val pictureBase64 = encodeBigPicture(
                 notification, extras, title, messageText, notifKey, sbn.tag
             )
+            val titleIconBase64 = encodeTitleIcon(extras)
             // Snag the video id (if any) so debug-replay can re-fetch
             // the thumbnail later without re-deriving it from extras.
             val videoId = com.glasshole.phone.util.YouTubeThumbnail
@@ -314,6 +315,7 @@ class NotificationForwardingService : NotificationListenerService() {
                 put("title", title)
                 put("text", messageText)
                 if (iconBase64 != null) put("icon", iconBase64)
+                if (titleIconBase64 != null) put("title_icon", titleIconBase64)
                 if (pictureBase64 != null) put("picture", pictureBase64)
                 if (videoId != null) put("video_id", videoId)
                 put("actions", actionsJson)
@@ -645,25 +647,41 @@ class NotificationForwardingService : NotificationListenerService() {
             ?.let { return it }
 
         // Cache miss: kick off an async fetch so the glass card can
-        // swap in the real thumb once it lands.
+        // swap in the real thumb once it lands. The card still gets
+        // a small avatar in the title row via `title_icon` (a
+        // separate field), so it's never visually empty.
         Log.i(TAG, "yt-thumb cache miss for $videoId — async fetching")
         scheduleYtThumbFetch(videoId, notifKey)
-
-        // …and meanwhile fall through to the channel-avatar fallback
-        // below so the glass card has *something* to render right now.
-        return encodeLargeIconAsPicture(extras)
+        return null
     }
 
     /**
-     * Last-resort big-picture fallback — uses the small EXTRA_LARGE_ICON
-     * (typically a channel/sender avatar) as the card's picture so
-     * Shorts and similar URL-only notifs aren't blank. Real thumbnails
-     * from the async YouTube fetch will replace this once they land.
+     * Encodes EXTRA_LARGE_ICON (the channel / sender avatar that most
+     * apps attach to a notification) as a small base64 JPEG, sized
+     * for the title-row avatar slot on the glass card. Separate from
+     * the big-picture path so a Shorts notif can have *both* a
+     * real video thumbnail (background) and the channel avatar
+     * (next to the title).
      */
-    private fun encodeLargeIconAsPicture(extras: Bundle): String? {
+    private fun encodeTitleIcon(extras: Bundle): String? {
         val bmp = extras.getParcelable(Notification.EXTRA_LARGE_ICON) as? android.graphics.Bitmap
         if (bmp == null || bmp.width <= 0 || bmp.height <= 0) return null
-        return encodeScaledBitmapToBase64(bmp)
+        return try {
+            val targetPx = 96
+            val scale = targetPx.toFloat() / maxOf(bmp.width, bmp.height).toFloat()
+            val scaled = if (scale < 1f) {
+                val w = (bmp.width * scale).toInt().coerceAtLeast(1)
+                val h = (bmp.height * scale).toInt().coerceAtLeast(1)
+                android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
+            } else bmp
+            val stream = java.io.ByteArrayOutputStream()
+            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
+            if (scaled !== bmp) scaled.recycle()
+            android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.w(TAG, "title icon encode failed: ${e.message}")
+            null
+        }
     }
 
     private fun encodeScaledBitmapToBase64(bmp: android.graphics.Bitmap): String? = try {

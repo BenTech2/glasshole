@@ -1056,12 +1056,14 @@ class BluetoothListenerService : Service() {
             }
 
             val picture = obj.optString("picture", "")
+            val titleIcon = obj.optString("title_icon", "")
             lastForegroundLaunchMs = android.os.SystemClock.elapsedRealtime()
             val intent = Intent(this, NotificationDisplayActivity::class.java).apply {
                 putExtra("app", app)
                 putExtra("title", title)
                 putExtra("text", text)
                 putExtra("icon", icon)
+                putExtra("title_icon", titleIcon)
                 putExtra("picture", picture)
                 putExtra("key", key)
                 if (hasActions) putExtra("actions", actions!!.toString())

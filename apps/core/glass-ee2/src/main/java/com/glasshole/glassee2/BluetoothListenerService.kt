@@ -1038,6 +1038,7 @@ class BluetoothListenerService : Service() {
                 putExtra("title", obj.optString("title", ""))
                 putExtra("text", obj.optString("text", ""))
                 putExtra("icon", obj.optString("icon", ""))
+                putExtra("title_icon", obj.optString("title_icon", ""))
                 putExtra("picture", obj.optString("picture", ""))
                 putExtra("key", obj.optString("key", ""))
                 if (obj.has("actions")) {
