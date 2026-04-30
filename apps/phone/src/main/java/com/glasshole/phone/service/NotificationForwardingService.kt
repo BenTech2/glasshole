@@ -135,6 +135,7 @@ class NotificationForwardingService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val pkg = sbn.packageName
+        Log.d(TAG, "onNotificationPosted: pkg=$pkg key=${sbn.key.take(80)}")
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
 
@@ -297,7 +298,13 @@ class NotificationForwardingService : NotificationListenerService() {
         val actionsAware = onNotifWithActions
         if (actionsAware != null) {
             val iconBase64 = encodeAppIcon(pkg)
-            val pictureBase64 = encodeBigPicture(notification, extras)
+            val pictureBase64 = encodeBigPicture(
+                notification, extras, title, messageText, notifKey, sbn.tag
+            )
+            // Snag the video id (if any) so debug-replay can re-fetch
+            // the thumbnail later without re-deriving it from extras.
+            val videoId = com.glasshole.phone.util.YouTubeThumbnail
+                .findVideoIdInNotification(notification, extras, title, messageText, sbn.tag)
             val dismissMs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
                 .getLong("notif_timeout_ms", 12_000L)
             val json = JSONObject().apply {
@@ -308,6 +315,7 @@ class NotificationForwardingService : NotificationListenerService() {
                 put("text", messageText)
                 if (iconBase64 != null) put("icon", iconBase64)
                 if (pictureBase64 != null) put("picture", pictureBase64)
+                if (videoId != null) put("video_id", videoId)
                 put("actions", actionsJson)
                 put("dismissMs", dismissMs)
             }.toString()
@@ -601,30 +609,125 @@ class NotificationForwardingService : NotificationListenerService() {
     // Pull a preview image out of the notification if it has one.
     // Tries EXTRA_PICTURE (big-picture style — used by Messages MMS/RCS,
     // Discord image messages, Home camera snapshots) then EXTRA_LARGE_ICON_BIG.
-    // Downscales to ~200px max edge and JPEG-compresses so the total base64
-    // payload stays under ~20 KB to keep BT latency acceptable.
-    private fun encodeBigPicture(notification: Notification, extras: Bundle): String? {
+    // Falls back to fetching a YouTube CDN thumbnail when the title/text
+    // contains a YouTube URL (covers Shorts, which don't ship a Bitmap
+    // in extras at all). Downscales to ~200px max edge and JPEG-compresses
+    // so the total base64 payload stays under ~20 KB to keep BT latency
+    // acceptable.
+    private fun encodeBigPicture(
+        notification: Notification,
+        extras: Bundle,
+        title: String,
+        text: String,
+        notifKey: String,
+        tag: String?
+    ): String? {
         val bmp: android.graphics.Bitmap? =
             extras.getParcelable(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap
                 ?: extras.getParcelable(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap
+        if (bmp != null && bmp.width > 0 && bmp.height > 0) {
+            return encodeScaledBitmapToBase64(bmp)
+        }
+
+        // YouTube fallback. Shorts notifications don't ship a Bitmap
+        // in EXTRA_PICTURE / EXTRA_LARGE_ICON_BIG, and Shorts also
+        // don't include the video URL in title/text — the URL lives
+        // in the contentIntent's underlying Intent, which we reach
+        // via reflection through findVideoIdInNotification().
+        val videoId = com.glasshole.phone.util.YouTubeThumbnail
+            .findVideoIdInNotification(notification, extras, title, text, tag)
+            ?: return null
+
+        // Sync cache hit (no network) — instant render.
+        com.glasshole.phone.util.YouTubeThumbnail
+            .getCachedEncodedPicture(this, videoId)
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        // Cache miss: kick off an async fetch so the glass card can
+        // swap in the real thumb once it lands.
+        Log.i(TAG, "yt-thumb cache miss for $videoId — async fetching")
+        scheduleYtThumbFetch(videoId, notifKey)
+
+        // …and meanwhile fall through to the channel-avatar fallback
+        // below so the glass card has *something* to render right now.
+        return encodeLargeIconAsPicture(extras)
+    }
+
+    /**
+     * Last-resort big-picture fallback — uses the small EXTRA_LARGE_ICON
+     * (typically a channel/sender avatar) as the card's picture so
+     * Shorts and similar URL-only notifs aren't blank. Real thumbnails
+     * from the async YouTube fetch will replace this once they land.
+     */
+    private fun encodeLargeIconAsPicture(extras: Bundle): String? {
+        val bmp = extras.getParcelable(Notification.EXTRA_LARGE_ICON) as? android.graphics.Bitmap
         if (bmp == null || bmp.width <= 0 || bmp.height <= 0) return null
-        return try {
-            val maxEdge = 200
-            val scale = maxEdge.toFloat() / maxOf(bmp.width, bmp.height).toFloat()
-            val scaled = if (scale < 1f) {
-                val w = (bmp.width * scale).toInt().coerceAtLeast(1)
-                val h = (bmp.height * scale).toInt().coerceAtLeast(1)
-                android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
-            } else bmp
-            val stream = java.io.ByteArrayOutputStream()
-            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 55, stream)
-            if (scaled !== bmp) scaled.recycle()
-            val bytes = stream.toByteArray()
-            Log.i(TAG, "Picture preview: ${bytes.size} B")
-            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        return encodeScaledBitmapToBase64(bmp)
+    }
+
+    private fun encodeScaledBitmapToBase64(bmp: android.graphics.Bitmap): String? = try {
+        val maxEdge = 200
+        val scale = maxEdge.toFloat() / maxOf(bmp.width, bmp.height).toFloat()
+        val scaled = if (scale < 1f) {
+            val w = (bmp.width * scale).toInt().coerceAtLeast(1)
+            val h = (bmp.height * scale).toInt().coerceAtLeast(1)
+            android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
+        } else bmp
+        val stream = java.io.ByteArrayOutputStream()
+        scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 55, stream)
+        if (scaled !== bmp) scaled.recycle()
+        val bytes = stream.toByteArray()
+        Log.i(TAG, "Picture preview: ${bytes.size} B")
+        android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+    } catch (e: Exception) {
+        Log.w(TAG, "Picture encode failed: ${e.message}")
+        null
+    }
+
+    // --- YouTube thumbnail fallback ---
+
+    private val ytThumbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "GlassHole-YtThumb").apply { isDaemon = true }
+    }
+    private val ytThumbInflight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Background-fetch the thumbnail for [videoId], then re-fire
+     *  [notifKey] so the glass card re-renders with the picture in
+     *  place. */
+    private fun scheduleYtThumbFetch(videoId: String, notifKey: String) {
+        if (!ytThumbInflight.add(videoId)) return
+        ytThumbExecutor.submit {
+            try {
+                val bytes = com.glasshole.phone.util.YouTubeThumbnail
+                    .fetchAndCache(this, videoId)
+                if (bytes != null) {
+                    Log.i(TAG, "yt-thumb cached: $videoId (${bytes.size} B) — re-firing notif")
+                    reprocessActiveNotification(notifKey)
+                } else {
+                    Log.i(TAG, "yt-thumb fetch returned nothing for $videoId")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "yt-thumb fetch crashed: ${e.message}")
+            } finally {
+                ytThumbInflight.remove(videoId)
+            }
+        }
+    }
+
+    /** Look up the still-active notification by key and run our
+     *  forwarding logic over it again — this time the cache hit path
+     *  in [encodeBigPicture] will produce a picture. */
+    private fun reprocessActiveNotification(notifKey: String) {
+        try {
+            val active = activeNotifications ?: return
+            val sbn = active.firstOrNull { it.key == notifKey } ?: run {
+                Log.d(TAG, "yt-thumb update: notification $notifKey already gone")
+                return
+            }
+            onNotificationPosted(sbn)
         } catch (e: Exception) {
-            Log.w(TAG, "Picture encode failed: ${e.message}")
-            null
+            Log.w(TAG, "reprocessActiveNotification failed: ${e.message}")
         }
     }
 

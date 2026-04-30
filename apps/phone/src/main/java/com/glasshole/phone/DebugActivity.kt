@@ -663,17 +663,85 @@ class DebugActivity : AppCompatActivity() {
             toast("Glass not connected")
             return
         }
-        // Re-key so the glass treats this as a fresh notification rather
-        // than deduping against the original.
-        val replayed = try {
-            JSONObject(entry.json).apply {
-                val originalKey = optString("key", "")
-                put("key", "replay-${System.currentTimeMillis()}-$originalKey")
-            }.toString()
+        // Captures from before the YouTube-thumbnail fix won't include
+        // a "picture" field for Shorts notifications. Try to enrich
+        // the replay payload before sending — sync cache hit fires
+        // straight away, miss kicks off a download in the background
+        // and re-fires the replay once the JPEG lands.
+        Thread {
+            val replayed = augmentForReplay(entry.json)
+            runOnUiThread {
+                val ok = bridge.sendRaw(ProtocolCodec.encodeNotif(replayed))
+                toast(if (ok) "Replayed" else "Send failed")
+            }
+        }.apply { isDaemon = true; name = "ReplayAugment"; start() }
+    }
+
+    /**
+     * StatusBarNotification keys are formatted
+     * `<userId>|<pkg>|<id>|<tag>|<uid>` — when we replay a YouTube
+     * notification captured before the video_id field was added, we
+     * can still recover the tag from the saved key. For Shorts /
+     * single-video alerts the tag is `<11charVideoId>::<uuid>`, so
+     * the same regex that handles the live tag works here.
+     */
+    private fun extractYouTubeIdFromCapturedKey(key: String): String? {
+        val parts = key.split("|")
+        if (parts.size < 4) return null
+        val tag = parts[3]
+        return com.glasshole.phone.util.YouTubeThumbnail.extractVideoIdFromTag(tag)
+    }
+
+    /**
+     * Re-keys the captured JSON and, if no `picture` is stored but the
+     * notification carries a YouTube URL, fetches the thumbnail
+     * (sync — we're already on a worker thread) and injects it. Falls
+     * back to the original payload on any failure.
+     */
+    private fun augmentForReplay(originalJson: String): String {
+        return try {
+            val obj = JSONObject(originalJson)
+            val originalKey = obj.optString("key", "")
+            obj.put("key", "replay-${System.currentTimeMillis()}-$originalKey")
+
+            val hasPicture = obj.optString("picture", "").isNotEmpty()
+            if (!hasPicture) {
+                // Newer captures stash the discovered video id under
+                // "video_id"; older ones we re-derive on the fly
+                // from the captured key (which contains the original
+                // notification tag — for YouTube videos that's
+                // "<videoId>::<uuid>").
+                val storedId = obj.optString("video_id", "").ifEmpty { null }
+                val videoId = storedId
+                    ?: extractYouTubeIdFromCapturedKey(obj.optString("key", ""))
+                    ?: com.glasshole.phone.util.YouTubeThumbnail.extractVideoId(
+                        obj.optString("title", "") + "\n" + obj.optString("text", "")
+                    )
+                if (videoId != null) {
+                    val pic = com.glasshole.phone.util.YouTubeThumbnail
+                        .fetchAndEncodePicture(this, videoId)
+                    if (pic != null) {
+                        obj.put("picture", pic)
+                        android.util.Log.i(
+                            "DebugReplay",
+                            "Injected yt thumb for replay (videoId=$videoId)"
+                        )
+                    } else {
+                        android.util.Log.w(
+                            "DebugReplay",
+                            "yt thumb fetch returned null for $videoId"
+                        )
+                    }
+                } else {
+                    android.util.Log.d(
+                        "DebugReplay",
+                        "No video_id stored; can't enrich replay (capture predates fix?)"
+                    )
+                }
+            }
+            obj.toString()
         } catch (_: Exception) {
-            entry.json
+            originalJson
         }
-        val ok = bridge.sendRaw(ProtocolCodec.encodeNotif(replayed))
-        toast(if (ok) "Replayed" else "Send failed")
     }
 }
