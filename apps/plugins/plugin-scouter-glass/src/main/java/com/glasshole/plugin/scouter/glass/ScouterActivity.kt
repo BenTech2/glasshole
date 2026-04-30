@@ -7,13 +7,13 @@ import android.hardware.Camera
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.graphics.SurfaceTexture
 import android.os.Looper
 import android.util.Log
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.SurfaceHolder
-import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -60,7 +60,15 @@ class ScouterActivity : Activity() {
     private enum class State { SCANNING, ANALYZING, LOCKED }
 
     private var camera: Camera? = null
-    private lateinit var preview: SurfaceView
+    /** TextureView instead of SurfaceView so the camera preview
+     *  composites within the activity's window hierarchy — SurfaceView
+     *  punches through its window space to a separate compositor
+     *  layer, and on EE2 that hand-off can race with surface creation
+     *  (we hit a "Failed to find layer in layer parent (no-parent)"
+     *  SurfaceFlinger crash that left the camera with a null surface
+     *  and the viewfinder black). TextureView avoids the punch-through
+     *  entirely. */
+    private lateinit var preview: TextureView
     private lateinit var overlay: ScannerOverlayView
     private var lastPreviewFrame: ByteArray? = null
     private var state: State = State.SCANNING
@@ -98,11 +106,12 @@ class ScouterActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
-        preview = SurfaceView(this).apply {
+        preview = TextureView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            isOpaque = true
         }
         overlay = ScannerOverlayView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -134,7 +143,7 @@ class ScouterActivity : Activity() {
             }
         })
 
-        preview.holder.addCallback(surfaceCallback)
+        preview.surfaceTextureListener = textureListener
 
         if (!hasCameraPermission()) {
             ActivityCompat.requestPermissions(
@@ -145,9 +154,9 @@ class ScouterActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        // Camera bind happens in surfaceCreated; if the surface is
+        // Camera bind happens once the texture is available; if it's
         // already there (e.g. coming back from background), open now.
-        if (preview.holder.surface != null) openCameraIfNeeded()
+        if (preview.isAvailable) openCameraIfNeeded()
     }
 
     override fun onPause() {
@@ -170,18 +179,20 @@ class ScouterActivity : Activity() {
 
     // --- Surface lifecycle ---
 
-    private val surfaceCallback = object : SurfaceHolder.Callback {
-        override fun surfaceCreated(holder: SurfaceHolder) {
+    private val textureListener = object : TextureView.SurfaceTextureListener {
+        override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) {
             openCameraIfNeeded()
         }
-        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, w: Int, h: Int) {
             // No-op — Glass screen is fixed orientation/size; once we
-            // started preview in surfaceCreated we don't need to
-            // reconfigure here.
+            // started preview in onSurfaceTextureAvailable we don't
+            // need to reconfigure here.
         }
-        override fun surfaceDestroyed(holder: SurfaceHolder) {
+        override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean {
             releaseCamera()
+            return true  // we own the SurfaceTexture; let TextureView release it
         }
+        override fun onSurfaceTextureUpdated(s: SurfaceTexture) { /* per-frame */ }
     }
 
     @Suppress("DEPRECATION")
@@ -209,7 +220,7 @@ class ScouterActivity : Activity() {
                 params.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
             }
             cam.parameters = params
-            cam.setPreviewDisplay(preview.holder)
+            cam.setPreviewTexture(preview.surfaceTexture)
             cam.setPreviewCallback { data, _ ->
                 // Grab the latest frame for power-level hashing on
                 // capture. Cheap (just a reference swap, the array
