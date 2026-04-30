@@ -10,10 +10,17 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
 import android.os.Looper
+import android.provider.MediaStore
 import android.util.Log
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.ImageButton
+import android.widget.Toast
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -52,6 +59,9 @@ class LiveStreamActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var spinner: ProgressBar
     private lateinit var titleView: TextView
+    private var shotButton: ImageButton? = null
+    private var keepAwakeButton: ImageButton? = null
+    private var keepAwakeOn: Boolean = false
 
     private var bridgeService: BridgeService? = null
     private var bridgeBound = false
@@ -132,6 +142,56 @@ class LiveStreamActivity : AppCompatActivity() {
         overlay.addView(status)
         root.addView(overlay)
 
+        // Floating screenshot button. Captures the currently-rendered
+        // frame to the phone's Pictures directory. Hidden until the
+        // first frame arrives so it doesn't sit empty over the
+        // "Connecting…" overlay.
+        val shotBtn = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_camera_alt)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0xCC000000.toInt())
+            }
+            imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            visibility = View.GONE
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            layoutParams = FrameLayout.LayoutParams(
+                dp(56), dp(56), Gravity.BOTTOM or Gravity.END
+            ).apply {
+                rightMargin = dp(20)
+                bottomMargin = dp(20)
+            }
+            setOnClickListener { saveCurrentFrameAsScreenshot() }
+        }
+        root.addView(shotBtn)
+        shotButton = shotBtn
+
+        // Keep-glass-screen-on toggle — only meaningful for screen
+        // mirroring (the camera path doesn't depend on the glass
+        // display being awake). Bottom-left so it pairs with the
+        // screenshot button. Tinted by [keepAwakeOn] state.
+        if (streamKind == KIND_SCREEN) {
+            val sunBtn = ImageButton(this).apply {
+                setImageResource(R.drawable.ic_sun_filled)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(0xCC000000.toInt())
+                }
+                visibility = View.GONE
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                layoutParams = FrameLayout.LayoutParams(
+                    dp(56), dp(56), Gravity.BOTTOM or Gravity.START
+                ).apply {
+                    leftMargin = dp(20)
+                    bottomMargin = dp(20)
+                }
+                setOnClickListener { toggleKeepAwake() }
+            }
+            root.addView(sunBtn)
+            keepAwakeButton = sunBtn
+            renderKeepAwakeTint()
+        }
+
         setContentView(root)
 
         bindService(
@@ -195,11 +255,98 @@ class LiveStreamActivity : AppCompatActivity() {
         } ?: return
         ui.post {
             image.setImageBitmap(bmp)
-            // First successful frame: hide the loading overlay.
+            // First successful frame: hide the loading overlay and
+            // reveal the floating action buttons.
             if (status.visibility == View.VISIBLE) {
                 setStatus(null, false)
             }
+            shotButton?.visibility = View.VISIBLE
+            keepAwakeButton?.visibility = View.VISIBLE
         }
+    }
+
+    private fun toggleKeepAwake() {
+        keepAwakeOn = !keepAwakeOn
+        renderKeepAwakeTint()
+        bridgeService?.sendLiveScreenKeepAwake(keepAwakeOn)
+        Toast.makeText(
+            this,
+            if (keepAwakeOn) "Glass screen will stay on"
+            else "Glass screen returned to normal timeout",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun renderKeepAwakeTint() {
+        val btn = keepAwakeButton ?: return
+        // Yellow (-ish primary) when on, white when off — matches the
+        // M3 active/inactive tonal-icon pattern.
+        val color = if (keepAwakeOn) 0xFFFFD54F.toInt() else Color.WHITE
+        btn.imageTintList = android.content.res.ColorStateList.valueOf(color)
+    }
+
+    /**
+     * Grab the currently-painted bitmap from [image] and write it to
+     * `Pictures/GlassHole/Screenshots/` via MediaStore (or direct
+     * file on pre-Q). Toast the result either way.
+     */
+    private fun saveCurrentFrameAsScreenshot() {
+        val drawable = image.drawable
+        val bmp = (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+        if (bmp == null) {
+            Toast.makeText(this, "No frame captured yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Thread {
+            try {
+                val name = "GlassHole-${streamKind}-${
+                    java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                        .format(java.util.Date())
+                }.jpg"
+                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH,
+                            Environment.DIRECTORY_PICTURES + "/GlassHole/Screenshots")
+                    }
+                    contentResolver.insert(
+                        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                        values
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    val dir = Environment.getExternalStoragePublicDirectory(
+                        Environment.DIRECTORY_PICTURES
+                    ).resolve("GlassHole/Screenshots")
+                    dir.mkdirs()
+                    val out = java.io.File(dir, name)
+                    android.net.Uri.fromFile(out)
+                }
+                if (uri == null) {
+                    ui.post { Toast.makeText(this, "Save failed", Toast.LENGTH_LONG).show() }
+                    return@Thread
+                }
+                contentResolver.openOutputStream(uri).use { out ->
+                    if (out == null) {
+                        ui.post { Toast.makeText(this, "Save stream failed", Toast.LENGTH_LONG).show() }
+                        return@Thread
+                    }
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                }
+                ui.post {
+                    Toast.makeText(
+                        this,
+                        "Saved $name to Pictures/GlassHole/Screenshots",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: Exception) {
+                ui.post {
+                    Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.apply { isDaemon = true; name = "LiveStreamScreenshot"; start() }
     }
 
     private fun runStream() {

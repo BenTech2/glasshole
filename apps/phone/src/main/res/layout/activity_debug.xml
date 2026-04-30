@@ -442,6 +442,14 @@
                     android:text="Take picture"
                     android:layout_marginTop="8dp" />
 
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/debugScreenshotButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Glass screen screenshot (EE2)"
+                    android:layout_marginTop="8dp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"

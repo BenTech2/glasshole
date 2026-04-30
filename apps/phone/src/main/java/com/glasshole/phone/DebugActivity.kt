@@ -40,6 +40,7 @@ class DebugActivity : AppCompatActivity() {
     // Actions group
     private lateinit var wakeGlassButton: Button
     private lateinit var takePictureButton: Button
+    private lateinit var screenshotButton: Button
     private lateinit var recordVideoButton: Button
     private lateinit var recordDurationSlider: Slider
     private lateinit var recordDurationLabel: TextView
@@ -101,6 +102,7 @@ class DebugActivity : AppCompatActivity() {
 
         wakeGlassButton = findViewById(R.id.debugWakeGlassButton)
         takePictureButton = findViewById(R.id.debugTakePictureButton)
+        screenshotButton = findViewById(R.id.debugScreenshotButton)
         recordVideoButton = findViewById(R.id.debugRecordVideoButton)
         recordDurationSlider = findViewById(R.id.debugRecordDurationSlider)
         recordDurationLabel = findViewById(R.id.debugRecordDurationLabel)
@@ -218,6 +220,7 @@ class DebugActivity : AppCompatActivity() {
         resetAdminPromptButton.isEnabled = enabled
         wakeGlassButton.isEnabled = enabled
         takePictureButton.isEnabled = enabled
+        screenshotButton.isEnabled = enabled && !liveRequestPending
         recordVideoButton.isEnabled = enabled
         liveCameraButton.isEnabled = enabled && !liveRequestPending
         liveScreenButton.isEnabled = enabled && !liveRequestPending
@@ -310,6 +313,149 @@ class DebugActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
+    /**
+     * One-shot screen-grab from glass. Same handshake as the live
+     * mirror (`LIVE_SCREEN_START` → wait for URL → ...) but instead of
+     * launching the streaming viewer we hit the server's `/still`
+     * endpoint, save the JPEG to Pictures/GlassHole/Screenshots, and
+     * fire `LIVE_SCREEN_STOP` so the projection tears down.
+     */
+    private fun requestGlassScreenshot() {
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            updateStatus()
+            return
+        }
+        if (liveRequestPending) {
+            toast("Already requesting a stream — wait a moment")
+            return
+        }
+        liveRequestPending = true
+        updateStatus()
+
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val timeout = Runnable {
+            runOnUiThread {
+                if (liveRequestPending) {
+                    liveRequestPending = false
+                    bridge.onLiveScreenUrl = null
+                    bridge.onLiveScreenErr = null
+                    toast("Glass timed out — no response")
+                    updateStatus()
+                }
+            }
+        }
+        handler.postDelayed(timeout, 12_000L)
+
+        bridge.onLiveScreenUrl = { url ->
+            handler.removeCallbacks(timeout)
+            runOnUiThread {
+                bridge.onLiveScreenUrl = null
+                bridge.onLiveScreenErr = null
+                fetchAndSaveStill(url) {
+                    bridge.sendLiveScreenStop()
+                    liveRequestPending = false
+                    updateStatus()
+                }
+            }
+        }
+        bridge.onLiveScreenErr = { reason ->
+            handler.removeCallbacks(timeout)
+            runOnUiThread {
+                liveRequestPending = false
+                bridge.onLiveScreenUrl = null
+                bridge.onLiveScreenErr = null
+                toast(liveErrorMessage(reason, camera = false))
+                updateStatus()
+            }
+        }
+        toast("Capturing screenshot…")
+        bridge.sendLiveScreenStart()
+    }
+
+    /**
+     * Replace the `/stream` path in [streamUrl] with `/still`, GET it,
+     * and save the response JPEG to Pictures/GlassHole/Screenshots.
+     */
+    private fun fetchAndSaveStill(streamUrl: String, onComplete: () -> Unit) {
+        Thread {
+            try {
+                val stillUrl = streamUrl.replace("/stream", "/still")
+                val conn = (java.net.URL(stillUrl).openConnection()
+                    as java.net.HttpURLConnection).apply {
+                    connectTimeout = 5_000
+                    readTimeout = 8_000
+                }
+                val bytes = try {
+                    if (conn.responseCode != 200) throw java.io.IOException("HTTP ${conn.responseCode}")
+                    conn.inputStream.use { it.readBytes() }
+                } finally {
+                    conn.disconnect()
+                }
+                saveScreenshotJpeg(bytes, source = "screen")
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Screenshot failed: ${e.message}",
+                        Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                runOnUiThread { onComplete() }
+            }
+        }.apply { isDaemon = true; name = "GlassScreenshot"; start() }
+    }
+
+    /**
+     * Persist [jpegBytes] to `Pictures/GlassHole/Screenshots/` via
+     * MediaStore on Android 10+, direct file fallback below that.
+     */
+    private fun saveScreenshotJpeg(jpegBytes: ByteArray, source: String) {
+        try {
+            val name = "GlassHole-$source-${
+                java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                    .format(java.util.Date())
+            }.jpg"
+            val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_PICTURES + "/GlassHole/Screenshots")
+                }
+                contentResolver.insert(
+                    android.provider.MediaStore.Images.Media
+                        .getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    values
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_PICTURES
+                ).resolve("GlassHole/Screenshots")
+                dir.mkdirs()
+                val out = java.io.File(dir, name)
+                android.net.Uri.fromFile(out)
+            }
+            if (uri == null) {
+                runOnUiThread {
+                    Toast.makeText(this, "Save failed", Toast.LENGTH_LONG).show()
+                }
+                return
+            }
+            contentResolver.openOutputStream(uri)?.use { it.write(jpegBytes) }
+            runOnUiThread {
+                Toast.makeText(this,
+                    "Saved $name to Pictures/GlassHole/Screenshots",
+                    Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            runOnUiThread {
+                Toast.makeText(this, "Save failed: ${e.message}",
+                    Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private fun liveErrorMessage(reason: String, camera: Boolean): String = when (reason) {
         "no_wifi" -> "Glass isn't on Wi-Fi — connect it first"
         "permission_required" -> "Grant camera permission on glass, then retry"
@@ -332,6 +478,7 @@ class DebugActivity : AppCompatActivity() {
         takePictureButton.setOnClickListener {
             sendPluginAction("camera2", "CAPTURE_STILL", "", "Capture sent")
         }
+        screenshotButton.setOnClickListener { requestGlassScreenshot() }
         recordVideoButton.setOnClickListener {
             val seconds = recordDurationSlider.value.toInt().coerceAtLeast(1)
             val payload = JSONObject().apply {

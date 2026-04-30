@@ -847,6 +847,8 @@ class BridgeService : Service() {
     fun sendLiveCamStop(): Boolean = sendRaw(ProtocolCodec.encodeLiveCamStop())
     fun sendLiveScreenStart(): Boolean = sendRaw(ProtocolCodec.encodeLiveScreenStart())
     fun sendLiveScreenStop(): Boolean = sendRaw(ProtocolCodec.encodeLiveScreenStop())
+    fun sendLiveScreenKeepAwake(enabled: Boolean): Boolean =
+        sendRaw(ProtocolCodec.encodeLiveScreenKeepAwake(enabled))
 
     /** Ask Glass Home to clear its "already prompted" flag for the
      *  device-admin dialog so the next HomeActivity open re-asks. */

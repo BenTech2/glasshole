@@ -211,6 +211,7 @@ class BluetoothListenerService : Service() {
         // a phone disconnect always cancels any debug session.
         try { cameraLiveSession.stop() } catch (_: Exception) {}
         try { screenLiveSession.stop() } catch (_: Exception) {}
+        releaseScreenMirrorWakeLock()
     }
 
     // --- Plugin registration (AIDL) ---
@@ -765,7 +766,48 @@ class BluetoothListenerService : Service() {
 
     private fun handleLiveScreenStop() {
         screenLiveSession.stop()
+        releaseScreenMirrorWakeLock()
         Log.i(TAG, "LIVE_SCREEN_STOP")
+    }
+
+    /** Held while the phone has the "keep glass screen on" toggle on
+     *  during a live mirror session. Released by handleLiveScreenStop
+     *  and closeAll so we never leak a lock past disconnect. */
+    private var screenMirrorWakeLock: PowerManager.WakeLock? = null
+
+    private fun handleLiveScreenKeepAwake(enabled: Boolean) {
+        if (enabled) acquireScreenMirrorWakeLock()
+        else releaseScreenMirrorWakeLock()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun acquireScreenMirrorWakeLock() {
+        if (screenMirrorWakeLock?.isHeld == true) return
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                "GlassHole:ScreenMirrorAwake"
+            )
+            wl.setReferenceCounted(false)
+            wl.acquire()
+            screenMirrorWakeLock = wl
+            Log.i(TAG, "screen-mirror wake lock acquired")
+        } catch (e: Exception) {
+            Log.w(TAG, "screen-mirror wake lock failed: ${e.message}")
+        }
+    }
+
+    private fun releaseScreenMirrorWakeLock() {
+        try {
+            screenMirrorWakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+        } catch (_: Exception) {}
+        if (screenMirrorWakeLock != null) {
+            Log.i(TAG, "screen-mirror wake lock released")
+        }
+        screenMirrorWakeLock = null
     }
 
     private fun batteryHealthString(health: Int): String = when (health) {
@@ -939,6 +981,10 @@ class BluetoothListenerService : Service() {
                     line == "LIVE_CAM_STOP" -> handleLiveCamStop()
                     line == "LIVE_SCREEN_START" -> handleLiveScreenStart()
                     line == "LIVE_SCREEN_STOP" -> handleLiveScreenStop()
+                    line.startsWith("LIVE_SCREEN_KEEP_AWAKE:") ->
+                        handleLiveScreenKeepAwake(
+                            line.removePrefix("LIVE_SCREEN_KEEP_AWAKE:").trim() == "1"
+                        )
                     else -> {
                         messageListener?.onMessageReceived(line)
                     }

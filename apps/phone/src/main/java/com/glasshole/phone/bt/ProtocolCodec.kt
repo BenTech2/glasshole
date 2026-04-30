@@ -100,6 +100,14 @@ object ProtocolCodec {
     fun encodeLiveScreenStart(): String = "LIVE_SCREEN_START\n"
     fun encodeLiveScreenStop(): String = "LIVE_SCREEN_STOP\n"
 
+    /** Toggle a SCREEN_BRIGHT wake lock on glass for the lifetime of
+     *  the active screen mirror — payload is "1"/"0". Glass auto-
+     *  releases the lock when LIVE_SCREEN_STOP arrives or BT
+     *  disconnects, so the phone doesn't have to be perfect about
+     *  pairing on/off calls. */
+    fun encodeLiveScreenKeepAwake(enabled: Boolean): String =
+        "LIVE_SCREEN_KEEP_AWAKE:${if (enabled) 1 else 0}\n"
+
     fun encodeInstallStart(filename: String, size: Long, md5: String): String =
         "INSTALL:$filename:$size:$md5\n"
 
