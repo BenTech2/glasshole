@@ -7,6 +7,9 @@ import android.hardware.Camera
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.graphics.SurfaceTexture
 import android.os.Looper
 import android.util.Log
@@ -112,6 +115,22 @@ class ScouterActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
             isOpaque = true
+            // Vegeta-style red scouter filter — collapse green/blue
+            // channels to zero and weight the surviving red on luminance
+            // so dark frames stay dark, bright frames glow red-hot. The
+            // ColorMatrix is applied via the layer paint so the filter
+            // composites the texture as it's drawn rather than touching
+            // each frame in CPU.
+            val redMatrix = ColorMatrix(floatArrayOf(
+                1.1f, 0f,   0f,   0f, 15f,
+                0f,   0.2f, 0f,   0f, 0f,
+                0f,   0f,   0.15f, 0f, 0f,
+                0f,   0f,   0f,   1f, 0f
+            ))
+            val redPaint = Paint().apply {
+                colorFilter = ColorMatrixColorFilter(redMatrix)
+            }
+            setLayerType(View.LAYER_TYPE_HARDWARE, redPaint)
         }
         overlay = ScannerOverlayView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -220,6 +239,16 @@ class ScouterActivity : Activity() {
                 params.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
             }
             cam.parameters = params
+            // Align preview with the display. EE1's camera sensor reports
+            // a 90° native orientation, so without this the viewfinder
+            // shows up sideways. EE2 reports 0° here so this is a no-op
+            // for that edition. Glass screens are fixed-orientation so
+            // we don't need to factor in display rotation.
+            try {
+                val info = Camera.CameraInfo()
+                Camera.getCameraInfo(0, info)
+                cam.setDisplayOrientation(info.orientation)
+            } catch (_: Exception) {}
             cam.setPreviewTexture(preview.surfaceTexture)
             cam.setPreviewCallback { data, _ ->
                 // Grab the latest frame for power-level hashing on

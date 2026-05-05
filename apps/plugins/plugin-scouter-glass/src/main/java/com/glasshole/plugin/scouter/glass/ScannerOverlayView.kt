@@ -5,7 +5,9 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.Build
 import android.util.AttributeSet
 import android.view.View
 import kotlin.math.cos
@@ -39,17 +41,17 @@ class ScannerOverlayView @JvmOverloads constructor(
 
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(1.5f)
+        strokeWidth = dp(2.5f)
         color = accent
     }
     private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(1f)
+        strokeWidth = dp(2f)
         color = accentDim
     }
     private val crosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(1f)
+        strokeWidth = dp(2f)
         color = accent
     }
     private val centerDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -58,16 +60,31 @@ class ScannerOverlayView @JvmOverloads constructor(
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = accent
-        textSize = dp(14f)
+        textSize = dp(15f)
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        letterSpacing = 0.15f
+        // setLetterSpacing was added in API 21 — Glass XE / EE1 are
+        // API 19 and would crash with NoSuchMethodError on init.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            letterSpacing = 0.15f
+        }
     }
     private val powerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = accent
-        textSize = dp(28f)
+        textSize = dp(34f)
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        letterSpacing = 0.10f
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            letterSpacing = 0.10f
+        }
     }
+    /** Translucent black plate drawn behind text in LOCKED mode so the
+     *  reveal stays legible against bright backgrounds (sky, snow,
+     *  white walls). Same plate for the top-left header and the
+     *  bottom-center power-level/classification stack. */
+    private val backdropPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.argb(0xC8, 0, 0, 0)
+    }
+    private val backdropRect = RectF()
 
     @Volatile private var mode: Mode = Mode.SCANNING
     @Volatile private var powerLevel: Long = 0L
@@ -125,20 +142,20 @@ class ScannerOverlayView @JvmOverloads constructor(
             canvas.drawLine(x1, y1, x2, y2, tickPaint)
         }
 
-        // Pulsing reticle — radius oscillates ±10%.
-        val pulse = 1f + 0.10f * sin((elapsed / 250.0)).toFloat()
+        // Pulsing reticle — radius oscillates ±15%.
+        val pulse = 1f + 0.15f * sin((elapsed / 220.0)).toFloat()
         canvas.drawCircle(cx, cy, reticleR * pulse, ringPaint)
 
-        // Crosshair — short ticks just outside the reticle.
+        // Crosshair — slightly longer ticks for a chunkier read.
         val gap = dp(8f)
-        val tick = dp(14f)
+        val tick = dp(18f)
         canvas.drawLine(cx - reticleR - gap - tick, cy, cx - reticleR - gap, cy, crosshairPaint)
         canvas.drawLine(cx + reticleR + gap, cy, cx + reticleR + gap + tick, cy, crosshairPaint)
         canvas.drawLine(cx, cy - reticleR - gap - tick, cx, cy - reticleR - gap, crosshairPaint)
         canvas.drawLine(cx, cy + reticleR + gap, cx, cy + reticleR + gap + tick, crosshairPaint)
 
         // Center dot.
-        canvas.drawCircle(cx, cy, dp(2f), centerDotPaint)
+        canvas.drawCircle(cx, cy, dp(3f), centerDotPaint)
 
         // Status label, top-left.
         val dots = (elapsed / 333) % 4
@@ -173,30 +190,49 @@ class ScannerOverlayView @JvmOverloads constructor(
     ) {
         canvas.drawCircle(cx, cy, outerR, ringPaint)
         canvas.drawCircle(cx, cy, reticleR, ringPaint)
-        canvas.drawCircle(cx, cy, dp(2f), centerDotPaint)
+        canvas.drawCircle(cx, cy, dp(3f), centerDotPaint)
 
-        // "TARGET LOCKED" header, top-left.
-        canvas.drawText("TARGET LOCKED", dp(16f), dp(28f), labelPaint)
+        // "TARGET LOCKED" header — backdrop plate top-left.
+        val header = "TARGET LOCKED"
+        val headerWidth = labelPaint.measureText(header)
+        val headerY = dp(28f)
+        val padX = dp(8f)
+        val padY = dp(6f)
+        backdropRect.set(
+            dp(16f) - padX,
+            headerY + labelPaint.fontMetrics.ascent - padY,
+            dp(16f) + headerWidth + padX,
+            headerY + labelPaint.fontMetrics.descent + padY
+        )
+        canvas.drawRoundRect(backdropRect, dp(4f), dp(4f), backdropPaint)
+        canvas.drawText(header, dp(16f), headerY, labelPaint)
 
-        // Power level — center, big, monospaced, bold.
+        // Bottom-center stack: power level + classification, sharing
+        // one backdrop plate sized to the wider of the two so they
+        // read as a single unit even on a noisy / bright scene.
         val powerText = "%,d".format(powerLevel)
         val powerWidth = powerPaint.measureText(powerText)
-        canvas.drawText(
-            powerText,
-            cx - powerWidth / 2f,
-            height - dp(48f),
-            powerPaint
-        )
-        // Classification subtext.
         val klassText = classification.uppercase()
+        val klassWidth = if (klassText.isNotEmpty()) labelPaint.measureText(klassText) else 0f
+        val maxWidth = maxOf(powerWidth, klassWidth)
+
+        val powerY = height - dp(48f)
+        val klassY = height - dp(24f)
+        val plateTop = powerY + powerPaint.fontMetrics.ascent - padY
+        val plateBottom = (if (klassText.isNotEmpty()) klassY else powerY) +
+            (if (klassText.isNotEmpty()) labelPaint.fontMetrics.descent else powerPaint.fontMetrics.descent) +
+            padY
+        backdropRect.set(
+            cx - maxWidth / 2f - padX,
+            plateTop,
+            cx + maxWidth / 2f + padX,
+            plateBottom
+        )
+        canvas.drawRoundRect(backdropRect, dp(6f), dp(6f), backdropPaint)
+
+        canvas.drawText(powerText, cx - powerWidth / 2f, powerY, powerPaint)
         if (klassText.isNotEmpty()) {
-            val klassWidth = labelPaint.measureText(klassText)
-            canvas.drawText(
-                klassText,
-                cx - klassWidth / 2f,
-                height - dp(24f),
-                labelPaint
-            )
+            canvas.drawText(klassText, cx - klassWidth / 2f, klassY, labelPaint)
         }
     }
 }
