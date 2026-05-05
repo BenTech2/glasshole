@@ -23,13 +23,34 @@
 //     pure-config invocations (`./gradlew tasks`, etc.) leave the
 //     counter alone.
 //
-// Counters are PER-MODULE: glass-ee2 / phone / each plugin / each
-// stream player keep their own files so build numbers don't collide.
+// Version families: a module can opt into a shared counter with
+// other modules by declaring, *before* applying this script:
+//
+//     extra["versionFamily"] = listOf(":glass-ee1", ":glass-ee2", ":glass-xe")
+//
+// When set, the read takes the max counter across the family and
+// every successful package writes that new value back to *all*
+// family members' counter files. This keeps the per-edition glass
+// APKs (and stream players) in lockstep so a build of one edition
+// also bumps the others — even when only one edition is built —
+// preventing INSTALL_FAILED_VERSION_DOWNGRADE collisions when
+// flashing the same code across multiple Glass devices.
+//
+// Modules without a `versionFamily` keep their own per-module
+// counter (phone, plugins, anything single-APK).
 
-val counterFile = project.file("build_counter.txt")
-val currentCounter: Int = if (counterFile.exists()) {
-    counterFile.readText().trim().toIntOrNull() ?: 0
-} else 0
+val familyPaths: List<String> = (project.extra.properties["versionFamily"] as? List<*>)
+    ?.filterIsInstance<String>()
+    ?.takeIf { it.isNotEmpty() }
+    ?: listOf(project.path)
+
+val familyCounterFiles: List<java.io.File> = familyPaths.map { path ->
+    rootProject.project(path).file("build_counter.txt")
+}
+
+val currentCounter: Int = familyCounterFiles.mapNotNull { f ->
+    if (f.exists()) f.readText().trim().toIntOrNull() else null
+}.maxOrNull() ?: 0
 val nextCounter: Int = currentCounter + 1
 
 val baseVersion: String = (project.rootProject.findProperty("glassholeVersion") as? String) ?: "0.0.0"
@@ -48,11 +69,14 @@ gradle.taskGraph.whenReady {
 }
 gradle.buildFinished {
     if (failure == null && willPackage) {
-        try {
-            counterFile.writeText(nextCounter.toString())
-            println("📈 ${project.name}: build counter -> $nextCounter (v$baseVersion)")
-        } catch (e: Exception) {
-            println("⚠️  ${project.name}: failed to write build counter: ${e.message}")
+        for (f in familyCounterFiles) {
+            try {
+                f.writeText(nextCounter.toString())
+            } catch (e: Exception) {
+                println("⚠️  ${project.name}: failed to write counter ${f.path}: ${e.message}")
+            }
         }
+        val tag = if (familyPaths.size > 1) " [family: ${familyPaths.joinToString(",")}]" else ""
+        println("📈 ${project.name}: build counter -> $nextCounter (v$baseVersion)$tag")
     }
 }

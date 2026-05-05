@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+extra["versionFamily"] = listOf(":glass-ee1", ":glass-ee2", ":glass-xe")
 apply(from = "${rootDir}/build-versioning.gradle.kts")
 
 android {

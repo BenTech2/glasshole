@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+extra["versionFamily"] = listOf(":stream-player-ee1", ":stream-player-ee2", ":stream-player-xe")
 apply(from = "${rootDir}/build-versioning.gradle.kts")
 
 android {
