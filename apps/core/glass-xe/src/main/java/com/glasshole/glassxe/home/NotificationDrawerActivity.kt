@@ -130,10 +130,11 @@ class NotificationDrawerActivity : Activity() {
         return when (keyCode) {
             KeyEvent.KEYCODE_BACK -> { finish(); true }
             KeyEvent.KEYCODE_TAB -> {
-                navigatePage(if (event?.isShiftPressed == true) -1 else 1); true
+                val fwd = fwdSign()
+                navigatePage(if (event?.isShiftPressed == true) -fwd else fwd); true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { navigatePage(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { navigatePage(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { navigatePage(fwdSign()); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { navigatePage(-fwdSign()); true }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showOverlay(); true }
             else -> super.onKeyDown(keyCode, event)
@@ -144,10 +145,11 @@ class NotificationDrawerActivity : Activity() {
         return when (keyCode) {
             KeyEvent.KEYCODE_BACK -> { hideOverlay(); true }
             KeyEvent.KEYCODE_TAB -> {
-                cycleOverlaySelection(if (event?.isShiftPressed == true) -1 else 1); true
+                val fwd = fwdSign()
+                cycleOverlaySelection(if (event?.isShiftPressed == true) -fwd else fwd); true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { cycleOverlaySelection(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { cycleOverlaySelection(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { cycleOverlaySelection(fwdSign()); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { cycleOverlaySelection(-fwdSign()); true }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                 executeOverlaySelection(); true
@@ -180,7 +182,8 @@ class NotificationDrawerActivity : Activity() {
                     return true
                 }
                 if (absDx > 60 && absDx > absDy) {
-                    val dir = if (dx > 0) 1 else -1
+                    val fwd = fwdSign()
+                    val dir = if (dx > 0) fwd else -fwd
                     if (overlayVisible) cycleOverlaySelection(dir) else navigatePage(dir)
                     return true
                 }
@@ -431,4 +434,7 @@ class NotificationDrawerActivity : Activity() {
     }
 
     private class PageHolder(view: View) : RecyclerView.ViewHolder(view)
+
+    private fun fwdSign(): Int =
+        if (com.glasshole.glassxe.BaseSettings.isNavInverted(this)) -1 else 1
 }

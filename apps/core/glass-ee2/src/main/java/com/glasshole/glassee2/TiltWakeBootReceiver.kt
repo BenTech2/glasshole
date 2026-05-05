@@ -63,4 +63,18 @@ object BaseSettings {
     /** When set, the Home carousel snaps back to the Time card on every
      *  screen-on event so the user always re-enters from a known position. */
     const val KEY_WAKE_TO_TIME_CARD = "wake_to_time_card"
+    /** User-facing inversion toggle for navigation gestures across
+     *  every base-app cover-flow / drawer surface (Home, Settings, App
+     *  drawer, Notification drawer). When true, swipe-forward / TAB /
+     *  DPAD_RIGHT all navigate to the PREVIOUS item instead of the
+     *  next one. Read at gesture-time so flipping the toggle on the
+     *  phone takes effect immediately without restarting activities. */
+    const val KEY_INVERT_NAV = "invert_nav"
+
+    /** Convenience accessor for the invert flag — every nav surface
+     *  reads this once per gesture; the cost of a SharedPreferences
+     *  hit is negligible compared to the gesture-rate. */
+    fun isNavInverted(context: android.content.Context): Boolean =
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY_INVERT_NAV, false)
 }

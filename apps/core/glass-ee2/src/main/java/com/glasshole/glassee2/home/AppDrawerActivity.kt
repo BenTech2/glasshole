@@ -94,12 +94,12 @@ class AppDrawerActivity : Activity() {
         return when (keyCode) {
             KeyEvent.KEYCODE_BACK -> { finish(); true }
             KeyEvent.KEYCODE_TAB -> {
-                val dir = if (event?.isShiftPressed == true) -1 else 1
-                glideBy(dir)
+                val fwd = fwdSign()
+                glideBy(if (event?.isShiftPressed == true) -fwd else fwd)
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { glideBy(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { glideBy(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { glideBy(fwdSign()); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { glideBy(-fwdSign()); true }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                 launchCurrent()
@@ -195,4 +195,9 @@ class AppDrawerActivity : Activity() {
     }
 
     private class PageHolder(view: View) : RecyclerView.ViewHolder(view)
+
+    /** +1 default, -1 when the user has flipped "Invert glass nav"
+     *  on the phone. Read fresh on each gesture for live response. */
+    private fun fwdSign(): Int =
+        if (com.glasshole.glassee2.BaseSettings.isNavInverted(this)) -1 else 1
 }

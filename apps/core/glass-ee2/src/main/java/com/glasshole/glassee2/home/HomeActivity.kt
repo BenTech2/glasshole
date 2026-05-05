@@ -581,7 +581,8 @@ class HomeActivity : Activity() {
                 // registers shorter swipes than a phone screen.
                 if (absDx > 60 && absDx > absDy) {
                     val current = pager.currentItem
-                    val delta = if (dx > 0) 1 else -1
+                    val fwd = fwdSign()
+                    val delta = if (dx > 0) fwd else -fwd
                     val target = (current + delta).coerceIn(0, cardAdapter.itemCount - 1)
                     if (target != current) pager.setCurrentItem(target, true)
                     return true
@@ -614,11 +615,12 @@ class HomeActivity : Activity() {
             // SHIFT+TAB (Android's "previous focus" convention). XE/EE1
             // may send DPAD_LEFT / DPAD_RIGHT directly — keep those too.
             KeyEvent.KEYCODE_TAB -> {
-                if (event?.isShiftPressed == true) navigateCard(-1) else navigateCard(1)
+                val fwd = fwdSign()
+                navigateCard(if (event?.isShiftPressed == true) -fwd else fwd)
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { navigateCard(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { navigateCard(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { navigateCard(fwdSign()); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { navigateCard(-fwdSign()); true }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> {
                 // Consume the shift modifier that arrives just before the
                 // TAB in the swipe-back combo — nothing to do, but we don't
@@ -731,4 +733,11 @@ class HomeActivity : Activity() {
         val target = (current + delta).coerceIn(0, cardAdapter.itemCount - 1)
         if (target != current) pager.setCurrentItem(target, true)
     }
+
+    /** +1 for the project default (forward swipe / TAB / DPAD_RIGHT
+     *  goes to the NEXT item) or -1 if the user has flipped the
+     *  "Invert glass navigation" toggle on the phone. Read fresh on
+     *  each gesture so the toggle takes effect without restarting. */
+    private fun fwdSign(): Int =
+        if (com.glasshole.glassee2.BaseSettings.isNavInverted(this)) -1 else 1
 }

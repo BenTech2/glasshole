@@ -452,6 +452,15 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Wake-to-time-card ${if (enabled) "enabled" else "disabled"}")
                 sendBaseStateToPhone()
             }
+            "SET_INVERT_NAV" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_INVERT_NAV, enabled).apply()
+                Log.i(TAG, "Invert nav ${if (enabled) "enabled" else "disabled"}")
+                sendBaseStateToPhone()
+            }
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
             else -> Log.d(TAG, "Unknown base message: $type")
@@ -517,6 +526,7 @@ class BluetoothListenerService : Service() {
             put("navKeepScreenOn", prefs.getBoolean(BaseSettings.KEY_NAV_KEEP_SCREEN_ON, false))
             put("navWakeOnUpdate", prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false))
             put("wakeToTimeCard", prefs.getBoolean(BaseSettings.KEY_WAKE_TO_TIME_CARD, false))
+            put("invertNav", prefs.getBoolean(BaseSettings.KEY_INVERT_NAV, false))
         }.toString()
         sendPluginMessage("base", "STATE", json)
     }

@@ -42,6 +42,7 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var navKeepScreenOnSwitch: MaterialSwitch
     private lateinit var navWakeOnUpdateSwitch: MaterialSwitch
     private lateinit var wakeToTimeCardSwitch: MaterialSwitch
+    private lateinit var invertNavSwitch: MaterialSwitch
 
     private lateinit var wakeButton: Button
     private lateinit var syncTimeButton: Button
@@ -83,6 +84,7 @@ class DeviceActivity : AppCompatActivity() {
         navKeepScreenOnSwitch = findViewById(R.id.navKeepScreenOnSwitch)
         navWakeOnUpdateSwitch = findViewById(R.id.navWakeOnUpdateSwitch)
         wakeToTimeCardSwitch = findViewById(R.id.wakeToTimeCardSwitch)
+        invertNavSwitch = findViewById(R.id.invertNavSwitch)
         wakeButton = findViewById(R.id.wakeButton)
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
@@ -264,6 +266,20 @@ class DeviceActivity : AppCompatActivity() {
             val json = JSONObject().apply { put("enabled", isChecked) }.toString()
             val sent = bridge.sendPluginMessage("base", "SET_WAKE_TO_TIME_CARD", json)
             toast(if (sent) "Show time card on wake ${if (isChecked) "enabled" else "disabled"}"
+                  else "Send failed")
+        }
+
+        invertNavSwitch.isChecked = prefs.getBoolean("invert_nav", false)
+        invertNavSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("invert_nav", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_INVERT_NAV", json)
+            toast(if (sent) "Glass nav direction ${if (isChecked) "inverted" else "normal"}"
                   else "Send failed")
         }
 

@@ -492,7 +492,9 @@ class HomeActivity : Activity() {
                 val absDy = kotlin.math.abs(dy)
                 if (dy > 120 && absDy > absDx * 1.3f) { actionBack(); return true }
                 if (absDx > 60 && absDx > absDy) {
-                    if (dx > 0) actionNext() else actionPrev()
+                    val forward = (dx > 0)
+                        .xor(com.glasshole.glassxe.BaseSettings.isNavInverted(this))
+                    if (forward) actionNext() else actionPrev()
                     return true
                 }
                 if (absDx < 25 && absDy < 25) { actionTap(); return true }
@@ -506,11 +508,17 @@ class HomeActivity : Activity() {
         return when (keyCode) {
             KeyEvent.KEYCODE_BACK -> { actionBack(); true }
             KeyEvent.KEYCODE_TAB -> {
-                if (event?.isShiftPressed == true) actionPrev() else actionNext()
+                val isForward = (event?.isShiftPressed != true)
+                    .xor(com.glasshole.glassxe.BaseSettings.isNavInverted(this))
+                if (isForward) actionNext() else actionPrev()
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { actionNext(); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { actionPrev(); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                if (com.glasshole.glassxe.BaseSettings.isNavInverted(this)) actionPrev() else actionNext(); true
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                if (com.glasshole.glassxe.BaseSettings.isNavInverted(this)) actionNext() else actionPrev(); true
+            }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { actionTap(); true }
             else -> super.onKeyDown(keyCode, event)
