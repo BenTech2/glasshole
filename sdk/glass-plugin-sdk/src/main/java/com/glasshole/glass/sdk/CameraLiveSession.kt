@@ -22,7 +22,14 @@ import android.util.Log
  * caller (BluetoothListenerService) just decides when to start/stop
  * and forwards the URL string to the phone.
  */
-class CameraLiveSession(private val context: Context) {
+class CameraLiveSession(
+    private val context: Context,
+    /** CW degrees the streamer should rotate frames before encoding.
+     *  EE1's sensor is mounted 90° off the display so we rotate at the
+     *  source instead of pushing the burden onto the phone viewer.
+     *  EE2 reports 0° natively so it stays the default. */
+    private val rotationDegrees: Int = 0
+) {
 
     sealed class Status {
         data class Started(val url: String) : Status()
@@ -45,7 +52,10 @@ class CameraLiveSession(private val context: Context) {
             server = it
         }
         if (streamer == null) {
-            val s = CameraStreamer(onFrame = { bytes -> srv.pushFrame(bytes) })
+            val s = CameraStreamer(
+                onFrame = { bytes -> srv.pushFrame(bytes) },
+                rotationDegrees = rotationDegrees
+            )
             if (!s.start()) {
                 // Camera HAL may already be in use; release the server
                 // so we don't leak the listening socket.

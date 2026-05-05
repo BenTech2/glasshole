@@ -29,7 +29,12 @@ class CameraStreamer(
     private val onFrame: (ByteArray) -> Unit,
     private val targetWidthHint: Int = 640,
     private val targetFps: Int = 10,
-    private val jpegQuality: Int = 60
+    private val jpegQuality: Int = 60,
+    /** Rotation applied to each NV21 frame before JPEG encode.
+     *  Supported: 0 and 90 (clockwise). EE1's camera sensor is mounted
+     *  90° off the display so frames need a CW rotation before they
+     *  reach the phone viewer. EE2 reports 0° and stays as-is. */
+    private val rotationDegrees: Int = 0
 ) {
     companion object {
         private const val TAG = "CameraStreamer"
@@ -45,6 +50,10 @@ class CameraStreamer(
     private var frameHeight: Int = 0
     @Volatile private var lastEmitMs: Long = 0L
     @Volatile private var running = false
+    /** Reusable scratch buffer for 90° NV21 rotation. Same total byte
+     *  count as the source so a single allocation services every
+     *  frame; only touched on the encoder thread. */
+    private var rotationScratch: ByteArray? = null
 
     @Synchronized
     fun start(): Boolean {
@@ -169,9 +178,17 @@ class CameraStreamer(
         // Encode off the camera thread so we don't starve the HAL.
         encoderHandler?.post {
             try {
-                val yuv = YuvImage(nv21, ImageFormat.NV21, w, h, null)
+                val (data, encW, encH) = if (rotationDegrees == 90) {
+                    val scratch = rotationScratch
+                        ?: ByteArray(w * h * 3 / 2).also { rotationScratch = it }
+                    rotateNV21Cw90(nv21, w, h, scratch)
+                    Triple(scratch, h, w) // dims swap after CW 90
+                } else {
+                    Triple(nv21, w, h)
+                }
+                val yuv = YuvImage(data, ImageFormat.NV21, encW, encH, null)
                 val baos = ByteArrayOutputStream()
-                yuv.compressToJpeg(Rect(0, 0, w, h), jpegQuality, baos)
+                yuv.compressToJpeg(Rect(0, 0, encW, encH), jpegQuality, baos)
                 onFrame(baos.toByteArray())
             } catch (e: Exception) {
                 Log.w(TAG, "encode failed: ${e.message}")
@@ -183,6 +200,32 @@ class CameraStreamer(
             }
         } ?: run {
             try { cam.addCallbackBuffer(nv21) } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Rotate an NV21 frame 90° clockwise into [dst]. NV21 is a Y plane
+     * of W×H bytes followed by an interleaved VU plane at half
+     * resolution (each VU pair covers a 2×2 block of Y). Rotating swaps
+     * the dimensions: dst is treated as H×W. Y rotates per-pixel; the
+     * VU plane rotates per-pair (V then U) to keep chroma aligned.
+     */
+    private fun rotateNV21Cw90(src: ByteArray, w: Int, h: Int, dst: ByteArray) {
+        var di = 0
+        for (x in 0 until w) {
+            for (y in h - 1 downTo 0) {
+                dst[di++] = src[y * w + x]
+            }
+        }
+        val frameSize = w * h
+        di = frameSize + frameSize / 2 - 1
+        var x = w - 1
+        while (x > 0) {
+            for (y in 0 until h / 2) {
+                dst[di--] = src[frameSize + y * w + x]      // V
+                dst[di--] = src[frameSize + y * w + x - 1]  // U
+            }
+            x -= 2
         }
     }
 

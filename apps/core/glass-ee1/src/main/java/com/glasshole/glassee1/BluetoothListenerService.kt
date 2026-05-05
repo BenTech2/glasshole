@@ -93,7 +93,9 @@ class BluetoothListenerService : Service() {
     // stream. EE1 has no MediaProjection (API 19), so screen mirror
     // does not exist on this edition.
     private val cameraLiveSession by lazy {
-        com.glasshole.glass.sdk.CameraLiveSession(this)
+        // EE1 sensor is mounted 90° off the display — rotate at the
+        // source so the phone viewer always shows an upright frame.
+        com.glasshole.glass.sdk.CameraLiveSession(this, rotationDegrees = 90)
     }
 
     inner class LocalBinder : Binder() {
