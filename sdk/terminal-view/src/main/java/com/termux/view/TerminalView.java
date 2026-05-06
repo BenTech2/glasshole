@@ -66,8 +66,29 @@ public final class TerminalView extends View {
     public static final int TERMINAL_CURSOR_BLINK_RATE_MIN = 100;
     public static final int TERMINAL_CURSOR_BLINK_RATE_MAX = 2000;
 
-    /** The top row of text to display. Ranges from -activeTranscriptRows to 0. */
-    int mTopRow;
+    /** The top row of text to display. Ranges from -activeTranscriptRows to 0.
+     *  Promoted from package-private to public so embedding hosts can drive
+     *  their own scroll affordances (e.g. GlassHole maps temple swipes to
+     *  scrollback). */
+    public int mTopRow;
+
+    /**
+     * GlassHole helper: shift the visible top by [rows] (positive = scroll
+     * toward newer / live, negative = scroll into older history). Clamps
+     * to the available transcript range and triggers a redraw. Safe to
+     * call before [attachSession] (no-op).
+     */
+    public void scrollByRows(int rows) {
+        if (mEmulator == null) return;
+        int rowsInHistory = mEmulator.getScreen().getActiveTranscriptRows();
+        int next = mTopRow + rows;
+        if (next > 0) next = 0;
+        if (next < -rowsInHistory) next = -rowsInHistory;
+        if (next != mTopRow) {
+            mTopRow = next;
+            invalidate();
+        }
+    }
     int[] mDefaultSelectors = new int[]{-1,-1,-1,-1};
 
     float mScaleFactor = 1.f;
@@ -524,7 +545,15 @@ public final class TerminalView extends View {
 
     @Override
     public boolean onCheckIsTextEditor() {
-        return true;
+        // GlassHole-modified from upstream: returning true causes the
+        // host activity's window to be marked as a text-editor target,
+        // which on Glass EE2 lets the stock IME swallow temple-swipe
+        // gestures before they ever become KeyEvents to the activity.
+        // We don't need a soft keyboard at all (the only input paths
+        // are a BT keyboard and glass-to-keycode swipes), so disabling
+        // text-editor mode is safe and unblocks dispatchKeyEvent for
+        // the gesture surface.
+        return false;
     }
 
     @Override

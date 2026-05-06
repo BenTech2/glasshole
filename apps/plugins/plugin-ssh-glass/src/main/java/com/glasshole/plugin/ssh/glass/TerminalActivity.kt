@@ -6,7 +6,9 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import android.text.InputType
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
@@ -272,6 +274,97 @@ class TerminalActivity : Activity() {
         // was already open — the user might have changed the setting
         // from the phone mid-session.
         applyKeepScreenOnFlag()
+    }
+
+    /** Glass EE2's screen-surface temple swipes arrive as raw
+     *  MotionEvents on dispatchTouchEvent — same pattern the chat
+     *  plugin uses. We hijack them before TerminalView's own gesture
+     *  recognizer sees them so the touchpad becomes a scroll/exit
+     *  affordance instead of being interpreted as taps on the
+     *  emulator. BT keyboard input is unaffected because that flows
+     *  through dispatchKeyEvent.
+     *
+     *  Mapping:
+     *    horizontal drag → scroll by rows
+     *      swipe forward (right) → scroll toward newer / live
+     *      swipe back   (left)  → scroll into history
+     *    vertical drag down beyond the gate → confirm-disconnect dialog
+     */
+    private var swipeDownX = 0f
+    private var swipeDownY = 0f
+    private var swipeLastX = 0f
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (handleSwipe(event)) return true
+        return super.dispatchTouchEvent(event)
+    }
+
+    private fun handleSwipe(event: MotionEvent): Boolean {
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeDownX = event.x
+                swipeDownY = event.y
+                swipeLastX = event.x
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.x - swipeLastX
+                if (kotlin.math.abs(dx) > 4f) {
+                    val rowH = (terminalView.mRenderer?.mFontLineSpacing ?: 16)
+                        .coerceAtLeast(1)
+                    // Pixels traveled / row height = rows to shift.
+                    // Forward swipe (dx > 0) → scroll toward live (positive
+                    // rows on scrollByRows); back swipe → into history.
+                    val rows = (dx / rowH).toInt()
+                    if (rows != 0) {
+                        terminalView.scrollByRows(rows)
+                        swipeLastX += rows * rowH
+                    }
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = event.x - swipeDownX
+                val dy = event.y - swipeDownY
+                val absDx = kotlin.math.abs(dx)
+                val absDy = kotlin.math.abs(dy)
+                if (dy > 120 && absDy > absDx * 1.3f) {
+                    confirmDisconnect()
+                    return true
+                }
+                // Pure tap or short drag — consume; the terminal doesn't
+                // need taps for anything Glass-relevant.
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> return true
+        }
+        return false
+    }
+
+    /** Two-step swipe-down confirmation. Glass has no positional
+     *  touchscreen, so a stock AlertDialog with tappable buttons is
+     *  unusable here — the user can't aim at "Stay" vs "Disconnect".
+     *  Instead the first swipe-down arms a 4-second window during
+     *  which a second swipe-down disconnects; otherwise the
+     *  arm self-cancels. The toast announces the gate. */
+    private var disconnectArmed = false
+    private val disarmRunnable = Runnable {
+        disconnectArmed = false
+    }
+
+    private fun confirmDisconnect() {
+        if (disconnectArmed) {
+            ui.removeCallbacks(disarmRunnable)
+            finish()
+            return
+        }
+        disconnectArmed = true
+        Toast.makeText(
+            this,
+            "Swipe down again to disconnect",
+            Toast.LENGTH_LONG
+        ).show()
+        ui.postDelayed(disarmRunnable, 4_000L)
     }
 
     /** Reads the "keep_screen_on" config key from the plugin's normal
