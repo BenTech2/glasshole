@@ -59,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var openDeviceButton: Button
     private lateinit var openApkManagerButton: Button
     private lateinit var openDebugButton: Button
+    private lateinit var openLicensesButton: Button
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
 
@@ -184,6 +185,9 @@ class MainActivity : AppCompatActivity() {
         openDebugButton.setOnClickListener {
             startActivity(Intent(this, DebugActivity::class.java))
         }
+        openLicensesButton.setOnClickListener {
+            startActivity(Intent(this, LicensesActivity::class.java))
+        }
 
         checkPermissionsAndLoadDevices()
 
@@ -253,6 +257,9 @@ class MainActivity : AppCompatActivity() {
         openDebugButton.setOnClickListener {
             startActivity(Intent(this, DebugActivity::class.java))
         }
+        openLicensesButton.setOnClickListener {
+            startActivity(Intent(this, LicensesActivity::class.java))
+        }
         // Layout was re-inflated — re-bind the Now Playing card so the
         // StreamPlugin callback points at the freshly-inflated views.
         // Without this, fold→unfold (or vice versa) leaves the listener
@@ -277,6 +284,7 @@ class MainActivity : AppCompatActivity() {
         openDeviceButton = findViewById(R.id.openDeviceButton)
         openApkManagerButton = findViewById(R.id.openApkManagerButton)
         openDebugButton = findViewById(R.id.openDebugButton)
+        openLicensesButton = findViewById(R.id.openLicensesButton)
         logText = findViewById(R.id.logText)
         logScroll = findViewById(R.id.logScroll)
         findViewById<TextView>(R.id.versionLabel)?.text =
