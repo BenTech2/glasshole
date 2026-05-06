@@ -788,9 +788,9 @@ class DebugActivity : AppCompatActivity() {
     }
 
     private fun refreshReplaySpinner() {
-        replayEntries = NotificationReplayStore.todayNewestFirst(this)
+        replayEntries = NotificationReplayStore.allNewestFirst(this)
         val labels = if (replayEntries.isEmpty()) {
-            listOf("(no captured notifications today)")
+            listOf("(no captured notifications)")
         } else {
             replayEntries.map { it.summary() }
         }

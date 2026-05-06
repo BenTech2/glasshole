@@ -301,7 +301,13 @@ class NotificationForwardingService : NotificationListenerService() {
             val pictureBase64 = encodeBigPicture(
                 notification, extras, title, messageText, notifKey, sbn.tag
             )
-            val titleIconBase64 = encodeTitleIcon(extras)
+            val titleIconBase64 = encodeTitleIcon(pkg, notification, extras)
+            if (titleIconBase64 == null) {
+                // Diagnostic: dump every avatar-relevant field for
+                // notifications that didn't yield a title icon, so we
+                // can see what X / Outlook / etc. actually populate.
+                debugLogAvatarSources(pkg, notification, extras)
+            }
             // Snag the video id (if any) so debug-replay can re-fetch
             // the thumbnail later without re-deriving it from extras.
             val videoId = com.glasshole.phone.util.YouTubeThumbnail
@@ -656,16 +662,194 @@ class NotificationForwardingService : NotificationListenerService() {
     }
 
     /**
-     * Encodes EXTRA_LARGE_ICON (the channel / sender avatar that most
-     * apps attach to a notification) as a small base64 JPEG, sized
-     * for the title-row avatar slot on the glass card. Separate from
-     * the big-picture path so a Shorts notif can have *both* a
-     * real video thumbnail (background) and the channel avatar
-     * (next to the title).
+     * Encodes the best available channel/sender avatar as a small
+     * base64 JPEG for the title-row slot on the glass card. Tries
+     * sources in order — most-specific first:
+     *
+     *   1. EXTRA_LARGE_ICON Bitmap — the classic channel/sender icon
+     *      (Slack, Discord, GitHub, Spotify, YouTube, etc.)
+     *   2. notification.getLargeIcon() Icon — same slot but as the
+     *      Icon-typed alternative used by newer apps (Outlook,
+     *      Gmail, Messages on more recent Android)
+     *   3. Last MessagingStyle message's senderPerson avatar — for
+     *      DM-style apps (X, Telegram, Signal) where the per-message
+     *      avatar lives inside EXTRA_MESSAGES instead of the
+     *      notification root
+     *   4. EXTRA_PEOPLE_LIST first Person's icon — fallback for
+     *      contact-aware apps that don't ship a MessagingStyle
+     *
+     * Returns null only when none of the above produce an Icon /
+     * Bitmap; the glass card then shows a blank avatar slot rather
+     * than something misleading.
      */
-    private fun encodeTitleIcon(extras: Bundle): String? {
-        val bmp = extras.getParcelable(Notification.EXTRA_LARGE_ICON) as? android.graphics.Bitmap
-        if (bmp == null || bmp.width <= 0 || bmp.height <= 0) return null
+    private fun encodeTitleIcon(
+        pkg: String,
+        notification: Notification,
+        extras: Bundle
+    ): String? {
+        // 1. EXTRA_LARGE_ICON — Outlook stores this as an Icon while
+        //    Slack / Discord / Spotify store as a Bitmap. Read the raw
+        //    object and branch on actual type so we catch both.
+        extrasAvatar(extras, Notification.EXTRA_LARGE_ICON)
+            ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+
+        // 2. EXTRA_LARGE_ICON_BIG — same dual-type handling. Some apps
+        //    only set the big variant.
+        extrasAvatar(extras, Notification.EXTRA_LARGE_ICON_BIG)
+            ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+
+        // 3. Notification-level Icon (API 23+) — for apps that set
+        //    via Builder.setLargeIcon(Icon) but didn't mirror to extras.
+        notification.getLargeIcon()?.let { iconToBitmap(it) }
+            ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+
+        // 3. Last-message senderPerson from MessagingStyle (API 28+
+        //    style key for the per-message Bundle[]).
+        try {
+            val msgs = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+            if (msgs != null) {
+                // Iterate newest → oldest so the top-of-the-stack
+                // sender's avatar wins.
+                for (i in msgs.indices.reversed()) {
+                    val mb = msgs[i] as? Bundle ?: continue
+                    val person = mb.getParcelable<android.app.Person>("sender_person") ?: continue
+                    val icon = person.icon ?: continue
+                    iconToBitmap(icon)
+                        ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+                }
+            }
+        } catch (_: Exception) { /* fall through */ }
+
+        // 4. EXTRA_PEOPLE_LIST — first Person's icon.
+        try {
+            val peopleList = extras.getParcelableArrayList<android.app.Person>(
+                Notification.EXTRA_PEOPLE_LIST
+            )
+            peopleList?.firstOrNull()?.icon?.let { iconToBitmap(it) }
+                ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+        } catch (_: Exception) { /* fall through */ }
+
+        // 5. App icon — last-resort fallback so the title slot is
+        //    always populated. Outlook (and any other app whose
+        //    notifications get image-reduced by the system before
+        //    they reach us — keys include android.reduced.images
+        //    when this happened) can't surface the real sender
+        //    avatar; rendering the source app's icon at least
+        //    anchors the card visually.
+        return try {
+            val drawable = packageManager.getApplicationIcon(pkg)
+            drawableToBitmap(drawable, 96)?.let { encodeAvatarBitmap(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun drawableToBitmap(
+        drawable: android.graphics.drawable.Drawable,
+        sizePx: Int
+    ): android.graphics.Bitmap? {
+        return try {
+            val bmp = android.graphics.Bitmap.createBitmap(
+                sizePx, sizePx, android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bmp)
+            drawable.setBounds(0, 0, sizePx, sizePx)
+            drawable.draw(canvas)
+            bmp
+        } catch (e: Exception) {
+            Log.w(TAG, "drawableToBitmap failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Return a Bitmap for whatever EXTRA_LARGE_ICON / EXTRA_LARGE_ICON_BIG
+     *  contains — Bitmap directly, or Icon rasterised through
+     *  [iconToBitmap]. Returns null if the slot is empty or holds
+     *  something we don't know how to render. */
+    private fun extrasAvatar(extras: Bundle, key: String): android.graphics.Bitmap? {
+        val raw = extras.get(key) ?: return null
+        return when (raw) {
+            is android.graphics.Bitmap -> raw
+            is android.graphics.drawable.Icon -> iconToBitmap(raw)
+            else -> {
+                Log.w(TAG, "Unexpected $key type: ${raw.javaClass.name}")
+                null
+            }
+        }
+    }
+
+    /** Print every avatar-relevant slot for a notification that didn't
+     *  produce a title icon. Logs once per failing notif so we can
+     *  reverse-engineer how X / Outlook / others ship their sender
+     *  avatars. */
+    private fun debugLogAvatarSources(
+        pkg: String,
+        notification: Notification,
+        extras: Bundle
+    ) {
+        // Force the right ClassLoader for unparcelling — when extras
+        // is read across an app boundary the default loader can fail
+        // to resolve framework parcelables and silently return null.
+        try { extras.classLoader = this.classLoader } catch (_: Exception) {}
+        val sb = StringBuilder("avatar sources empty for $pkg: ")
+        val rawLarge = extras.get(Notification.EXTRA_LARGE_ICON)
+        val rawLargeBig = extras.get(Notification.EXTRA_LARGE_ICON_BIG)
+        sb.append("largeIconRawType=").append(rawLarge?.javaClass?.name ?: "null")
+        sb.append(" largeIconBigRawType=").append(rawLargeBig?.javaClass?.name ?: "null")
+        sb.append(" notif.largeIcon=")
+            .append(notification.getLargeIcon() != null)
+        sb.append(" pictureBitmap=")
+            .append(extras.getParcelable<android.graphics.Bitmap>(Notification.EXTRA_PICTURE) != null)
+        try {
+            val msgs = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+            sb.append(" msgs=").append(msgs?.size ?: 0)
+            if (msgs != null && msgs.isNotEmpty()) {
+                val mb = msgs.last() as? Bundle
+                val person = mb?.getParcelable<android.app.Person>("sender_person")
+                sb.append(" lastMsgPerson=").append(person != null)
+                sb.append(" lastMsgPersonIcon=").append(person?.icon != null)
+            }
+        } catch (e: Exception) { sb.append(" msgsErr=${e.message}") }
+        try {
+            val people = extras.getParcelableArrayList<android.app.Person>(
+                Notification.EXTRA_PEOPLE_LIST
+            )
+            sb.append(" peopleList=").append(people?.size ?: 0)
+            sb.append(" firstPersonIcon=").append(people?.firstOrNull()?.icon != null)
+        } catch (e: Exception) { sb.append(" peopleErr=${e.message}") }
+        // Dump every Bundle key so we can spot custom fields these apps
+        // might use.
+        sb.append(" extrasKeys=").append(extras.keySet().joinToString(","))
+        Log.i(TAG, sb.toString())
+    }
+
+    /** Convert an [android.graphics.drawable.Icon] to a Bitmap by
+     *  rasterising whatever its underlying drawable resolves to.
+     *  Returns null if the icon can't be loaded (e.g. resource
+     *  reference into a package we can't access). */
+    private fun iconToBitmap(icon: android.graphics.drawable.Icon): android.graphics.Bitmap? {
+        return try {
+            val drawable = icon.loadDrawable(this) ?: return null
+            val w = drawable.intrinsicWidth.takeIf { it > 0 } ?: 96
+            val h = drawable.intrinsicHeight.takeIf { it > 0 } ?: 96
+            val bmp = android.graphics.Bitmap.createBitmap(
+                w, h, android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bmp)
+            drawable.setBounds(0, 0, w, h)
+            drawable.draw(canvas)
+            bmp
+        } catch (e: Exception) {
+            Log.w(TAG, "iconToBitmap failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Scale + JPEG-encode a bitmap for the title-icon slot. Same
+     *  pipeline the EXTRA_LARGE_ICON path used; pulled out so all
+     *  fallbacks share it. */
+    private fun encodeAvatarBitmap(bmp: android.graphics.Bitmap): String? {
+        if (bmp.width <= 0 || bmp.height <= 0) return null
         return try {
             val targetPx = 96
             val scale = targetPx.toFloat() / maxOf(bmp.width, bmp.height).toFloat()
