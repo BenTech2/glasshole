@@ -1231,6 +1231,9 @@ class BluetoothListenerService : Service() {
         } else {
             // Fallback: try broadcast for plugins that use broadcast instead of AIDL
             val intent = Intent(GlassPluginConstants.ACTION_MESSAGE_FROM_PHONE).apply {
+                // Bypass the package-stopped state so manifest receivers
+                // in killed plugin apps still wake on phone-side OPENs.
+                addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
                 putExtra(GlassPluginConstants.EXTRA_PLUGIN_ID, pluginId)
                 putExtra(GlassPluginConstants.EXTRA_MESSAGE_TYPE, type)
                 putExtra(GlassPluginConstants.EXTRA_PAYLOAD, payload)

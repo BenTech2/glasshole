@@ -1143,6 +1143,8 @@ class BluetoothListenerService : Service() {
         }
 
         val intent = Intent(GlassPluginConstants.ACTION_MESSAGE_FROM_PHONE).apply {
+            // Wake stopped plugin packages — see EE1 / EE2 for rationale.
+            addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
             putExtra(GlassPluginConstants.EXTRA_PLUGIN_ID, pluginId)
             putExtra(GlassPluginConstants.EXTRA_MESSAGE_TYPE, type)
             putExtra(GlassPluginConstants.EXTRA_PAYLOAD, payload)

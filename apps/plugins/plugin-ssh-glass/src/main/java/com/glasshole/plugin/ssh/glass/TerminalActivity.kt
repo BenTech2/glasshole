@@ -308,6 +308,15 @@ class TerminalActivity : Activity() {
         return super.dispatchTouchEvent(event)
     }
 
+    /** XE / EE1 deliver the temple touchpad as SOURCE_TOUCHPAD on
+     *  onGenericMotionEvent, not on dispatchTouchEvent like EE2. Same
+     *  gesture handler covers both routes — same idiom the chat
+     *  plugin uses. */
+    override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
+        if (event != null && handleSwipe(event)) return true
+        return super.onGenericMotionEvent(event)
+    }
+
     private fun handleSwipe(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {

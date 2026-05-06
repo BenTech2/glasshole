@@ -27,6 +27,22 @@
             android:textColor="?android:textColorSecondary"
             android:text="Connections sync to the glass automatically. Tap a row to Quick Connect — the glass will foreground the SSH terminal and sign in." />
 
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="?attr/colorErrorContainer">
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="16dp"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnErrorContainer"
+                android:text="Heads up: Glass XE and EE1 (KitKat / API 19) don't support Android Keystore AES-GCM, so the SSH plugin on those editions stores passwords and private keys in plain SharedPreferences. Only the app sandbox protects them — treat the glass like any device holding production keys, and rotate credentials if the device is lost. EE2 stores everything encrypted-at-rest." /></com.google.android.material.card.MaterialCardView>
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/manageKeysButton"
             style="@style/Widget.Material3.Button.OutlinedButton"

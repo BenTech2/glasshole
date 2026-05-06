@@ -28,6 +28,8 @@ class SshPluginService : GlassPluginService() {
     companion object {
         private const val TAG = "SshGlassPlugin"
         const val PREFS_NAME = "ssh_settings"
+        const val EXTRA_BROADCAST_TYPE = "broadcast_type"
+        const val EXTRA_BROADCAST_PAYLOAD = "broadcast_payload"
     }
 
     override val pluginId: String = "ssh"
@@ -56,6 +58,20 @@ class SshPluginService : GlassPluginService() {
             "OPEN" -> handleOpen(message.payload)
             else -> Log.w(TAG, "Unknown message type: ${message.type}")
         }
+    }
+
+    /** Manifest-receiver wake path. KitKat (EE1 / XE) kills our process
+     *  under memory pressure, which drops the SDK's dynamic broadcast
+     *  receiver; [SshWakeReceiver] then forwards the message to us via
+     *  startService so we get to act on it. Returning START_STICKY also
+     *  asks the OS to bring us back if it kills us mid-session. */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val type = intent?.getStringExtra(EXTRA_BROADCAST_TYPE)
+        val payload = intent?.getStringExtra(EXTRA_BROADCAST_PAYLOAD)
+        if (type != null) {
+            onMessageFromPhone(GlassPluginMessage(type, payload ?: ""))
+        }
+        return START_STICKY
     }
 
     private fun handleOpen(payload: String) {

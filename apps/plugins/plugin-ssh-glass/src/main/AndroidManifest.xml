@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- security-crypto declares minSdk 21 because of EncryptedSharedPreferences,
+         but we gate every call to it behind an SDK_INT >= M check at runtime
+         (see EncryptedPrefs). This override lets the merger ship the same APK
+         to KitKat editions (XE / EE1) where the encryption path is skipped. -->
+    <uses-sdk tools:overrideLibrary="androidx.security" />
 
     <application
         android:allowBackup="true"
@@ -50,6 +57,17 @@
             android:exported="false"
             android:configChanges="keyboardHidden|orientation|screenSize"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
+        <!-- Manifest-declared wake receiver — see SshWakeReceiver.kt
+             for the rationale. Critical on KitKat (EE1 / XE) where the
+             OS kills the plugin process between messages. -->
+        <receiver
+            android:name=".SshWakeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.glasshole.plugin.MESSAGE_FROM_PHONE" />
+            </intent-filter>
+        </receiver>
 
     </application>
 </manifest>

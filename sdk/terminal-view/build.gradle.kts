@@ -7,7 +7,12 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        minSdk = 26
+        // Down from 26 so the SSH plugin can ship to EE1 / XE
+        // (API 19). Termux's terminal modules are pure-Java and rely
+        // on framework APIs that exist back to KitKat — Java 8
+        // language features compile through Android's built-in
+        // desugaring.
+        minSdk = 19
     }
 
     compileOptions {

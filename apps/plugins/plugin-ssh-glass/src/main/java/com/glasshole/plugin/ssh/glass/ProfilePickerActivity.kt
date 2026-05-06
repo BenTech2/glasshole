@@ -50,6 +50,13 @@ class ProfilePickerActivity : Activity() {
         }
         column.addView(header("SSH connections"))
 
+        // EE1 / XE (API < 23) can't Keystore-wrap the profile cache.
+        // Show an unmissable warning so the user understands what
+        // they're trusting this device with.
+        if (!EncryptedPrefs.isEncryptionSupported) {
+            column.addView(disclaimerBanner())
+        }
+
         if (entries.isEmpty()) {
             column.addView(body(
                 "No connections synced yet — add one in the phone's SSH page, " +
@@ -83,6 +90,24 @@ class ProfilePickerActivity : Activity() {
         setTextColor(Color.WHITE)
         gravity = Gravity.CENTER_HORIZONTAL
         setPadding(0, 0, 0, dp(8))
+    }
+
+    /** Red-bordered banner shown on KitKat editions (XE / EE1) where
+     *  the cached profiles aren't AES-GCM encrypted. Inline so it's
+     *  always visible without needing layout-folder gymnastics. */
+    private fun disclaimerBanner() = TextView(this).apply {
+        text = "⚠ This glass stores SSH credentials WITHOUT encryption " +
+            "(Android < 6 lacks the required Keystore APIs). Treat it like " +
+            "any device holding production keys — rotate if lost."
+        textSize = 11f
+        setTextColor(0xFFFFCC66.toInt())
+        setBackgroundColor(0x40CC4444)
+        setPadding(dp(10), dp(8), dp(10), dp(8))
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(6); bottomMargin = dp(8) }
+        layoutParams = lp
     }
 
     private fun body(text: String) = TextView(this).apply {

@@ -1152,6 +1152,12 @@ class BluetoothListenerService : Service() {
         }
 
         val intent = Intent(GlassPluginConstants.ACTION_MESSAGE_FROM_PHONE).apply {
+            // FLAG_INCLUDE_STOPPED_PACKAGES so manifest receivers in
+            // "stopped" plugin apps (post-install or post-force-stop)
+            // still get the broadcast and can resurrect their service.
+            // Without it, a freshly-killed plugin process never sees
+            // an OPEN until the user opens it manually.
+            addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
             putExtra(GlassPluginConstants.EXTRA_PLUGIN_ID, pluginId)
             putExtra(GlassPluginConstants.EXTRA_MESSAGE_TYPE, type)
             putExtra(GlassPluginConstants.EXTRA_PAYLOAD, payload)
