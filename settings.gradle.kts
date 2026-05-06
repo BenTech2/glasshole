@@ -22,6 +22,8 @@ include(":plugin-sdk")
 project(":plugin-sdk").projectDir = file("sdk/plugin-sdk")
 include(":glass-plugin-sdk")
 project(":glass-plugin-sdk").projectDir = file("sdk/glass-plugin-sdk")
+include(":terminal-view")
+project(":terminal-view").projectDir = file("sdk/terminal-view")
 
 // Phone companion app
 include(":phone")
