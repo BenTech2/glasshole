@@ -17,8 +17,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:baselineAligned="false"
+            android:baselineAligned="true"
             android:layout_marginStart="8dp"
             android:layout_marginTop="8dp"
             android:layout_marginBottom="16dp">
@@ -26,6 +25,7 @@
             <ImageView
                 android:layout_width="48dp"
                 android:layout_height="48dp"
+                android:layout_gravity="center_vertical"
                 android:layout_marginEnd="12dp"
                 android:src="@drawable/glasshole_logo"
                 android:importantForAccessibility="no" />
@@ -37,6 +37,10 @@
                 android:textAppearance="?attr/textAppearanceHeadlineLarge"
                 android:textColor="?attr/colorOnSurface" />
 
+            <!-- Sits on the same text baseline as the title — labelSmall
+                 is short enough that the baseline aligns visually with
+                 the bottom of the title cap-height, giving a subscript
+                 read instead of a vertically-centered chip. -->
             <TextView
                 android:id="@+id/versionLabel"
                 android:layout_width="wrap_content"
