@@ -471,6 +471,20 @@ class BridgeService : Service() {
 
     @SuppressLint("MissingPermission")
     fun connectBluetooth(device: BluetoothDevice) {
+        // No-op if we're already connected to this exact device. The
+        // auto-reconnect path in MainActivity.onCreate fires on every
+        // fresh activity instance — including a tap on the foreground-
+        // service notification — so without this guard, opening the app
+        // via the notification would tear down a perfectly healthy BT
+        // link just to re-establish it.
+        if (btConnected && targetDevice?.address == device.address) {
+            log("Already connected to ${device.name} — keeping link")
+            // Re-emit state so a freshly-bound activity's UI reflects
+            // reality without waiting for an actual change event.
+            onConnectionChanged?.invoke(true)
+            return
+        }
+
         // Stop any reconnect loop targeting a previous device before starting a new one
         if (targetDevice != null && targetDevice != device) {
             log("Switching target from ${targetDevice?.name} to ${device.name}")
