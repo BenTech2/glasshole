@@ -366,6 +366,21 @@ class CardAdapter(
         val icon = holder.itemView.findViewById<ImageView>(R.id.notifAppIcon)
         if (latest.iconBitmap != null) icon?.setImageBitmap(latest.iconBitmap)
         else icon?.setImageDrawable(null)
+
+        // Sender / channel avatar in the title row — same dual-slot
+        // pattern the popup notification uses (app icon stays where it
+        // is). Hidden when the payload doesn't carry a title icon
+        // (older captures, or the rare path where the fallback chain
+        // came up empty).
+        val titleIcon = holder.itemView.findViewById<ImageView>(R.id.notifTitleIcon)
+        if (titleIcon != null) {
+            if (latest.titleIconBitmap != null) {
+                titleIcon.setImageBitmap(latest.titleIconBitmap)
+                titleIcon.visibility = View.VISIBLE
+            } else {
+                titleIcon.visibility = View.GONE
+            }
+        }
     }
 
     private fun formatTimeAgo(ts: Long): String {

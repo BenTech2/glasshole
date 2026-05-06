@@ -22,6 +22,10 @@ object NotificationStore {
         val title: String,
         val text: String,
         val iconBitmap: Bitmap?,
+        /** Sender / channel avatar painted in the title row. Phone-side
+         *  builds this from a fallback chain ending in the app's
+         *  launcher icon, so it's almost always non-null. */
+        val titleIconBitmap: Bitmap?,
         val pictureBitmap: Bitmap?,
         val actions: List<NotifAction>,
         val rawJson: String,
@@ -42,6 +46,7 @@ object NotificationStore {
             title = parsed.optString("title", ""),
             text = parsed.optString("text", ""),
             iconBitmap = decodeIcon(parsed.optString("icon", "")),
+            titleIconBitmap = decodeIcon(parsed.optString("title_icon", "")),
             pictureBitmap = decodeIcon(parsed.optString("picture", "")),
             actions = NotifAction.parseArray(parsed.optJSONArray("actions")?.toString()),
             rawJson = json,

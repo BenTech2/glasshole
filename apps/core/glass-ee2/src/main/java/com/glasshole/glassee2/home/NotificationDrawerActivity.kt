@@ -388,6 +388,16 @@ class NotificationDrawerActivity : Activity() {
             if (e.iconBitmap != null) icon?.setImageBitmap(e.iconBitmap)
             else icon?.setImageDrawable(null)
 
+            val titleIcon = holder.itemView.findViewById<ImageView>(R.id.pageTitleIcon)
+            if (titleIcon != null) {
+                if (e.titleIconBitmap != null) {
+                    titleIcon.setImageBitmap(e.titleIconBitmap)
+                    titleIcon.visibility = View.VISIBLE
+                } else {
+                    titleIcon.visibility = View.GONE
+                }
+            }
+
             val picture = holder.itemView.findViewById<ImageView>(R.id.pagePicture)
             val gradient = holder.itemView.findViewById<View>(R.id.pagePictureGradient)
             val topSpacer = holder.itemView.findViewById<View>(R.id.pageTopSpacer)

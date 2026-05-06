@@ -378,6 +378,16 @@ class CardAdapter(
         val icon = holder.itemView.findViewById<ImageView>(R.id.notifAppIcon)
         if (latest.iconBitmap != null) icon?.setImageBitmap(latest.iconBitmap)
         else icon?.setImageDrawable(null)
+
+        val titleIcon = holder.itemView.findViewById<ImageView>(R.id.notifTitleIcon)
+        if (titleIcon != null) {
+            if (latest.titleIconBitmap != null) {
+                titleIcon.setImageBitmap(latest.titleIconBitmap)
+                titleIcon.visibility = View.VISIBLE
+            } else {
+                titleIcon.visibility = View.GONE
+            }
+        }
     }
 
     private fun formatTimeAgo(ts: Long): String {
