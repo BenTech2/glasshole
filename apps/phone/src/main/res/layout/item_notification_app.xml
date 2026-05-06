@@ -37,6 +37,20 @@
             android:textColor="?attr/colorOnSurfaceVariant"
             android:maxLines="1"
             android:ellipsize="end" />
+
+        <!-- Per-app silent allowance. Visible only when the row's main
+             toggle is on; off by default so the global silent filter
+             still blocks Google Messages syncs etc. unless the user
+             opts a specific app in. -->
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/silentSwitch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Allow silent"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:visibility="gone" />
     </LinearLayout>
 
     <com.google.android.material.checkbox.MaterialCheckBox

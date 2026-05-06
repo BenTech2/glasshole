@@ -19,6 +19,7 @@ import com.glasshole.phone.debug.NotificationReplayStore
 import com.glasshole.phone.service.BridgeService
 import com.glasshole.phone.service.NotificationForwardingService
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.slider.Slider
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -35,6 +36,19 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var sendImageButton: Button
     private lateinit var resetAdminPromptButton: Button
     private lateinit var statusText: TextView
+
+    // Actions group
+    private lateinit var wakeGlassButton: Button
+    private lateinit var takePictureButton: Button
+    private lateinit var screenshotButton: Button
+    private lateinit var recordVideoButton: Button
+    private lateinit var recordDurationSlider: Slider
+    private lateinit var recordDurationLabel: TextView
+
+    // Live streams group
+    private lateinit var liveCameraButton: Button
+    private lateinit var liveScreenButton: Button
+    @Volatile private var liveRequestPending: Boolean = false
 
     private lateinit var captureSwitch: MaterialSwitch
     private lateinit var captureLimitSpinner: Spinner
@@ -86,6 +100,16 @@ class DebugActivity : AppCompatActivity() {
         resetAdminPromptButton = findViewById(R.id.debugResetAdminPromptButton)
         statusText = findViewById(R.id.debugStatusText)
 
+        wakeGlassButton = findViewById(R.id.debugWakeGlassButton)
+        takePictureButton = findViewById(R.id.debugTakePictureButton)
+        screenshotButton = findViewById(R.id.debugScreenshotButton)
+        recordVideoButton = findViewById(R.id.debugRecordVideoButton)
+        recordDurationSlider = findViewById(R.id.debugRecordDurationSlider)
+        recordDurationLabel = findViewById(R.id.debugRecordDurationLabel)
+
+        liveCameraButton = findViewById(R.id.debugLiveCameraButton)
+        liveScreenButton = findViewById(R.id.debugLiveScreenButton)
+
         captureSwitch = findViewById(R.id.debugCaptureSwitch)
         captureLimitSpinner = findViewById(R.id.debugCaptureLimitSpinner)
         captureCountText = findViewById(R.id.debugCaptureCount)
@@ -103,6 +127,8 @@ class DebugActivity : AppCompatActivity() {
         resetAdminPromptButton.setOnClickListener { sendResetAdminPrompt() }
 
         setupCaptureControls()
+        setupActions()
+        setupLiveStreams()
 
         bindService(
             Intent(this, BridgeService::class.java),
@@ -192,6 +218,290 @@ class DebugActivity : AppCompatActivity() {
         sendMultiButton.isEnabled = enabled
         sendImageButton.isEnabled = enabled
         resetAdminPromptButton.isEnabled = enabled
+        wakeGlassButton.isEnabled = enabled
+        takePictureButton.isEnabled = enabled
+        screenshotButton.isEnabled = enabled && !liveRequestPending
+        recordVideoButton.isEnabled = enabled
+        liveCameraButton.isEnabled = enabled && !liveRequestPending
+        liveScreenButton.isEnabled = enabled && !liveRequestPending
+    }
+
+    private fun setupLiveStreams() {
+        liveCameraButton.setOnClickListener { requestLiveStream(camera = true) }
+        liveScreenButton.setOnClickListener { requestLiveStream(camera = false) }
+    }
+
+    private fun requestLiveStream(camera: Boolean) {
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            updateStatus()
+            return
+        }
+        if (liveRequestPending) {
+            toast("Already requesting a stream — give it a moment")
+            return
+        }
+
+        liveRequestPending = true
+        updateStatus()
+
+        // Simple single-shot listeners that clear themselves once a
+        // response (URL or ERR) lands. The glass also has a 30s of
+        // protocol-level latency budget; we add a 12s UI fallback so
+        // a never-ending pending state doesn't block subsequent taps.
+        val timeout = Runnable {
+            runOnUiThread {
+                if (liveRequestPending) {
+                    liveRequestPending = false
+                    bridge.onLiveCamUrl = null
+                    bridge.onLiveCamErr = null
+                    bridge.onLiveScreenUrl = null
+                    bridge.onLiveScreenErr = null
+                    toast("Glass timed out — no response")
+                    updateStatus()
+                }
+            }
+        }
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.postDelayed(timeout, 12_000L)
+
+        val onUrl = { url: String ->
+            handler.removeCallbacks(timeout)
+            runOnUiThread {
+                liveRequestPending = false
+                bridge.onLiveCamUrl = null
+                bridge.onLiveCamErr = null
+                bridge.onLiveScreenUrl = null
+                bridge.onLiveScreenErr = null
+                openLiveStream(url, camera)
+                updateStatus()
+            }
+        }
+        val onErr = { reason: String ->
+            handler.removeCallbacks(timeout)
+            runOnUiThread {
+                liveRequestPending = false
+                bridge.onLiveCamUrl = null
+                bridge.onLiveCamErr = null
+                bridge.onLiveScreenUrl = null
+                bridge.onLiveScreenErr = null
+                toast(liveErrorMessage(reason, camera))
+                updateStatus()
+            }
+        }
+
+        if (camera) {
+            bridge.onLiveCamUrl = onUrl
+            bridge.onLiveCamErr = onErr
+            bridge.sendLiveCamStart()
+        } else {
+            bridge.onLiveScreenUrl = onUrl
+            bridge.onLiveScreenErr = onErr
+            bridge.sendLiveScreenStart()
+        }
+    }
+
+    private fun openLiveStream(url: String, camera: Boolean) {
+        val intent = Intent(this, LiveStreamActivity::class.java).apply {
+            putExtra(LiveStreamActivity.EXTRA_URL, url)
+            putExtra(
+                LiveStreamActivity.EXTRA_KIND,
+                if (camera) LiveStreamActivity.KIND_CAMERA else LiveStreamActivity.KIND_SCREEN
+            )
+        }
+        startActivity(intent)
+    }
+
+    /**
+     * One-shot screen-grab from glass. Same handshake as the live
+     * mirror (`LIVE_SCREEN_START` → wait for URL → ...) but instead of
+     * launching the streaming viewer we hit the server's `/still`
+     * endpoint, save the JPEG to Pictures/GlassHole/Screenshots, and
+     * fire `LIVE_SCREEN_STOP` so the projection tears down.
+     */
+    private fun requestGlassScreenshot() {
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            updateStatus()
+            return
+        }
+        if (liveRequestPending) {
+            toast("Already requesting a stream — wait a moment")
+            return
+        }
+        liveRequestPending = true
+        updateStatus()
+
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val timeout = Runnable {
+            runOnUiThread {
+                if (liveRequestPending) {
+                    liveRequestPending = false
+                    bridge.onLiveScreenUrl = null
+                    bridge.onLiveScreenErr = null
+                    toast("Glass timed out — no response")
+                    updateStatus()
+                }
+            }
+        }
+        handler.postDelayed(timeout, 12_000L)
+
+        bridge.onLiveScreenUrl = { url ->
+            handler.removeCallbacks(timeout)
+            runOnUiThread {
+                bridge.onLiveScreenUrl = null
+                bridge.onLiveScreenErr = null
+                fetchAndSaveStill(url) {
+                    bridge.sendLiveScreenStop()
+                    liveRequestPending = false
+                    updateStatus()
+                }
+            }
+        }
+        bridge.onLiveScreenErr = { reason ->
+            handler.removeCallbacks(timeout)
+            runOnUiThread {
+                liveRequestPending = false
+                bridge.onLiveScreenUrl = null
+                bridge.onLiveScreenErr = null
+                toast(liveErrorMessage(reason, camera = false))
+                updateStatus()
+            }
+        }
+        toast("Capturing screenshot…")
+        bridge.sendLiveScreenStart()
+    }
+
+    /**
+     * Replace the `/stream` path in [streamUrl] with `/still`, GET it,
+     * and save the response JPEG to Pictures/GlassHole/Screenshots.
+     */
+    private fun fetchAndSaveStill(streamUrl: String, onComplete: () -> Unit) {
+        Thread {
+            try {
+                val stillUrl = streamUrl.replace("/stream", "/still")
+                val conn = (java.net.URL(stillUrl).openConnection()
+                    as java.net.HttpURLConnection).apply {
+                    connectTimeout = 5_000
+                    readTimeout = 8_000
+                }
+                val bytes = try {
+                    if (conn.responseCode != 200) throw java.io.IOException("HTTP ${conn.responseCode}")
+                    conn.inputStream.use { it.readBytes() }
+                } finally {
+                    conn.disconnect()
+                }
+                saveScreenshotJpeg(bytes, source = "screen")
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Screenshot failed: ${e.message}",
+                        Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                runOnUiThread { onComplete() }
+            }
+        }.apply { isDaemon = true; name = "GlassScreenshot"; start() }
+    }
+
+    /**
+     * Persist [jpegBytes] to `Pictures/GlassHole/Screenshots/` via
+     * MediaStore on Android 10+, direct file fallback below that.
+     */
+    private fun saveScreenshotJpeg(jpegBytes: ByteArray, source: String) {
+        try {
+            val name = "GlassHole-$source-${
+                java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                    .format(java.util.Date())
+            }.jpg"
+            val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_PICTURES + "/GlassHole/Screenshots")
+                }
+                contentResolver.insert(
+                    android.provider.MediaStore.Images.Media
+                        .getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    values
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_PICTURES
+                ).resolve("GlassHole/Screenshots")
+                dir.mkdirs()
+                val out = java.io.File(dir, name)
+                android.net.Uri.fromFile(out)
+            }
+            if (uri == null) {
+                runOnUiThread {
+                    Toast.makeText(this, "Save failed", Toast.LENGTH_LONG).show()
+                }
+                return
+            }
+            contentResolver.openOutputStream(uri)?.use { it.write(jpegBytes) }
+            runOnUiThread {
+                Toast.makeText(this,
+                    "Saved $name to Pictures/GlassHole/Screenshots",
+                    Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            runOnUiThread {
+                Toast.makeText(this, "Save failed: ${e.message}",
+                    Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun liveErrorMessage(reason: String, camera: Boolean): String = when (reason) {
+        "no_wifi" -> "Glass isn't on Wi-Fi — connect it first"
+        "permission_required" -> "Grant camera permission on glass, then retry"
+        "camera_busy" -> "Camera is in use by another app on glass"
+        "unsupported_edition" -> "Screen mirror only works on Glass EE2"
+        "consent_denied" -> "User denied the screen-record consent on glass"
+        "capture_failed" -> "Glass failed to start screen capture"
+        "user_revoked" -> "User stopped sharing on glass"
+        "launch_failed" -> "Glass couldn't show the consent dialog"
+        else -> if (camera) "Live camera failed: $reason" else "Screen mirror failed: $reason"
+    }
+
+    private fun setupActions() {
+        recordDurationSlider.addOnChangeListener { _, value, _ ->
+            recordDurationLabel.text = "${value.toInt()}s"
+        }
+        wakeGlassButton.setOnClickListener {
+            sendPluginAction("device", "WAKE", "", "Wake sent")
+        }
+        takePictureButton.setOnClickListener {
+            sendPluginAction("camera2", "CAPTURE_STILL", "", "Capture sent")
+        }
+        screenshotButton.setOnClickListener { requestGlassScreenshot() }
+        recordVideoButton.setOnClickListener {
+            val seconds = recordDurationSlider.value.toInt().coerceAtLeast(1)
+            val payload = JSONObject().apply {
+                put("duration_ms", seconds * 1000L)
+            }.toString()
+            sendPluginAction("camera2", "RECORD_VIDEO", payload, "Recording ${seconds}s")
+        }
+    }
+
+    private fun sendPluginAction(
+        pluginId: String,
+        type: String,
+        payload: String,
+        successMessage: String
+    ) {
+        val bridge = bridgeService
+        if (bridge == null || !bridge.isConnected) {
+            toast("Glass not connected")
+            updateStatus()
+            return
+        }
+        val ok = bridge.sendPluginMessage(pluginId, type, payload)
+        toast(if (ok) successMessage else "Send failed")
     }
 
     private fun sendResetAdminPrompt() {
@@ -478,9 +788,9 @@ class DebugActivity : AppCompatActivity() {
     }
 
     private fun refreshReplaySpinner() {
-        replayEntries = NotificationReplayStore.todayNewestFirst(this)
+        replayEntries = NotificationReplayStore.allNewestFirst(this)
         val labels = if (replayEntries.isEmpty()) {
-            listOf("(no captured notifications today)")
+            listOf("(no captured notifications)")
         } else {
             replayEntries.map { it.summary() }
         }
@@ -500,17 +810,85 @@ class DebugActivity : AppCompatActivity() {
             toast("Glass not connected")
             return
         }
-        // Re-key so the glass treats this as a fresh notification rather
-        // than deduping against the original.
-        val replayed = try {
-            JSONObject(entry.json).apply {
-                val originalKey = optString("key", "")
-                put("key", "replay-${System.currentTimeMillis()}-$originalKey")
-            }.toString()
+        // Captures from before the YouTube-thumbnail fix won't include
+        // a "picture" field for Shorts notifications. Try to enrich
+        // the replay payload before sending — sync cache hit fires
+        // straight away, miss kicks off a download in the background
+        // and re-fires the replay once the JPEG lands.
+        Thread {
+            val replayed = augmentForReplay(entry.json)
+            runOnUiThread {
+                val ok = bridge.sendRaw(ProtocolCodec.encodeNotif(replayed))
+                toast(if (ok) "Replayed" else "Send failed")
+            }
+        }.apply { isDaemon = true; name = "ReplayAugment"; start() }
+    }
+
+    /**
+     * StatusBarNotification keys are formatted
+     * `<userId>|<pkg>|<id>|<tag>|<uid>` — when we replay a YouTube
+     * notification captured before the video_id field was added, we
+     * can still recover the tag from the saved key. For Shorts /
+     * single-video alerts the tag is `<11charVideoId>::<uuid>`, so
+     * the same regex that handles the live tag works here.
+     */
+    private fun extractYouTubeIdFromCapturedKey(key: String): String? {
+        val parts = key.split("|")
+        if (parts.size < 4) return null
+        val tag = parts[3]
+        return com.glasshole.phone.util.YouTubeThumbnail.extractVideoIdFromTag(tag)
+    }
+
+    /**
+     * Re-keys the captured JSON and, if no `picture` is stored but the
+     * notification carries a YouTube URL, fetches the thumbnail
+     * (sync — we're already on a worker thread) and injects it. Falls
+     * back to the original payload on any failure.
+     */
+    private fun augmentForReplay(originalJson: String): String {
+        return try {
+            val obj = JSONObject(originalJson)
+            val originalKey = obj.optString("key", "")
+            obj.put("key", "replay-${System.currentTimeMillis()}-$originalKey")
+
+            val hasPicture = obj.optString("picture", "").isNotEmpty()
+            if (!hasPicture) {
+                // Newer captures stash the discovered video id under
+                // "video_id"; older ones we re-derive on the fly
+                // from the captured key (which contains the original
+                // notification tag — for YouTube videos that's
+                // "<videoId>::<uuid>").
+                val storedId = obj.optString("video_id", "").ifEmpty { null }
+                val videoId = storedId
+                    ?: extractYouTubeIdFromCapturedKey(obj.optString("key", ""))
+                    ?: com.glasshole.phone.util.YouTubeThumbnail.extractVideoId(
+                        obj.optString("title", "") + "\n" + obj.optString("text", "")
+                    )
+                if (videoId != null) {
+                    val pic = com.glasshole.phone.util.YouTubeThumbnail
+                        .fetchAndEncodePicture(this, videoId)
+                    if (pic != null) {
+                        obj.put("picture", pic)
+                        android.util.Log.i(
+                            "DebugReplay",
+                            "Injected yt thumb for replay (videoId=$videoId)"
+                        )
+                    } else {
+                        android.util.Log.w(
+                            "DebugReplay",
+                            "yt thumb fetch returned null for $videoId"
+                        )
+                    }
+                } else {
+                    android.util.Log.d(
+                        "DebugReplay",
+                        "No video_id stored; can't enrich replay (capture predates fix?)"
+                    )
+                }
+            }
+            obj.toString()
         } catch (_: Exception) {
-            entry.json
+            originalJson
         }
-        val ok = bridge.sendRaw(ProtocolCodec.encodeNotif(replayed))
-        toast(if (ok) "Replayed" else "Send failed")
     }
 }

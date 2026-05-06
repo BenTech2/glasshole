@@ -88,12 +88,12 @@ class AppDrawerActivity : Activity() {
         return when (keyCode) {
             KeyEvent.KEYCODE_BACK -> { finish(); true }
             KeyEvent.KEYCODE_TAB -> {
-                val dir = if (event?.isShiftPressed == true) -1 else 1
-                glideBy(dir)
+                val fwd = fwdSign()
+                glideBy(if (event?.isShiftPressed == true) -fwd else fwd)
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { glideBy(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { glideBy(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { glideBy(fwdSign()); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { glideBy(-fwdSign()); true }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                 launchCurrent()
@@ -130,7 +130,8 @@ class AppDrawerActivity : Activity() {
                 val absDx = kotlin.math.abs(dx); val absDy = kotlin.math.abs(dy)
                 if (dy > 120 && absDy > absDx * 1.3f) { finish(); return true }
                 if (absDx > 60 && absDx > absDy) {
-                    glideBy(if (dx > 0) 1 else -1); return true
+                    val fwd = fwdSign()
+                    glideBy(if (dx > 0) fwd else -fwd); return true
                 }
                 if (absDx < 25 && absDy < 25) { launchCurrent(); return true }
             }
@@ -220,4 +221,7 @@ class AppDrawerActivity : Activity() {
     }
 
     private class PageHolder(view: View) : RecyclerView.ViewHolder(view)
+
+    private fun fwdSign(): Int =
+        if (com.glasshole.glassxe.BaseSettings.isNavInverted(this)) -1 else 1
 }

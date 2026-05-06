@@ -31,6 +31,7 @@ class NotificationAppsActivity : AppCompatActivity() {
     private val allApps = mutableListOf<AppRow>()
     private val visibleApps = mutableListOf<AppRow>()
     private val enabled = mutableSetOf<String>()
+    private val silentAllowed = mutableSetOf<String>()
     private lateinit var adapter: AppsAdapter
     private lateinit var countText: TextView
 
@@ -95,12 +96,18 @@ class NotificationAppsActivity : AppCompatActivity() {
             prefs.getStringSet(NotificationForwardingService.PREF_FORWARDED_APPS, emptySet())
                 ?: emptySet()
         )
+        silentAllowed.clear()
+        silentAllowed.addAll(
+            prefs.getStringSet(NotificationForwardingService.PREF_SILENT_ALLOWED_APPS, emptySet())
+                ?: emptySet()
+        )
     }
 
     private fun saveSelectedApps() {
         getSharedPreferences(NotificationForwardingService.PREFS_NAME, MODE_PRIVATE)
             .edit()
             .putStringSet(NotificationForwardingService.PREF_FORWARDED_APPS, enabled.toSet())
+            .putStringSet(NotificationForwardingService.PREF_SILENT_ALLOWED_APPS, silentAllowed.toSet())
             .apply()
         NotificationForwardingService.instance?.reloadForwardedApps()
     }
@@ -174,6 +181,7 @@ class NotificationAppsActivity : AppCompatActivity() {
             val label = view.findViewById<TextView>(R.id.label)
             val pkgText = view.findViewById<TextView>(R.id.pkg)
             val checkbox = view.findViewById<CheckBox>(R.id.check)
+            val silentSwitch = view.findViewById<MaterialSwitch>(R.id.silentSwitch)
 
             icon.setImageDrawable(
                 app.icon ?: resources.getDrawable(android.R.drawable.sym_def_app_icon, theme)
@@ -181,10 +189,32 @@ class NotificationAppsActivity : AppCompatActivity() {
             label.text = app.label
             pkgText.text = app.pkg
 
+            val isEnabled = app.pkg in enabled
             checkbox.setOnCheckedChangeListener(null)
-            checkbox.isChecked = app.pkg in enabled
+            checkbox.isChecked = isEnabled
             checkbox.setOnCheckedChangeListener { _, isChecked ->
-                if (isChecked) enabled.add(app.pkg) else enabled.remove(app.pkg)
+                if (isChecked) {
+                    enabled.add(app.pkg)
+                } else {
+                    enabled.remove(app.pkg)
+                    // Disabling forwarding removes any silent allowance
+                    // for the app — leaving a stale entry in the silent
+                    // set would re-allow it the moment the user re-enables
+                    // forwarding, which is surprising.
+                    silentAllowed.remove(app.pkg)
+                }
+                saveSelectedApps()
+                silentSwitch.visibility = if (isChecked) View.VISIBLE else View.GONE
+                silentSwitch.isChecked = app.pkg in silentAllowed
+            }
+
+            // The silent sub-toggle is only meaningful when the app is
+            // already being forwarded — hide it otherwise.
+            silentSwitch.setOnCheckedChangeListener(null)
+            silentSwitch.visibility = if (isEnabled) View.VISIBLE else View.GONE
+            silentSwitch.isChecked = app.pkg in silentAllowed
+            silentSwitch.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) silentAllowed.add(app.pkg) else silentAllowed.remove(app.pkg)
                 saveSelectedApps()
             }
 

@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+apply(from = "${rootDir}/build-versioning.gradle.kts")
+
 android {
     namespace = "com.glasshole.plugin.compass.glass"
     compileSdk = 34
@@ -11,8 +13,8 @@ android {
         applicationId = "com.glasshole.plugin.compass.glass"
         minSdk = 19
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.5.0-alpha"
+        versionCode = (project.extra["computedVersionCode"] as Int)
+        versionName = (project.extra["computedVersionName"] as String)
     }
 
     buildTypes {

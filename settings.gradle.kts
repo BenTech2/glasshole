@@ -22,6 +22,8 @@ include(":plugin-sdk")
 project(":plugin-sdk").projectDir = file("sdk/plugin-sdk")
 include(":glass-plugin-sdk")
 project(":glass-plugin-sdk").projectDir = file("sdk/glass-plugin-sdk")
+include(":terminal-view")
+project(":terminal-view").projectDir = file("sdk/terminal-view")
 
 // Phone companion app
 include(":phone")
@@ -67,6 +69,8 @@ project(":plugin-chat-glass").projectDir = file("apps/plugins/plugin-chat-glass"
 // project(":plugin-nav-glass").projectDir = file("apps/plugins/plugin-nav-glass")
 include(":plugin-compass-glass")
 project(":plugin-compass-glass").projectDir = file("apps/plugins/plugin-compass-glass")
+include(":plugin-scouter-glass")
+project(":plugin-scouter-glass").projectDir = file("apps/plugins/plugin-scouter-glass")
 // plugin-media-glass — retired in M2 of the Home rework. Media now lives
 // inside the base app as a card in HomeActivity. Source kept for
 // reference; removed from the build.
@@ -78,3 +82,5 @@ include(":plugin-opencv-glass")
 project(":plugin-opencv-glass").projectDir = file("apps/plugins/plugin-opencv-glass")
 include(":plugin-broadcast-legacy-glass")
 project(":plugin-broadcast-legacy-glass").projectDir = file("apps/plugins/plugin-broadcast-legacy-glass")
+include(":plugin-ssh-glass")
+project(":plugin-ssh-glass").projectDir = file("apps/plugins/plugin-ssh-glass")

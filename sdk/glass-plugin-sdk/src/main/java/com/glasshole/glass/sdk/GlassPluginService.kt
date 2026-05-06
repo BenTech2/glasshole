@@ -154,6 +154,10 @@ abstract class GlassPluginService : Service() {
         }
     }
 
+    /** Number of bindToHost retries already attempted. Reset only on a
+     *  successful bind. */
+    private var bindAttempts = 0
+
     private fun bindToHost() {
         // Each glass-edition base app ships in two flavors: standalone
         // (e.g. com.glasshole.glassee2) and launcher (`.launcher` suffix).
@@ -170,11 +174,27 @@ abstract class GlassPluginService : Service() {
                 hostBound = bindService(intent, hostConnection, Context.BIND_AUTO_CREATE)
                 if (hostBound) {
                     Log.i(TAG, "Bound to host: $pkg")
+                    bindAttempts = 0
                     return
                 }
             } catch (_: Exception) {}
         }
-        Log.w(TAG, "Could not bind to any GlassHole host")
+        // Bind failures here are racy on host restart — when the host
+        // service is still coming up, [bindService] returns false and
+        // the framework does NOT retry on its own. Without an explicit
+        // retry the plugin can't talk back and SCHEMA_RESP / CONFIG
+        // replies fall on the floor forever. Back off and try again,
+        // capped at a minute so a permanently-uninstalled host doesn't
+        // burn battery.
+        bindAttempts++
+        if (bindAttempts <= 6) {
+            val delay = 250L * (1L shl (bindAttempts - 1)) // 250ms → 8s
+            Log.w(TAG, "Could not bind to any GlassHole host — retry #$bindAttempts in ${delay}ms")
+            android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed({ if (!hostBound) bindToHost() }, delay)
+        } else {
+            Log.w(TAG, "Could not bind to any GlassHole host — giving up after $bindAttempts attempts")
+        }
     }
 
     private fun registerBroadcastReceiver() {

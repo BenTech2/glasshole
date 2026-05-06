@@ -29,6 +29,14 @@
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="16dp">
 
+                <ImageView
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center_vertical"
+                    android:layout_marginEnd="12dp"
+                    android:src="@drawable/glasshole_logo"
+                    android:importantForAccessibility="no" />
+
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -44,6 +52,60 @@
                     android:textColor="?attr/colorOnSurfaceVariant"
                     android:layout_marginStart="8dp" />
             </LinearLayout>
+
+            <!-- ============================================ UPDATE BANNER -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/updateBannerCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="?attr/colorPrimaryContainer"
+                android:foreground="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Update available"
+                            android:textAppearance="?attr/textAppearanceTitleMedium"
+                            android:textColor="?attr/colorOnPrimaryContainer" />
+
+                        <TextView
+                            android:id="@+id/updateBannerVersion"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:textAppearance="?attr/textAppearanceBodySmall"
+                            android:textColor="?attr/colorOnPrimaryContainer" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/updateBannerDismiss"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:icon="@android:drawable/ic_menu_close_clear_cancel"
+                        app:iconTint="?attr/colorOnPrimaryContainer"
+                        android:contentDescription="Dismiss" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
             <!-- ============================================== CONNECTION -->
             <com.google.android.material.card.MaterialCardView
@@ -387,6 +449,14 @@
                         android:layout_marginBottom="8dp" />
 
                     <com.google.android.material.button.MaterialButton
+                        android:id="@+id/openGlassDeviceInfoButton"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Glass device info"
+                        android:layout_marginBottom="8dp" />
+
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/openApkManagerButton"
                         style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
@@ -399,7 +469,15 @@
                         style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Debug" />
+                        android:text="Debug"
+                        android:layout_marginBottom="8dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/openLicensesButton"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Open source licenses" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

@@ -1,6 +1,7 @@
 package com.glasshole.phone.service
 
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.Context
@@ -24,6 +25,9 @@ class NotificationForwardingService : NotificationListenerService() {
         private const val TAG = "GlassHoleNLS"
         const val PREFS_NAME = "glasshole_notif_prefs"
         const val PREF_FORWARDED_APPS = "forwarded_apps"
+        /** Subset of forwarded_apps whose silent / low-importance
+         *  notifications also pass the global silent filter. */
+        const val PREF_SILENT_ALLOWED_APPS = "silent_allowed_apps"
 
         @Volatile var instance: NotificationForwardingService? = null
     }
@@ -110,6 +114,7 @@ class NotificationForwardingService : NotificationListenerService() {
 
     // Set of package names to forward (empty = forward all)
     private var forwardedApps: Set<String> = emptySet()
+    private var silentAllowedApps: Set<String> = emptySet()
 
     override fun onCreate() {
         super.onCreate()
@@ -130,6 +135,7 @@ class NotificationForwardingService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val pkg = sbn.packageName
+        Log.d(TAG, "onNotificationPosted: pkg=$pkg key=${sbn.key.take(80)}")
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
 
@@ -155,6 +161,36 @@ class NotificationForwardingService : NotificationListenerService() {
         // Skip group summaries
         if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
 
+        // Skip notifications the originating app has marked LOCAL_ONLY —
+        // these are explicitly for the phone screen and aren't meant to
+        // be mirrored to companion devices (wearables, glass, etc.).
+        // Catches Google Messages "Device pairing — sent from desktop"
+        // and similar sync/status notifications even when the channel
+        // importance is normal. Per-app silent allowance ALSO bypasses
+        // this — if the user opted an app into "Allow silent" they want
+        // its full output regardless of LOCAL_ONLY.
+        if (pkg !in silentAllowedApps &&
+            (notification.flags and Notification.FLAG_LOCAL_ONLY) != 0) {
+            Log.d(TAG, "Skipping LOCAL_ONLY notification from $pkg")
+            return
+        }
+
+        // Skip foreground-service status notifications — they're the
+        // persistent "I'm running" indicator a service shows while it's
+        // alive (Google Messages "Device pairing — connected to web",
+        // Spotify offline-sync, download manager, location-sharing
+        // sticky, etc.). The user already has them on the phone; we
+        // don't need to spam the glass every time one re-renders.
+        // FLAG_LOCAL_ONLY would be the correct signal but Google
+        // Messages's pairing notification doesn't set it; FLAG_
+        // FOREGROUND_SERVICE catches the same family. Per-app bypass
+        // via silentAllowedApps for users who genuinely want these.
+        if (pkg !in silentAllowedApps &&
+            (notification.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+            Log.d(TAG, "Skipping FOREGROUND_SERVICE notification from $pkg")
+            return
+        }
+
         // Skip media playback "now playing" cards (YouTube, Spotify, Pocket Casts,
         // etc.). These are transport-control notifications attached to a
         // MediaSession — not user-facing alerts — so forwarding them to the
@@ -163,6 +199,53 @@ class NotificationForwardingService : NotificationListenerService() {
         // etc.) carry a different category and still go through.
         if (notification.category == Notification.CATEGORY_TRANSPORT) return
         if (extras.containsKey(Notification.EXTRA_MEDIA_SESSION)) return
+
+        // Skip silent / low-importance notifications. These are typically
+        // background sync events ("you sent a message from desktop", "added
+        // to playlist", reaction sync, etc.) that the user has explicitly
+        // told their phone NOT to interrupt them with — forwarding them to
+        // the glass would undo that preference and spam the heads-up
+        // popup. On API 26+ the channel's importance is the source of
+        // truth; below that we fall back to the legacy priority field.
+        //
+        // Per-app override: an app in silentAllowedApps bypasses this filter
+        // — for users who want a specific quiet app's notifications even
+        // though they're flagged silent on the phone.
+        if (pkg !in silentAllowedApps) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channelId = notification.channelId
+                if (channelId != null) {
+                    // Try the direct path first (only works for our own
+                    // app's channels on most builds). When that returns
+                    // null, fall back to the listener's Ranking API
+                    // which DOES expose the originating app's channel
+                    // importance — required because most cross-app
+                    // channels (e.g. Google Messages's
+                    // bugle_connected_to_web_channel_v1) come back null
+                    // through the direct call.
+                    val nm = getSystemService(NotificationManager::class.java)
+                    var importance = nm?.getNotificationChannel(channelId)?.importance
+                        ?: NotificationManager.IMPORTANCE_UNSPECIFIED
+                    if (importance == NotificationManager.IMPORTANCE_UNSPECIFIED) {
+                        try {
+                            val rankingMap = currentRanking
+                            val ranking = android.service.notification.NotificationListenerService.Ranking()
+                            if (rankingMap?.getRanking(sbn.key, ranking) == true) {
+                                importance = ranking.channel?.importance
+                                    ?: NotificationManager.IMPORTANCE_UNSPECIFIED
+                            }
+                        } catch (_: Exception) {}
+                    }
+                    if (importance != NotificationManager.IMPORTANCE_UNSPECIFIED &&
+                        importance < NotificationManager.IMPORTANCE_DEFAULT) {
+                        Log.d(TAG, "Skipping low-importance ($importance) channel from $pkg")
+                        return
+                    }
+                }
+            }
+            @Suppress("DEPRECATION")
+            if (notification.priority < Notification.PRIORITY_DEFAULT) return
+        }
 
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
@@ -192,7 +275,15 @@ class NotificationForwardingService : NotificationListenerService() {
             pkg
         }
 
-        Log.i(TAG, "Forwarding: $appName | $title | $messageText")
+        // Channel + flags telemetry helps diagnose "why did this make it
+        // through the filters" without needing to repro under a debugger.
+        val channelInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val cid = notification.channelId ?: "<no-channel>"
+            val nm = getSystemService(NotificationManager::class.java)
+            val imp = nm?.getNotificationChannel(cid)?.importance ?: -1
+            "channel=$cid importance=$imp"
+        } else "channel=<api<26>"
+        Log.i(TAG, "Forwarding: $appName | $title | $messageText [$channelInfo flags=0x${notification.flags.toString(16)}]")
         logActionStructure(notification, pkg)
 
         // Build the structured actions list for this notification
@@ -207,7 +298,20 @@ class NotificationForwardingService : NotificationListenerService() {
         val actionsAware = onNotifWithActions
         if (actionsAware != null) {
             val iconBase64 = encodeAppIcon(pkg)
-            val pictureBase64 = encodeBigPicture(notification, extras)
+            val pictureBase64 = encodeBigPicture(
+                notification, extras, title, messageText, notifKey, sbn.tag
+            )
+            val titleIconBase64 = encodeTitleIcon(pkg, notification, extras)
+            if (titleIconBase64 == null) {
+                // Diagnostic: dump every avatar-relevant field for
+                // notifications that didn't yield a title icon, so we
+                // can see what X / Outlook / etc. actually populate.
+                debugLogAvatarSources(pkg, notification, extras)
+            }
+            // Snag the video id (if any) so debug-replay can re-fetch
+            // the thumbnail later without re-deriving it from extras.
+            val videoId = com.glasshole.phone.util.YouTubeThumbnail
+                .findVideoIdInNotification(notification, extras, title, messageText, sbn.tag)
             val dismissMs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
                 .getLong("notif_timeout_ms", 12_000L)
             val json = JSONObject().apply {
@@ -217,7 +321,9 @@ class NotificationForwardingService : NotificationListenerService() {
                 put("title", title)
                 put("text", messageText)
                 if (iconBase64 != null) put("icon", iconBase64)
+                if (titleIconBase64 != null) put("title_icon", titleIconBase64)
                 if (pictureBase64 != null) put("picture", pictureBase64)
+                if (videoId != null) put("video_id", videoId)
                 put("actions", actionsJson)
                 put("dismissMs", dismissMs)
             }.toString()
@@ -511,30 +617,319 @@ class NotificationForwardingService : NotificationListenerService() {
     // Pull a preview image out of the notification if it has one.
     // Tries EXTRA_PICTURE (big-picture style — used by Messages MMS/RCS,
     // Discord image messages, Home camera snapshots) then EXTRA_LARGE_ICON_BIG.
-    // Downscales to ~200px max edge and JPEG-compresses so the total base64
-    // payload stays under ~20 KB to keep BT latency acceptable.
-    private fun encodeBigPicture(notification: Notification, extras: Bundle): String? {
+    // Falls back to fetching a YouTube CDN thumbnail when the title/text
+    // contains a YouTube URL (covers Shorts, which don't ship a Bitmap
+    // in extras at all). Downscales to ~200px max edge and JPEG-compresses
+    // so the total base64 payload stays under ~20 KB to keep BT latency
+    // acceptable.
+    private fun encodeBigPicture(
+        notification: Notification,
+        extras: Bundle,
+        title: String,
+        text: String,
+        notifKey: String,
+        tag: String?
+    ): String? {
         val bmp: android.graphics.Bitmap? =
             extras.getParcelable(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap
                 ?: extras.getParcelable(Notification.EXTRA_LARGE_ICON_BIG) as? android.graphics.Bitmap
-        if (bmp == null || bmp.width <= 0 || bmp.height <= 0) return null
+        if (bmp != null && bmp.width > 0 && bmp.height > 0) {
+            return encodeScaledBitmapToBase64(bmp)
+        }
+
+        // YouTube fallback. Shorts notifications don't ship a Bitmap
+        // in EXTRA_PICTURE / EXTRA_LARGE_ICON_BIG, and Shorts also
+        // don't include the video URL in title/text — the URL lives
+        // in the contentIntent's underlying Intent, which we reach
+        // via reflection through findVideoIdInNotification().
+        val videoId = com.glasshole.phone.util.YouTubeThumbnail
+            .findVideoIdInNotification(notification, extras, title, text, tag)
+            ?: return null
+
+        // Sync cache hit (no network) — instant render.
+        com.glasshole.phone.util.YouTubeThumbnail
+            .getCachedEncodedPicture(this, videoId)
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        // Cache miss: kick off an async fetch so the glass card can
+        // swap in the real thumb once it lands. The card still gets
+        // a small avatar in the title row via `title_icon` (a
+        // separate field), so it's never visually empty.
+        Log.i(TAG, "yt-thumb cache miss for $videoId — async fetching")
+        scheduleYtThumbFetch(videoId, notifKey)
+        return null
+    }
+
+    /**
+     * Encodes the best available channel/sender avatar as a small
+     * base64 JPEG for the title-row slot on the glass card. Tries
+     * sources in order — most-specific first:
+     *
+     *   1. EXTRA_LARGE_ICON Bitmap — the classic channel/sender icon
+     *      (Slack, Discord, GitHub, Spotify, YouTube, etc.)
+     *   2. notification.getLargeIcon() Icon — same slot but as the
+     *      Icon-typed alternative used by newer apps (Outlook,
+     *      Gmail, Messages on more recent Android)
+     *   3. Last MessagingStyle message's senderPerson avatar — for
+     *      DM-style apps (X, Telegram, Signal) where the per-message
+     *      avatar lives inside EXTRA_MESSAGES instead of the
+     *      notification root
+     *   4. EXTRA_PEOPLE_LIST first Person's icon — fallback for
+     *      contact-aware apps that don't ship a MessagingStyle
+     *
+     * Returns null only when none of the above produce an Icon /
+     * Bitmap; the glass card then shows a blank avatar slot rather
+     * than something misleading.
+     */
+    private fun encodeTitleIcon(
+        pkg: String,
+        notification: Notification,
+        extras: Bundle
+    ): String? {
+        // 1. EXTRA_LARGE_ICON — Outlook stores this as an Icon while
+        //    Slack / Discord / Spotify store as a Bitmap. Read the raw
+        //    object and branch on actual type so we catch both.
+        extrasAvatar(extras, Notification.EXTRA_LARGE_ICON)
+            ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+
+        // 2. EXTRA_LARGE_ICON_BIG — same dual-type handling. Some apps
+        //    only set the big variant.
+        extrasAvatar(extras, Notification.EXTRA_LARGE_ICON_BIG)
+            ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+
+        // 3. Notification-level Icon (API 23+) — for apps that set
+        //    via Builder.setLargeIcon(Icon) but didn't mirror to extras.
+        notification.getLargeIcon()?.let { iconToBitmap(it) }
+            ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+
+        // 3. Last-message senderPerson from MessagingStyle (API 28+
+        //    style key for the per-message Bundle[]).
+        try {
+            val msgs = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+            if (msgs != null) {
+                // Iterate newest → oldest so the top-of-the-stack
+                // sender's avatar wins.
+                for (i in msgs.indices.reversed()) {
+                    val mb = msgs[i] as? Bundle ?: continue
+                    val person = mb.getParcelable<android.app.Person>("sender_person") ?: continue
+                    val icon = person.icon ?: continue
+                    iconToBitmap(icon)
+                        ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+                }
+            }
+        } catch (_: Exception) { /* fall through */ }
+
+        // 4. EXTRA_PEOPLE_LIST — first Person's icon.
+        try {
+            val peopleList = extras.getParcelableArrayList<android.app.Person>(
+                Notification.EXTRA_PEOPLE_LIST
+            )
+            peopleList?.firstOrNull()?.icon?.let { iconToBitmap(it) }
+                ?.let { encodeAvatarBitmap(it)?.let { b64 -> return b64 } }
+        } catch (_: Exception) { /* fall through */ }
+
+        // 5. App icon — last-resort fallback so the title slot is
+        //    always populated. Outlook (and any other app whose
+        //    notifications get image-reduced by the system before
+        //    they reach us — keys include android.reduced.images
+        //    when this happened) can't surface the real sender
+        //    avatar; rendering the source app's icon at least
+        //    anchors the card visually.
         return try {
-            val maxEdge = 200
-            val scale = maxEdge.toFloat() / maxOf(bmp.width, bmp.height).toFloat()
+            val drawable = packageManager.getApplicationIcon(pkg)
+            drawableToBitmap(drawable, 96)?.let { encodeAvatarBitmap(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun drawableToBitmap(
+        drawable: android.graphics.drawable.Drawable,
+        sizePx: Int
+    ): android.graphics.Bitmap? {
+        return try {
+            val bmp = android.graphics.Bitmap.createBitmap(
+                sizePx, sizePx, android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bmp)
+            drawable.setBounds(0, 0, sizePx, sizePx)
+            drawable.draw(canvas)
+            bmp
+        } catch (e: Exception) {
+            Log.w(TAG, "drawableToBitmap failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Return a Bitmap for whatever EXTRA_LARGE_ICON / EXTRA_LARGE_ICON_BIG
+     *  contains — Bitmap directly, or Icon rasterised through
+     *  [iconToBitmap]. Returns null if the slot is empty or holds
+     *  something we don't know how to render. */
+    private fun extrasAvatar(extras: Bundle, key: String): android.graphics.Bitmap? {
+        val raw = extras.get(key) ?: return null
+        return when (raw) {
+            is android.graphics.Bitmap -> raw
+            is android.graphics.drawable.Icon -> iconToBitmap(raw)
+            else -> {
+                Log.w(TAG, "Unexpected $key type: ${raw.javaClass.name}")
+                null
+            }
+        }
+    }
+
+    /** Print every avatar-relevant slot for a notification that didn't
+     *  produce a title icon. Logs once per failing notif so we can
+     *  reverse-engineer how X / Outlook / others ship their sender
+     *  avatars. */
+    private fun debugLogAvatarSources(
+        pkg: String,
+        notification: Notification,
+        extras: Bundle
+    ) {
+        // Force the right ClassLoader for unparcelling — when extras
+        // is read across an app boundary the default loader can fail
+        // to resolve framework parcelables and silently return null.
+        try { extras.classLoader = this.classLoader } catch (_: Exception) {}
+        val sb = StringBuilder("avatar sources empty for $pkg: ")
+        val rawLarge = extras.get(Notification.EXTRA_LARGE_ICON)
+        val rawLargeBig = extras.get(Notification.EXTRA_LARGE_ICON_BIG)
+        sb.append("largeIconRawType=").append(rawLarge?.javaClass?.name ?: "null")
+        sb.append(" largeIconBigRawType=").append(rawLargeBig?.javaClass?.name ?: "null")
+        sb.append(" notif.largeIcon=")
+            .append(notification.getLargeIcon() != null)
+        sb.append(" pictureBitmap=")
+            .append(extras.getParcelable<android.graphics.Bitmap>(Notification.EXTRA_PICTURE) != null)
+        try {
+            val msgs = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+            sb.append(" msgs=").append(msgs?.size ?: 0)
+            if (msgs != null && msgs.isNotEmpty()) {
+                val mb = msgs.last() as? Bundle
+                val person = mb?.getParcelable<android.app.Person>("sender_person")
+                sb.append(" lastMsgPerson=").append(person != null)
+                sb.append(" lastMsgPersonIcon=").append(person?.icon != null)
+            }
+        } catch (e: Exception) { sb.append(" msgsErr=${e.message}") }
+        try {
+            val people = extras.getParcelableArrayList<android.app.Person>(
+                Notification.EXTRA_PEOPLE_LIST
+            )
+            sb.append(" peopleList=").append(people?.size ?: 0)
+            sb.append(" firstPersonIcon=").append(people?.firstOrNull()?.icon != null)
+        } catch (e: Exception) { sb.append(" peopleErr=${e.message}") }
+        // Dump every Bundle key so we can spot custom fields these apps
+        // might use.
+        sb.append(" extrasKeys=").append(extras.keySet().joinToString(","))
+        Log.i(TAG, sb.toString())
+    }
+
+    /** Convert an [android.graphics.drawable.Icon] to a Bitmap by
+     *  rasterising whatever its underlying drawable resolves to.
+     *  Returns null if the icon can't be loaded (e.g. resource
+     *  reference into a package we can't access). */
+    private fun iconToBitmap(icon: android.graphics.drawable.Icon): android.graphics.Bitmap? {
+        return try {
+            val drawable = icon.loadDrawable(this) ?: return null
+            val w = drawable.intrinsicWidth.takeIf { it > 0 } ?: 96
+            val h = drawable.intrinsicHeight.takeIf { it > 0 } ?: 96
+            val bmp = android.graphics.Bitmap.createBitmap(
+                w, h, android.graphics.Bitmap.Config.ARGB_8888
+            )
+            val canvas = android.graphics.Canvas(bmp)
+            drawable.setBounds(0, 0, w, h)
+            drawable.draw(canvas)
+            bmp
+        } catch (e: Exception) {
+            Log.w(TAG, "iconToBitmap failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Scale + JPEG-encode a bitmap for the title-icon slot. Same
+     *  pipeline the EXTRA_LARGE_ICON path used; pulled out so all
+     *  fallbacks share it. */
+    private fun encodeAvatarBitmap(bmp: android.graphics.Bitmap): String? {
+        if (bmp.width <= 0 || bmp.height <= 0) return null
+        return try {
+            val targetPx = 96
+            val scale = targetPx.toFloat() / maxOf(bmp.width, bmp.height).toFloat()
             val scaled = if (scale < 1f) {
                 val w = (bmp.width * scale).toInt().coerceAtLeast(1)
                 val h = (bmp.height * scale).toInt().coerceAtLeast(1)
                 android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
             } else bmp
             val stream = java.io.ByteArrayOutputStream()
-            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 55, stream)
+            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
             if (scaled !== bmp) scaled.recycle()
-            val bytes = stream.toByteArray()
-            Log.i(TAG, "Picture preview: ${bytes.size} B")
-            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
         } catch (e: Exception) {
-            Log.w(TAG, "Picture encode failed: ${e.message}")
+            Log.w(TAG, "title icon encode failed: ${e.message}")
             null
+        }
+    }
+
+    private fun encodeScaledBitmapToBase64(bmp: android.graphics.Bitmap): String? = try {
+        val maxEdge = 200
+        val scale = maxEdge.toFloat() / maxOf(bmp.width, bmp.height).toFloat()
+        val scaled = if (scale < 1f) {
+            val w = (bmp.width * scale).toInt().coerceAtLeast(1)
+            val h = (bmp.height * scale).toInt().coerceAtLeast(1)
+            android.graphics.Bitmap.createScaledBitmap(bmp, w, h, true)
+        } else bmp
+        val stream = java.io.ByteArrayOutputStream()
+        scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 55, stream)
+        if (scaled !== bmp) scaled.recycle()
+        val bytes = stream.toByteArray()
+        Log.i(TAG, "Picture preview: ${bytes.size} B")
+        android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+    } catch (e: Exception) {
+        Log.w(TAG, "Picture encode failed: ${e.message}")
+        null
+    }
+
+    // --- YouTube thumbnail fallback ---
+
+    private val ytThumbExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "GlassHole-YtThumb").apply { isDaemon = true }
+    }
+    private val ytThumbInflight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Background-fetch the thumbnail for [videoId], then re-fire
+     *  [notifKey] so the glass card re-renders with the picture in
+     *  place. */
+    private fun scheduleYtThumbFetch(videoId: String, notifKey: String) {
+        if (!ytThumbInflight.add(videoId)) return
+        ytThumbExecutor.submit {
+            try {
+                val bytes = com.glasshole.phone.util.YouTubeThumbnail
+                    .fetchAndCache(this, videoId)
+                if (bytes != null) {
+                    Log.i(TAG, "yt-thumb cached: $videoId (${bytes.size} B) — re-firing notif")
+                    reprocessActiveNotification(notifKey)
+                } else {
+                    Log.i(TAG, "yt-thumb fetch returned nothing for $videoId")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "yt-thumb fetch crashed: ${e.message}")
+            } finally {
+                ytThumbInflight.remove(videoId)
+            }
+        }
+    }
+
+    /** Look up the still-active notification by key and run our
+     *  forwarding logic over it again — this time the cache hit path
+     *  in [encodeBigPicture] will produce a picture. */
+    private fun reprocessActiveNotification(notifKey: String) {
+        try {
+            val active = activeNotifications ?: return
+            val sbn = active.firstOrNull { it.key == notifKey } ?: run {
+                Log.d(TAG, "yt-thumb update: notification $notifKey already gone")
+                return
+            }
+            onNotificationPosted(sbn)
+        } catch (e: Exception) {
+            Log.w(TAG, "reprocessActiveNotification failed: ${e.message}")
         }
     }
 
@@ -565,22 +960,39 @@ class NotificationForwardingService : NotificationListenerService() {
         }
     }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        if (sbn.key == latestNotificationKey) {
-            // Keep the reply action even after removal — it often still works
-        }
-        // Google Maps removed its nav notification → trip ended or was
-        // cancelled. Tell the Nav plugin so the glass can go back to idle.
+    override fun onNotificationRemoved(
+        sbn: StatusBarNotification,
+        rankingMap: android.service.notification.NotificationListenerService.RankingMap?,
+        reason: Int
+    ) {
+        // Nav-end signal needs to fire on ANY removal — Google Maps cancels
+        // its nav notification when the trip ends regardless of how the
+        // OS labels the cancel reason.
         if (sbn.packageName == com.glasshole.phone.plugins.nav.NavPlugin.MAPS_PKG) {
             try {
                 com.glasshole.phone.plugins.nav.NavPlugin.instance?.handleMapsRemoved()
             } catch (e: Exception) {
                 Log.w(TAG, "Nav remove failed: ${e.message}")
             }
+            return
         }
-        // Tell the Home notification card that this notification is gone
-        // if its source app is in our forwarded list — ignore removals for
-        // other apps so we don't ship noise over BT.
+
+        // For everything else: only honor user-driven removals. Many apps
+        // (Slack, Messages, Discord, etc.) cancel-and-repost notifications
+        // as background updates — replacement, group optimization, channel
+        // tweaks. Forwarding *those* removals to the glass made entries
+        // vanish from the drawer the user never dismissed.
+        //
+        // Three reasons survive the filter:
+        //   REASON_CANCEL          — user swiped on the phone shade
+        //   REASON_CANCEL_ALL      — user cleared all
+        //   REASON_LISTENER_CANCEL — our own glass-side dismiss action
+        if (reason != REASON_CANCEL &&
+            reason != REASON_CANCEL_ALL &&
+            reason != REASON_LISTENER_CANCEL) {
+            return
+        }
+
         if (sbn.packageName in forwardedApps) {
             try { onNotifRemoved?.invoke(sbn.key) } catch (e: Exception) {
                 Log.w(TAG, "Notif-removed callback failed: ${e.message}")
@@ -665,12 +1077,22 @@ class NotificationForwardingService : NotificationListenerService() {
 
     fun getForwardedApps(): Set<String> = forwardedApps
 
+    fun setSilentAllowedApps(apps: Set<String>) {
+        silentAllowedApps = apps
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putStringSet(PREF_SILENT_ALLOWED_APPS, apps)
+            .apply()
+    }
+
+    fun getSilentAllowedApps(): Set<String> = silentAllowedApps
+
     fun reloadForwardedApps() {
         loadForwardedApps()
     }
 
     private fun loadForwardedApps() {
-        forwardedApps = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getStringSet(PREF_FORWARDED_APPS, emptySet()) ?: emptySet()
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        forwardedApps = prefs.getStringSet(PREF_FORWARDED_APPS, emptySet()) ?: emptySet()
+        silentAllowedApps = prefs.getStringSet(PREF_SILENT_ALLOWED_APPS, emptySet()) ?: emptySet()
     }
 }

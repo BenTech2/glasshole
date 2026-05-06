@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+extra["versionFamily"] = listOf(":stream-player-ee1", ":stream-player-ee2", ":stream-player-xe")
+apply(from = "${rootDir}/build-versioning.gradle.kts")
+
 android {
     namespace = "com.glasshole.streamplayer.ee2"
     compileSdk = 34
@@ -11,8 +14,8 @@ android {
         applicationId = "com.glasshole.streamplayer.ee2"
         minSdk = 26
         targetSdk = 27
-        versionCode = 4
-        versionName = "0.4.0-alpha"
+        versionCode = (project.extra["computedVersionCode"] as Int)
+        versionName = (project.extra["computedVersionName"] as String)
     }
 
     buildTypes {

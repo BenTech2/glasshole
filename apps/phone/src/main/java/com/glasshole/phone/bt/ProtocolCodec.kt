@@ -26,6 +26,16 @@ package com.glasshole.phone.bt
  *   PLUGIN_LIST:<json>                          - Glass tells phone which plugins
  *                                                 are installed (name / description /
  *                                                 version). Sent on connect.
+ *   LIVE_CAM_START / LIVE_CAM_STOP              - Phone asks for / ends a debug live
+ *                                                 camera stream (Wi-Fi LAN, MJPEG).
+ *   LIVE_CAM_URL:<url>                          - Glass replies with stream URL.
+ *   LIVE_CAM_ERR:<reason>                       - Glass refuses (no_wifi / camera_busy).
+ *   LIVE_SCREEN_START / LIVE_SCREEN_STOP        - Phone asks for / ends a debug live
+ *                                                 screen-mirror stream (EE2 only).
+ *   LIVE_SCREEN_URL:<url>                       - Glass replies with stream URL.
+ *   LIVE_SCREEN_ERR:<reason>                    - Glass refuses (no_wifi /
+ *                                                 unsupported_edition / consent_denied
+ *                                                 / capture_failed / user_revoked).
  *
  *   Dynamic-plugin message types riding the existing PLUGIN envelope:
  *     PLUGIN:<id>:SCHEMA_REQ:""                 - Phone asks a plugin for its settings
@@ -74,8 +84,31 @@ object ProtocolCodec {
 
     fun encodeInfoReq(): String = "INFO_REQ\n"
 
+    fun encodeDeviceInfoReq(): String = "DEVICE_INFO_REQ\n"
+
+    fun encodeBatteryInfoReq(): String = "BATTERY_INFO_REQ\n"
+
+    fun encodePluginListReq(): String = "PLUGIN_LIST_REQ\n"
+
     fun encodePing(): String = "PING\n"
     fun encodePong(): String = "PONG\n"
+
+    // Live debug streams. Camera works on EE1/EE2/XE; screen mirror is
+    // EE2-only — glass replies LIVE_SCREEN_ERR:unsupported_edition on
+    // the older editions. Both require Wi-Fi on the same LAN; otherwise
+    // glass replies *_ERR:no_wifi.
+    fun encodeLiveCamStart(): String = "LIVE_CAM_START\n"
+    fun encodeLiveCamStop(): String = "LIVE_CAM_STOP\n"
+    fun encodeLiveScreenStart(): String = "LIVE_SCREEN_START\n"
+    fun encodeLiveScreenStop(): String = "LIVE_SCREEN_STOP\n"
+
+    /** Toggle a SCREEN_BRIGHT wake lock on glass for the lifetime of
+     *  the active screen mirror — payload is "1"/"0". Glass auto-
+     *  releases the lock when LIVE_SCREEN_STOP arrives or BT
+     *  disconnects, so the phone doesn't have to be perfect about
+     *  pairing on/off calls. */
+    fun encodeLiveScreenKeepAwake(enabled: Boolean): String =
+        "LIVE_SCREEN_KEEP_AWAKE:${if (enabled) 1 else 0}\n"
 
     fun encodeInstallStart(filename: String, size: Long, md5: String): String =
         "INSTALL:$filename:$size:$md5\n"
@@ -126,6 +159,8 @@ object ProtocolCodec {
             line.startsWith("NOTIF:") -> DecodedMessage.RichNotif(unescape(line.removePrefix("NOTIF:")))
             line.startsWith("MSG:") -> DecodedMessage.Notification(unescape(line.removePrefix("MSG:")))
             line.startsWith("REPLY:") -> DecodedMessage.Reply(unescape(line.removePrefix("REPLY:")))
+            line.startsWith("DEVICE_INFO:") -> DecodedMessage.DeviceInfo(line.removePrefix("DEVICE_INFO:"))
+            line.startsWith("BATTERY_INFO:") -> DecodedMessage.BatteryInfo(line.removePrefix("BATTERY_INFO:"))
             line.startsWith("INFO:") -> DecodedMessage.Info(line.removePrefix("INFO:"))
             line.startsWith("INSTALL_ACK:") -> DecodedMessage.InstallAck(line.removePrefix("INSTALL_ACK:"))
             line.startsWith("INSTALL:") -> {
@@ -164,6 +199,14 @@ object ProtocolCodec {
             line.startsWith("PLUGIN_LIST:") -> {
                 DecodedMessage.PluginList(unescape(line.removePrefix("PLUGIN_LIST:")))
             }
+            line.startsWith("LIVE_CAM_URL:") ->
+                DecodedMessage.LiveCamUrl(line.removePrefix("LIVE_CAM_URL:"))
+            line.startsWith("LIVE_CAM_ERR:") ->
+                DecodedMessage.LiveCamErr(line.removePrefix("LIVE_CAM_ERR:"))
+            line.startsWith("LIVE_SCREEN_URL:") ->
+                DecodedMessage.LiveScreenUrl(line.removePrefix("LIVE_SCREEN_URL:"))
+            line.startsWith("LIVE_SCREEN_ERR:") ->
+                DecodedMessage.LiveScreenErr(line.removePrefix("LIVE_SCREEN_ERR:"))
             line == "PING" -> DecodedMessage.Ping
             line == "PONG" -> DecodedMessage.Pong
             line == "INFO_REQ" -> DecodedMessage.InfoReq
@@ -178,6 +221,8 @@ sealed class DecodedMessage {
     data class RichNotif(val json: String) : DecodedMessage()
     data class Reply(val text: String) : DecodedMessage()
     data class Info(val json: String) : DecodedMessage()
+    data class DeviceInfo(val json: String) : DecodedMessage()
+    data class BatteryInfo(val json: String) : DecodedMessage()
     object Ping : DecodedMessage()
     object Pong : DecodedMessage()
     object InfoReq : DecodedMessage()
@@ -196,5 +241,9 @@ sealed class DecodedMessage {
     ) : DecodedMessage()
     data class NotifDismiss(val notifKey: String) : DecodedMessage()
     data class PluginList(val json: String) : DecodedMessage()
+    data class LiveCamUrl(val url: String) : DecodedMessage()
+    data class LiveCamErr(val reason: String) : DecodedMessage()
+    data class LiveScreenUrl(val url: String) : DecodedMessage()
+    data class LiveScreenErr(val reason: String) : DecodedMessage()
     data class Unknown(val raw: String) : DecodedMessage()
 }

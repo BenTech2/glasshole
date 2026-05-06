@@ -53,9 +53,12 @@ module_dir() {
         plugin-chat-glass)       echo apps/plugins/plugin-chat-glass ;;
         plugin-nav-glass)        echo apps/plugins/plugin-nav-glass ;;
         plugin-compass-glass)    echo apps/plugins/plugin-compass-glass ;;
+        plugin-scouter-glass)    echo apps/plugins/plugin-scouter-glass ;;
         plugin-media-glass)      echo apps/plugins/plugin-media-glass ;;
         plugin-broadcast-glass)        echo apps/plugins/plugin-broadcast-glass ;;
         plugin-broadcast-legacy-glass) echo apps/plugins/plugin-broadcast-legacy-glass ;;
+        plugin-opencv-glass)     echo apps/plugins/plugin-opencv-glass ;;
+        plugin-ssh-glass)        echo apps/plugins/plugin-ssh-glass ;;
         *) echo "unknown module: $1" >&2; return 1 ;;
     esac
 }
@@ -79,9 +82,9 @@ player_module() {
 # Core plugins (photo-sync gallery, device controls). Shared across variants.
 PLUGINS_CORE_COMMON="plugin-device-glass plugin-gallery-glass"
 # User-facing plugins shared across variants.
-PLUGINS_COMMON="plugin-notes-glass plugin-calc-glass plugin-openclaw-glass plugin-chat-glass plugin-compass-glass"
+PLUGINS_COMMON="plugin-notes-glass plugin-calc-glass plugin-openclaw-glass plugin-chat-glass plugin-compass-glass plugin-scouter-glass plugin-ssh-glass"
 # EE2-only plugins (minSdk 27).
-PLUGINS_EE2_EXTRA="plugin-camera2-glass plugin-gallery2-glass plugin-broadcast-glass"
+PLUGINS_EE2_EXTRA="plugin-camera2-glass plugin-gallery2-glass plugin-broadcast-glass plugin-opencv-glass"
 # EE1 + XE get the Camera1 broadcast variant (minSdk 19).
 PLUGINS_EE1_XE_EXTRA="plugin-broadcast-legacy-glass"
 

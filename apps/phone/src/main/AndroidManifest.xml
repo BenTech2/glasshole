@@ -47,8 +47,10 @@
     <application
         android:name=".GlassHoleApp"
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_dialog_info"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="GlassHole"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.GlassHole">
 
         <activity
@@ -78,6 +80,46 @@
             android:exported="false"
             android:label="Debug"
             android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".GlassDeviceInfoActivity"
+            android:exported="false"
+            android:label="Glass device info"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".LicensesActivity"
+            android:exported="false"
+            android:label="Open source licenses"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".plugins.ssh.SshActivity"
+            android:exported="false"
+            android:label="SSH"
+            android:parentActivityName=".MainActivity"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".plugins.ssh.SshProfileEditorActivity"
+            android:exported="false"
+            android:label="SSH connection"
+            android:parentActivityName=".plugins.ssh.SshActivity"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".plugins.ssh.SshKeyManagerActivity"
+            android:exported="false"
+            android:label="SSH keys"
+            android:parentActivityName=".plugins.ssh.SshActivity"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".LiveStreamActivity"
+            android:exported="false"
+            android:label="Glass live stream"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:parentActivityName=".DebugActivity" />
 
         <activity
             android:name=".PluginsActivity"

@@ -301,13 +301,17 @@ class CardAdapter(
         val total = NotificationStore.count()
         val front = holder.itemView.findViewById<View>(R.id.notifFrontCard)
         val empty = holder.itemView.findViewById<TextView>(R.id.notifEmpty)
+        val content = holder.itemView.findViewById<View>(R.id.notifContent)
         val picture = holder.itemView.findViewById<ImageView>(R.id.notifPicture)
         val gradient = holder.itemView.findViewById<View>(R.id.notifPictureGradient)
         val stack1 = holder.itemView.findViewById<View>(R.id.notifStack1)
         val stack2 = holder.itemView.findViewById<View>(R.id.notifStack2)
         val stackCount = holder.itemView.findViewById<TextView>(R.id.notifStackCount)
         if (latest == null) {
-            front?.visibility = View.GONE
+            // Strip the card chrome — empty state is just centered text
+            // on bare black, mirroring the media card's "Nothing playing".
+            front?.background = null
+            content?.visibility = View.GONE
             empty?.visibility = View.VISIBLE
             picture?.visibility = View.GONE
             gradient?.visibility = View.GONE
@@ -316,7 +320,10 @@ class CardAdapter(
             stackCount?.visibility = View.GONE
             return
         }
-        front?.visibility = View.VISIBLE
+        // Restore the rounded card chrome — view holders are recycled, so
+        // we have to re-set the drawable each time we have notifications.
+        front?.setBackgroundResource(R.drawable.notif_front_card)
+        content?.visibility = View.VISIBLE
         empty?.visibility = View.GONE
 
         // Time Machine slivers: peek out the top of the front card to imply
@@ -359,6 +366,21 @@ class CardAdapter(
         val icon = holder.itemView.findViewById<ImageView>(R.id.notifAppIcon)
         if (latest.iconBitmap != null) icon?.setImageBitmap(latest.iconBitmap)
         else icon?.setImageDrawable(null)
+
+        // Sender / channel avatar in the title row — same dual-slot
+        // pattern the popup notification uses (app icon stays where it
+        // is). Hidden when the payload doesn't carry a title icon
+        // (older captures, or the rare path where the fallback chain
+        // came up empty).
+        val titleIcon = holder.itemView.findViewById<ImageView>(R.id.notifTitleIcon)
+        if (titleIcon != null) {
+            if (latest.titleIconBitmap != null) {
+                titleIcon.setImageBitmap(latest.titleIconBitmap)
+                titleIcon.visibility = View.VISIBLE
+            } else {
+                titleIcon.visibility = View.GONE
+            }
+        }
     }
 
     private fun formatTimeAgo(ts: Long): String {

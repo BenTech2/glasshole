@@ -205,6 +205,7 @@ class NotificationDisplayActivity : Activity() {
         val title: String,
         val text: String,
         val iconBase64: String,
+        val titleIconBase64: String,
         val pictureBase64: String,
         val key: String,
         val actions: List<NotifAction>
@@ -215,6 +216,7 @@ class NotificationDisplayActivity : Activity() {
         val title = intent.getStringExtra("title") ?: ""
         val text = intent.getStringExtra("text") ?: ""
         val icon = intent.getStringExtra("icon") ?: ""
+        val titleIcon = intent.getStringExtra("title_icon") ?: ""
         val picture = intent.getStringExtra("picture") ?: ""
         val key = intent.getStringExtra("key") ?: ""
         val actionsJson = intent.getStringExtra("actions")
@@ -222,18 +224,18 @@ class NotificationDisplayActivity : Activity() {
         if (app.isEmpty() && title.isEmpty() && text.isEmpty() && !intent.hasExtra("text")) {
             val raw = intent.getStringExtra("message") ?: "(empty)"
             val colon = raw.indexOf(":")
-            if (colon <= 0) return ParsedNotif("", "", raw.trim(), "", "", "", emptyList())
+            if (colon <= 0) return ParsedNotif("", "", raw.trim(), "", "", "", "", emptyList())
             val pkgName = raw.substring(0, colon).trim()
             val rest = raw.substring(colon + 1).trim()
             val dash = rest.indexOf(" - ")
             return if (dash > 0) {
-                ParsedNotif(pkgName, rest.substring(0, dash).trim(), rest.substring(dash + 3).trim(), "", "", "", emptyList())
+                ParsedNotif(pkgName, rest.substring(0, dash).trim(), rest.substring(dash + 3).trim(), "", "", "", "", emptyList())
             } else {
-                ParsedNotif(pkgName, "", rest, "", "", "", emptyList())
+                ParsedNotif(pkgName, "", rest, "", "", "", "", emptyList())
             }
         }
 
-        return ParsedNotif(app, title, text, icon, picture, key, NotifAction.parseArray(actionsJson))
+        return ParsedNotif(app, title, text, icon, titleIcon, picture, key, NotifAction.parseArray(actionsJson))
     }
 
     private fun buildCardView(p: ParsedNotif): View {
@@ -241,9 +243,11 @@ class NotificationDisplayActivity : Activity() {
 
         val pictureBitmap = decodeIcon(p.pictureBase64)
         val iconBitmap = decodeIcon(p.iconBase64)
+        val titleIconBitmap = decodeIcon(p.titleIconBase64)
         val hasPicture = pictureBitmap != null
         val hasTitle = p.title.isNotEmpty()
         val hasBody = p.text.isNotEmpty()
+        val hasTitleIcon = titleIconBitmap != null
 
         if (hasPicture) {
             root.addView(ImageView(this).apply {
@@ -285,7 +289,7 @@ class NotificationDisplayActivity : Activity() {
         }
 
         if (hasTitle) {
-            column.addView(TextView(this).apply {
+            val titleText = TextView(this).apply {
                 text = p.title
                 setTextColor(Color.WHITE)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 36f)
@@ -293,7 +297,26 @@ class NotificationDisplayActivity : Activity() {
                 setLineSpacing(0f, 1.02f)
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-            })
+            }
+            if (hasTitleIcon) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                }
+                row.addView(ImageView(this).apply {
+                    setImageBitmap(circularBitmap(titleIconBitmap, dp(40)))
+                    layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                        rightMargin = dp(10)
+                    }
+                })
+                titleText.layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+                row.addView(titleText)
+                column.addView(row)
+            } else {
+                column.addView(titleText)
+            }
         }
 
         if (hasBody) {
@@ -515,6 +538,28 @@ class NotificationDisplayActivity : Activity() {
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
+
+    /**
+     * Soft-circle crop for the title-row avatar (sender / channel
+     * icon). Returns a new ARGB bitmap of [sizePx]² with the source
+     * scaled to a square and clipped to a circle.
+     */
+    private fun circularBitmap(src: android.graphics.Bitmap?, sizePx: Int): android.graphics.Bitmap? {
+        if (src == null || sizePx <= 0) return null
+        val out = android.graphics.Bitmap.createBitmap(
+            sizePx, sizePx, android.graphics.Bitmap.Config.ARGB_8888
+        )
+        val canvas = android.graphics.Canvas(out)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        val rectF = android.graphics.RectF(0f, 0f, sizePx.toFloat(), sizePx.toFloat())
+        paint.color = Color.WHITE
+        canvas.drawOval(rectF, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        val scaled = android.graphics.Bitmap.createScaledBitmap(src, sizePx, sizePx, true)
+        canvas.drawBitmap(scaled, 0f, 0f, paint)
+        if (scaled !== src) scaled.recycle()
+        return out
+    }
 
     override fun onDestroy() {
         handler.removeCallbacks(autoDismiss)

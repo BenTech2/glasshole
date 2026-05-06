@@ -43,17 +43,33 @@
             android:layout_weight="1"
             android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/pageTitle"
+        <LinearLayout
+            android:id="@+id/pageTitleRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="#FFFFFF"
-            android:textSize="24sp"
-            android:fontFamily="sans-serif-light"
-            android:lineSpacingMultiplier="1.02"
-            android:maxLines="2"
-            android:ellipsize="end"
-            android:text="" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/pageTitleIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="8dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/pageTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="#FFFFFF"
+                android:textSize="24sp"
+                android:fontFamily="sans-serif-light"
+                android:lineSpacingMultiplier="1.02"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:text="" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/pageBody"

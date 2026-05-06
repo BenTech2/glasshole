@@ -54,10 +54,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var notifAccessButton: Button
     private lateinit var notifAppsButton: Button
     private lateinit var openGalleryButton: Button
+    private lateinit var openGlassDeviceInfoButton: Button
     private lateinit var openPluginsButton: Button
     private lateinit var openDeviceButton: Button
     private lateinit var openApkManagerButton: Button
     private lateinit var openDebugButton: Button
+    private lateinit var openLicensesButton: Button
+
+    private var updateBannerCard: View? = null
+    private var updateBannerVersion: TextView? = null
+    private var updateBannerDismiss: View? = null
+    private var pendingUpdate: UpdateChecker.AvailableUpdate? = null
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
 
@@ -168,6 +175,9 @@ class MainActivity : AppCompatActivity() {
         openGalleryButton.setOnClickListener {
             startActivity(Intent(this, com.glasshole.phone.plugins.gallery.GalleryActivity::class.java))
         }
+        openGlassDeviceInfoButton.setOnClickListener {
+            startActivity(Intent(this, GlassDeviceInfoActivity::class.java))
+        }
         openPluginsButton.setOnClickListener {
             startActivity(Intent(this, PluginsActivity::class.java))
         }
@@ -180,6 +190,9 @@ class MainActivity : AppCompatActivity() {
         openDebugButton.setOnClickListener {
             startActivity(Intent(this, DebugActivity::class.java))
         }
+        openLicensesButton.setOnClickListener {
+            startActivity(Intent(this, LicensesActivity::class.java))
+        }
 
         checkPermissionsAndLoadDevices()
 
@@ -190,6 +203,16 @@ class MainActivity : AppCompatActivity() {
         val pluginIntent = Intent(this, PluginHostService::class.java)
         startService(pluginIntent)
         bindService(pluginIntent, pluginHostConnection, Context.BIND_AUTO_CREATE)
+
+        // Background-check GitHub for a newer release. The checker is
+        // throttled to one network call every 6h and persists the
+        // result so the banner reappears across app restarts without
+        // hammering the API.
+        UpdateChecker.checkInBackground(
+            context = this,
+            currentVersion = BuildConfig.VERSION_NAME,
+            onResult = { update -> applyUpdateBanner(update) }
+        )
     }
 
     override fun onResume() {
@@ -234,6 +257,9 @@ class MainActivity : AppCompatActivity() {
         openGalleryButton.setOnClickListener {
             startActivity(Intent(this, com.glasshole.phone.plugins.gallery.GalleryActivity::class.java))
         }
+        openGlassDeviceInfoButton.setOnClickListener {
+            startActivity(Intent(this, GlassDeviceInfoActivity::class.java))
+        }
         openPluginsButton.setOnClickListener {
             startActivity(Intent(this, PluginsActivity::class.java))
         }
@@ -245,6 +271,9 @@ class MainActivity : AppCompatActivity() {
         }
         openDebugButton.setOnClickListener {
             startActivity(Intent(this, DebugActivity::class.java))
+        }
+        openLicensesButton.setOnClickListener {
+            startActivity(Intent(this, LicensesActivity::class.java))
         }
         // Layout was re-inflated — re-bind the Now Playing card so the
         // StreamPlugin callback points at the freshly-inflated views.
@@ -265,13 +294,20 @@ class MainActivity : AppCompatActivity() {
         notifAccessButton = findViewById(R.id.notifAccessButton)
         notifAppsButton = findViewById(R.id.notifAppsButton)
         openGalleryButton = findViewById(R.id.openGalleryButton)
+        openGlassDeviceInfoButton = findViewById(R.id.openGlassDeviceInfoButton)
         openPluginsButton = findViewById(R.id.openPluginsButton)
         openDeviceButton = findViewById(R.id.openDeviceButton)
         openApkManagerButton = findViewById(R.id.openApkManagerButton)
         openDebugButton = findViewById(R.id.openDebugButton)
+        openLicensesButton = findViewById(R.id.openLicensesButton)
+        updateBannerCard = findViewById(R.id.updateBannerCard)
+        updateBannerVersion = findViewById(R.id.updateBannerVersion)
+        updateBannerDismiss = findViewById(R.id.updateBannerDismiss)
+        wireUpdateBanner()
         logText = findViewById(R.id.logText)
         logScroll = findViewById(R.id.logScroll)
-        findViewById<TextView>(R.id.versionLabel)?.text = "v${BuildConfig.VERSION_NAME}"
+        findViewById<TextView>(R.id.versionLabel)?.text =
+            "v${BuildConfig.VERSION_NAME} build ${BuildConfig.VERSION_CODE}"
         bindNowPlayingCard()
     }
 
@@ -471,6 +507,38 @@ class MainActivity : AppCompatActivity() {
             connectButton.text = "Connect"
         }
         connectButton.isEnabled = true
+    }
+
+    /** Bind the update banner once per layout — the click and dismiss
+     *  handlers stay alive across config changes since [pendingUpdate]
+     *  carries the current state. Re-call after bindViews() repopulates
+     *  the View references on fold/unfold. */
+    private fun wireUpdateBanner() {
+        updateBannerCard?.setOnClickListener {
+            val u = pendingUpdate ?: return@setOnClickListener
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(u.url)))
+            } catch (_: Exception) { /* no browser installed — silent */ }
+        }
+        updateBannerDismiss?.setOnClickListener {
+            val u = pendingUpdate ?: return@setOnClickListener
+            UpdateChecker.dismiss(this, u.tag)
+            pendingUpdate = null
+            updateBannerCard?.visibility = View.GONE
+        }
+        // Re-apply current state after a re-bind — the banner stays
+        // visible across fold/unfold instead of vanishing.
+        applyUpdateBanner(pendingUpdate)
+    }
+
+    private fun applyUpdateBanner(update: UpdateChecker.AvailableUpdate?) {
+        pendingUpdate = update
+        if (update == null) {
+            updateBannerCard?.visibility = View.GONE
+            return
+        }
+        updateBannerVersion?.text = "${update.tag} — tap to view release notes"
+        updateBannerCard?.visibility = View.VISIBLE
     }
 
     private fun log(msg: String) {

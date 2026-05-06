@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Used by the Glass Device Info dump (DEVICE_INFO_REQ) to read
+         IP / SSID / link speed / RSSI from WifiManager.connectionInfo. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Gallery WiFi-LAN transfer: glass spins up an HTTP server on
+         the local network and the phone pulls thumbnails / full files
+         from there instead of base64-over-BT-RFCOMM. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -16,9 +24,17 @@
     <!-- Device handler (formerly plugin-device-glass): brightness, screen
          timeout, time/timezone sync, sleep-now. -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Stay-awake-while-charging — see EE2 manifest comment for the
+         WRITE_SECURE_SETTINGS adb-grant command. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.SET_TIME" />
     <uses-permission android:name="android.permission.SET_TIME_ZONE" />
+    <!-- Live camera debug stream: phone's Debug screen can ask the
+         glass to expose its raw camera feed over the local network. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:allowBackup="true"

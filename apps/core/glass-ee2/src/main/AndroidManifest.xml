@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Used by the Glass Device Info dump (DEVICE_INFO_REQ) to read
+         IP / SSID / link speed / RSSI from WifiManager.connectionInfo. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Gallery WiFi-LAN transfer: glass spins up an HTTP server on
+         the local network and the phone pulls thumbnails / full files
+         from there instead of base64-over-BT-RFCOMM. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
@@ -15,12 +23,28 @@
          timeout, time/timezone sync, sleep-now. WRITE_SETTINGS is the
          runtime-toggled one — HomeActivity prompts for it on first run. -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- "Stay awake while charging" toggle — flips
+         Settings.Global.STAY_ON_WHILE_PLUGGED_IN. Same scope the
+         Developer Options "Stay awake" item uses. The platform reserves
+         this permission for system apps; the user grants it once via:
+             adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS
+         and the toggle silently no-ops until that grant lands. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- SET_TIME / SET_TIME_ZONE are signature|system; request anyway in
          case the device ships them, the handler falls back to su / Settings.
          AUTO_TIME otherwise. -->
     <uses-permission android:name="android.permission.SET_TIME" />
     <uses-permission android:name="android.permission.SET_TIME_ZONE" />
+    <!-- Live camera/screen debug streams: phone's Debug screen can ask
+         the glass to expose a raw camera feed or screen mirror over the
+         local network. Camera permission is only needed for the live
+         stream; we open Camera1 in a headless capture session.
+         Screen mirror uses MediaProjection — gated by the system consent
+         dialog at runtime, no manifest permission required. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -82,6 +106,16 @@
             android:noHistory="true"
             android:theme="@android:style/Theme.DeviceDefault.Dialog" />
 
+        <!-- Fires the system MediaProjection consent dialog so the user
+             can grant the screen-mirror debug stream. No own UI; the
+             system dialog is the only thing the user sees. -->
+        <activity
+            android:name=".ProjectionConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Headless permission shim. HomeActivity's storage prompt fires
              this directly via startActivity when the user taps "Enable",
              so it's `exported="false"` and has no LAUNCHER intent-filter —
@@ -91,6 +125,13 @@
             android:name=".GalleryPermissionActivity"
             android:label="Gallery Access"
             android:exported="false" />
+
+        <activity
+            android:name=".CameraPermissionActivity"
+            android:label="Camera Access"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
 
         <service
             android:name=".BluetoothListenerService"
@@ -126,6 +167,7 @@
         <service
             android:name=".SleepAccessibilityService"
             android:exported="true"
+            android:directBootAware="true"
             android:label="GlassHole Swipe-Down Sleep"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>

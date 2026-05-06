@@ -7,11 +7,14 @@
     android:padding="2dp">
 
     <com.google.android.material.card.MaterialCardView
+        android:id="@+id/thumbCard"
         android:layout_width="match_parent"
         android:layout_height="120dp"
         app:cardCornerRadius="12dp"
         app:cardElevation="0dp"
-        app:cardBackgroundColor="?attr/colorSurfaceContainerHigh">
+        app:cardBackgroundColor="?attr/colorSurfaceContainerHigh"
+        app:strokeWidth="0dp"
+        app:strokeColor="?attr/colorPrimary">
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent">
@@ -37,6 +40,27 @@
                 android:paddingTop="2dp"
                 android:paddingBottom="2dp"
                 android:layout_margin="6dp"
+                android:visibility="gone" />
+
+            <!-- Visible only while in selection mode AND this cell is selected.
+                 Stack of: a 30%-primary tint and a circular check on top-left. -->
+            <View
+                android:id="@+id/thumbSelectedTint"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="?attr/colorPrimary"
+                android:alpha="0.30"
+                android:visibility="gone" />
+
+            <ImageView
+                android:id="@+id/thumbSelectedCheck"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="top|start"
+                android:layout_margin="8dp"
+                android:src="@drawable/ic_check_circle"
+                android:background="@drawable/circle_check_bg"
+                android:contentDescription="selected"
                 android:visibility="gone" />
         </FrameLayout>
     </com.google.android.material.card.MaterialCardView>

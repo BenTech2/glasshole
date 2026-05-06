@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+apply(from = "${rootDir}/build-versioning.gradle.kts")
+
 android {
     namespace = "com.glasshole.plugin.openclaw.glass"
     compileSdk = 34
@@ -11,8 +13,8 @@ android {
         applicationId = "com.glasshole.plugin.openclaw.glass"
         minSdk = 19
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.4.0-alpha"
+        versionCode = (project.extra["computedVersionCode"] as Int)
+        versionName = (project.extra["computedVersionName"] as String)
     }
 
     buildTypes {

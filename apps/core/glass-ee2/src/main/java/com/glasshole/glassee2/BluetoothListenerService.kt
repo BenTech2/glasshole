@@ -1,5 +1,6 @@
 package com.glasshole.glassee2
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,7 +11,9 @@ import android.bluetooth.BluetoothSocket
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Binder
 import android.os.Build
@@ -86,6 +89,13 @@ class BluetoothListenerService : Service() {
         }
     }
 
+    // Debug live-stream features. Lazily-initialised so we don't open a
+    // socket / camera unless the phone actually asks for a stream.
+    private val cameraLiveSession by lazy {
+        com.glasshole.glass.sdk.CameraLiveSession(this)
+    }
+    private val screenLiveSession by lazy { ScreenLiveSession(this) }
+
     inner class LocalBinder : Binder() {
         fun getService(): BluetoothListenerService = this@BluetoothListenerService
     }
@@ -140,6 +150,25 @@ class BluetoothListenerService : Service() {
         // branch (where nothing is listening on EE2).
         startPluginHost()
 
+        // Re-assert the user's "stay awake while charging" preference
+        // — Settings.Global.STAY_ON_WHILE_PLUGGED_IN persists, but if
+        // anything else flipped it (developer-options dabbling, factory
+        // reset) we want our stored choice to win on the next boot.
+        val basePrefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        applyStayAwakeWhenCharging(
+            basePrefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false)
+        )
+        // Listen for plug/unplug so the wakelock-backup tracks state
+        // even when the user (or the toggle) didn't change.
+        try {
+            registerReceiver(powerStateReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "powerStateReceiver register failed: ${e.message}")
+        }
+
         startListening()
     }
 
@@ -177,6 +206,8 @@ class BluetoothListenerService : Service() {
         closeAll()
         wakeLock?.release()
         wakeLock = null
+        try { unregisterReceiver(powerStateReceiver) } catch (_: Exception) {}
+        try { if (stayAwakeWakeLock.isHeld) stayAwakeWakeLock.release() } catch (_: Exception) {}
         stopForeground(true)
         super.onDestroy()
     }
@@ -197,6 +228,11 @@ class BluetoothListenerService : Service() {
         outputStream = null
         clientSocket = null
         serverSocket = null
+        // Free the camera + projection if a live stream was running —
+        // a phone disconnect always cancels any debug session.
+        try { cameraLiveSession.stop() } catch (_: Exception) {}
+        try { screenLiveSession.stop() } catch (_: Exception) {}
+        releaseScreenMirrorWakeLock()
     }
 
     // --- Plugin registration (AIDL) ---
@@ -337,6 +373,25 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Wake-to-time-card ${if (enabled) "enabled" else "disabled"}")
                 sendBaseStateToPhone()
             }
+            "SET_INVERT_NAV" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_INVERT_NAV, enabled).apply()
+                Log.i(TAG, "Invert nav ${if (enabled) "enabled" else "disabled"}")
+                sendBaseStateToPhone()
+            }
+            "SET_STAY_AWAKE_WHEN_CHARGING" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, enabled).apply()
+                applyStayAwakeWhenCharging(enabled)
+                sendBaseStateToPhone()
+            }
+            "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
             else -> Log.d(TAG, "Unknown base message: $type")
@@ -413,8 +468,149 @@ class BluetoothListenerService : Service() {
             put("navKeepScreenOn", prefs.getBoolean(BaseSettings.KEY_NAV_KEEP_SCREEN_ON, false))
             put("navWakeOnUpdate", prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false))
             put("wakeToTimeCard", prefs.getBoolean(BaseSettings.KEY_WAKE_TO_TIME_CARD, false))
+            put("invertNav", prefs.getBoolean(BaseSettings.KEY_INVERT_NAV, false))
+            put("stayAwakeWhenCharging", prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false))
+            put("stayAwakeWhenChargingGranted", canWriteSecureSettings())
         }.toString()
         sendPluginMessage("base", "STATE", json)
+    }
+
+    /** Whether the system has granted us WRITE_SECURE_SETTINGS yet —
+     *  reported back to the phone so the toggle can show a hint when
+     *  the permission isn't there. The check is a cheap PackageManager
+     *  call; safe to do on the BT listener thread. */
+    private fun canWriteSecureSettings(): Boolean =
+        packageManager.checkPermission(
+            android.Manifest.permission.WRITE_SECURE_SETTINGS,
+            packageName
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    /** Push the user's chosen "stay awake while charging" state to the
+     *  global system setting that controls the platform's screen-on
+     *  behaviour while plugged in. We set the flag for AC + USB +
+     *  wireless charging so any cradle / cable combo keeps the display
+     *  alive. Silently no-ops without WRITE_SECURE_SETTINGS — the
+     *  phone toggle surfaces that situation via the granted-flag in
+     *  STATE so the user can grant via adb. */
+    /** Foreground a plugin's main activity by package name. The phone
+     *  uses this from the Plugins screen's quick-launch icon — pressing
+     *  it on the phone immediately wakes the glass into that plugin
+     *  without a separate cover-flow swipe. Silently no-ops if the
+     *  package has no launcher intent (worker-style plugins). */
+    private fun handleLaunchPackage(payload: String) {
+        val pkg = try { JSONObject(payload).optString("pkg") } catch (_: Exception) { "" }
+        if (pkg.isEmpty()) return
+        val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
+        if (launchIntent == null) {
+            Log.w(TAG, "LAUNCH_PACKAGE: no launcher intent for $pkg")
+            return
+        }
+        // Wake the display first — same pattern as the NAV wake — so a
+        // remote-launch from the phone actually surfaces on the glass
+        // even if it's currently dozing.
+        wakeScreen(reason = "launch:$pkg")
+        try {
+            launchIntent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            )
+            startActivity(launchIntent)
+            Log.i(TAG, "Launched $pkg")
+        } catch (e: Exception) {
+            Log.w(TAG, "LAUNCH_PACKAGE failed for $pkg: ${e.message}")
+        }
+    }
+
+    /** Brief SCREEN_BRIGHT wakelock with ACQUIRE_CAUSES_WAKEUP — pops
+     *  the display on long enough for the just-started activity's own
+     *  showWhenLocked / turnScreenOn flags (where they exist) to keep
+     *  it lit. Same trick maybeWakeForNavUpdate uses. */
+    @Suppress("DEPRECATION")
+    private fun wakeScreen(reason: String) {
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "GlassHole:LaunchWake"
+            )
+            wl.acquire(3_000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeScreen($reason) failed: ${e.message}")
+        }
+    }
+
+    /** SCREEN_BRIGHT wakelock held while the user has stay-awake-while-
+     *  charging enabled AND the device is plugged in. EE2's OEM doesn't
+     *  honour STAY_ON_WHILE_PLUGGED_IN reliably (verified: setting reads
+     *  7, AC plugged, screen still times out at 15s), so we pin the
+     *  display via wakelock instead. The Settings.Global write still
+     *  goes out as a best-effort for devices that *do* honour it. */
+    @Suppress("DEPRECATION")
+    private val stayAwakeWakeLock: PowerManager.WakeLock by lazy {
+        (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK,
+            "GlassHole:StayAwakeCharging"
+        ).apply { setReferenceCounted(false) }
+    }
+
+    private val powerStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            // Either ACTION_POWER_CONNECTED / DISCONNECTED — re-evaluate
+            // the lock based on current pref + plugged state.
+            refreshStayAwakeWakeLock()
+        }
+    }
+
+    private fun applyStayAwakeWhenCharging(enabled: Boolean) {
+        // 1. Best-effort Settings.Global write — works on stock Android,
+        //    silent no-op on Glass OEM builds that don't read this flag.
+        val flags = if (enabled) {
+            android.os.BatteryManager.BATTERY_PLUGGED_AC or
+            android.os.BatteryManager.BATTERY_PLUGGED_USB or
+            android.os.BatteryManager.BATTERY_PLUGGED_WIRELESS
+        } else 0
+        try {
+            android.provider.Settings.Global.putInt(
+                contentResolver,
+                android.provider.Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
+                flags
+            )
+            Log.i(TAG, "STAY_ON_WHILE_PLUGGED_IN = $flags")
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Need WRITE_SECURE_SETTINGS — adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS")
+        } catch (e: Exception) {
+            Log.w(TAG, "STAY_ON_WHILE_PLUGGED_IN write failed: ${e.message}")
+        }
+        // 2. Wakelock backup for the OEM-doesn't-listen case. Re-evaluate
+        //    immediately so toggling on while already plugged works.
+        refreshStayAwakeWakeLock()
+    }
+
+    /** Acquire / release the stay-awake wakelock based on the current
+     *  pref + the device's plugged state. Idempotent — safe to call any
+     *  time the inputs change. */
+    private fun refreshStayAwakeWakeLock() {
+        val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        val enabled = prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false)
+        val plugged = isPlugged()
+        val shouldHold = enabled && plugged
+        try {
+            if (shouldHold && !stayAwakeWakeLock.isHeld) {
+                stayAwakeWakeLock.acquire()
+                Log.i(TAG, "stay-awake-while-charging wakelock acquired")
+            } else if (!shouldHold && stayAwakeWakeLock.isHeld) {
+                stayAwakeWakeLock.release()
+                Log.i(TAG, "stay-awake-while-charging wakelock released")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "stay-awake wakelock toggle failed: ${e.message}")
+        }
+    }
+
+    private fun isPlugged(): Boolean {
+        val status = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?: return false
+        val plugged = status.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0)
+        return plugged != 0
     }
 
     private fun sendInfo() {
@@ -439,6 +635,379 @@ class BluetoothListenerService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Send info failed: ${e.message}")
         }
+    }
+
+    /**
+     * Heavyweight device-info dump for the phone's Glass Device Info
+     * page. Gathered on demand via DEVICE_INFO_REQ — kept off the
+     * heartbeat so we don't burn ~3KB of bandwidth every 10s.
+     */
+    private fun sendDeviceInfo() {
+        val os = outputStream ?: return
+        try {
+            val json = gatherDeviceInfo().toString()
+            os.write("DEVICE_INFO:$json\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+        } catch (e: Exception) {
+            Log.e(TAG, "Send device info failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Battery-only refresh — just the battery section, used for the
+     * live graph in the phone's Glass Device Info page. Tiny payload
+     * (~200 bytes) so polling every 5s costs nothing.
+     */
+    private fun sendBatteryInfo() {
+        val os = outputStream ?: return
+        try {
+            val json = gatherBatteryInfo().toString()
+            os.write("BATTERY_INFO:$json\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+        } catch (e: Exception) {
+            Log.e(TAG, "Send battery info failed: ${e.message}")
+        }
+    }
+
+    private fun gatherDeviceInfo(): JSONObject {
+        val root = JSONObject()
+        root.put("hardware", gatherHardwareInfo())
+        root.put("os", gatherOsInfo())
+        root.put("network", gatherNetworkInfo())
+        root.put("battery", gatherBatteryInfo())
+        root.put("storage", gatherStorageInfo())
+        root.put("memory", gatherMemoryInfo())
+        root.put("misc", gatherMiscInfo())
+        return root
+    }
+
+    private fun gatherHardwareInfo(): JSONObject = JSONObject().apply {
+        put("manufacturer", Build.MANUFACTURER)
+        put("brand", Build.BRAND)
+        put("model", Build.MODEL)
+        put("device", Build.DEVICE)
+        put("product", Build.PRODUCT)
+        put("board", Build.BOARD)
+        put("hardware", Build.HARDWARE)
+        put("bootloader", Build.BOOTLOADER)
+        put("serial", try { @Suppress("DEPRECATION") Build.SERIAL } catch (_: Exception) { "?" })
+        put("supported_abis",
+            if (Build.VERSION.SDK_INT >= 21) Build.SUPPORTED_ABIS.joinToString()
+            else @Suppress("DEPRECATION") "${Build.CPU_ABI}, ${Build.CPU_ABI2}"
+        )
+        val dm = resources.displayMetrics
+        put("display_density_dpi", dm.densityDpi)
+        put("display_width_px", dm.widthPixels)
+        put("display_height_px", dm.heightPixels)
+    }
+
+    private fun gatherOsInfo(): JSONObject = JSONObject().apply {
+        put("android_version", Build.VERSION.RELEASE)
+        put("sdk_int", Build.VERSION.SDK_INT)
+        put("codename", Build.VERSION.CODENAME)
+        put("build_id", Build.ID)
+        put("build_type", Build.TYPE)
+        put("build_tags", Build.TAGS)
+        put("fingerprint", Build.FINGERPRINT)
+        put("display_id", Build.DISPLAY)
+        put("incremental", Build.VERSION.INCREMENTAL)
+        try { put("security_patch", Build.VERSION.SECURITY_PATCH) } catch (_: Exception) {}
+        try {
+            val kernel = java.io.File("/proc/version").readText().trim()
+            put("kernel", kernel)
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherNetworkInfo(): JSONObject = JSONObject().apply {
+        try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val info = wifi.connectionInfo
+            if (info != null) {
+                val ip = info.ipAddress
+                if (ip != 0) {
+                    put("wifi_ip", android.text.format.Formatter.formatIpAddress(ip))
+                }
+                put("wifi_ssid", info.ssid?.removeSurrounding("\""))
+                put("wifi_bssid", info.bssid)
+                put("wifi_link_speed_mbps", info.linkSpeed)
+                put("wifi_rssi_dbm", info.rssi)
+                put("wifi_frequency_mhz", info.frequency)
+            }
+        } catch (_: Exception) {}
+        try {
+            for (iface in java.net.NetworkInterface.getNetworkInterfaces()) {
+                if (iface.isLoopback) continue
+                val name = iface.name
+                val mac = iface.hardwareAddress?.joinToString(":") { "%02x".format(it) } ?: ""
+                if (mac.isNotEmpty() && mac != "00:00:00:00:00:00") {
+                    put("${name}_mac", mac)
+                }
+                for (addr in iface.inetAddresses) {
+                    if (addr.isLoopbackAddress) continue
+                    val key = if (addr is java.net.Inet6Address) "${name}_ipv6" else "${name}_ipv4"
+                    put(key, addr.hostAddress?.substringBefore('%'))
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherBatteryInfo(): JSONObject = JSONObject().apply {
+        try {
+            // BatteryManager.getIntProperty / isCharging arrived in API 21
+            // and 23 respectively. EE1/XE are API 19 — they get only the
+            // sticky-broadcast extras (which exist on every Android since
+            // forever).
+            if (Build.VERSION.SDK_INT >= 21) {
+                val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
+                try { put("percent", bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)) } catch (_: Exception) {}
+                if (Build.VERSION.SDK_INT >= 23) {
+                    try { put("charging", bm.isCharging) } catch (_: Exception) {}
+                }
+                arrayOf(
+                    "current_now_uA" to BatteryManager.BATTERY_PROPERTY_CURRENT_NOW,
+                    "current_avg_uA" to BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE,
+                    "charge_counter_uAh" to BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER
+                ).forEach { (key, prop) ->
+                    try {
+                        val v = bm.getIntProperty(prop)
+                        if (v != Int.MIN_VALUE) put(key, v)
+                    } catch (_: Exception) {}
+                }
+                try {
+                    val energy = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER)
+                    if (energy != Long.MIN_VALUE) put("energy_counter_nWh", energy)
+                } catch (_: Exception) {}
+                if (Build.VERSION.SDK_INT >= 28) {
+                    try {
+                        val rem = bm.computeChargeTimeRemaining()
+                        if (rem > 0) put("charge_time_remaining_ms", rem)
+                    } catch (_: Exception) {}
+                }
+            }
+            val sticky = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            if (sticky != null) {
+                val voltage = sticky.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1)
+                if (voltage > 0) put("voltage_mV", voltage)
+                val temp = sticky.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1)
+                if (temp >= 0) put("temperature_c", temp / 10.0)
+                put("health", batteryHealthString(
+                    sticky.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)
+                ))
+                sticky.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY)?.let {
+                    put("technology", it)
+                }
+                put("plugged", batteryPluggedString(
+                    sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
+                ))
+                val level = sticky.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = sticky.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+                if (level >= 0) put("level", level)
+                if (scale > 0) put("scale", scale)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherStorageInfo(): JSONObject = JSONObject().apply {
+        try {
+            val internal = android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath)
+            put("internal_total_bytes", internal.totalBytes)
+            put("internal_available_bytes", internal.availableBytes)
+        } catch (_: Exception) {}
+        try {
+            val ext = android.os.Environment.getExternalStorageDirectory()
+            if (ext != null) {
+                val externalFs = android.os.StatFs(ext.absolutePath)
+                put("external_total_bytes", externalFs.totalBytes)
+                put("external_available_bytes", externalFs.availableBytes)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherMemoryInfo(): JSONObject = JSONObject().apply {
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val mi = android.app.ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            put("total_bytes", mi.totalMem)
+            put("available_bytes", mi.availMem)
+            put("low_memory", mi.lowMemory)
+            put("threshold_bytes", mi.threshold)
+        } catch (_: Exception) {}
+    }
+
+    private fun gatherMiscInfo(): JSONObject = JSONObject().apply {
+        put("uptime_ms", android.os.SystemClock.elapsedRealtime())
+        put("flavor", BuildConfig.FLAVOR)
+        put("app_version", BuildConfig.VERSION_NAME)
+        put("timezone", java.util.TimeZone.getDefault().id)
+    }
+
+    // --- Live stream debug features ---
+
+    private fun sendLine(prefix: String, value: String) {
+        val os = outputStream ?: return
+        try {
+            os.write("$prefix:$value\n".toByteArray(Charsets.UTF_8))
+            os.flush()
+        } catch (e: IOException) {
+            Log.w(TAG, "sendLine $prefix failed: ${e.message}")
+        }
+    }
+
+    private fun handleLiveCamStart() {
+        // Runtime permission gate: EE2 is API 27, CAMERA is dangerous
+        // and must be granted explicitly. We pop our own permission
+        // shim activity on the glass and ask the user to retry from
+        // the phone once they've granted it.
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.CAMERA
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            try {
+                val intent = Intent(this, CameraPermissionActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "CameraPermissionActivity launch failed: ${e.message}")
+            }
+            sendLine("LIVE_CAM_ERR", "permission_required")
+            return
+        }
+        // Bounce off the BT reader thread — Camera1 open + parameter
+        // negotiation can block for a couple hundred ms.
+        Thread {
+            when (val st = cameraLiveSession.start()) {
+                is com.glasshole.glass.sdk.CameraLiveSession.Status.Started -> {
+                    sendLine("LIVE_CAM_URL", st.url)
+                    Log.i(TAG, "LIVE_CAM_START → ${st.url}")
+                }
+                com.glasshole.glass.sdk.CameraLiveSession.Status.NoWifi ->
+                    sendLine("LIVE_CAM_ERR", "no_wifi")
+                com.glasshole.glass.sdk.CameraLiveSession.Status.CameraFailed ->
+                    sendLine("LIVE_CAM_ERR", "camera_busy")
+            }
+        }.apply { isDaemon = true; start() }
+    }
+
+    private fun handleLiveCamStop() {
+        cameraLiveSession.stop()
+        Log.i(TAG, "LIVE_CAM_STOP")
+    }
+
+    private fun handleLiveScreenStart() {
+        // Glass EE2's tiny display can't reliably expose the system
+        // MediaProjection consent dialog's [Start now] button to the
+        // touchpad. Arm the accessibility service to auto-click it as
+        // soon as the dialog appears. Watchdog clears the flag if the
+        // dialog never shows so we don't accidentally auto-confirm
+        // some other system dialog later.
+        SleepAccessibilityService.autoConfirmProjection = true
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            SleepAccessibilityService.autoConfirmProjection = false
+        }, 5_000L)
+
+        // 1) Get user consent via the system MediaProjection dialog.
+        //    The activity hands the result back through a static callback,
+        //    which then either starts the streamer or replies with ERR.
+        ProjectionConsentActivity.pendingResult = { code, data ->
+            if (code != Activity.RESULT_OK || data == null) {
+                sendLine("LIVE_SCREEN_ERR", "consent_denied")
+                Log.i(TAG, "LIVE_SCREEN consent denied")
+            } else {
+                screenLiveSession.setConsent(code, data)
+                Thread {
+                    when (val st = screenLiveSession.start(onUserRevoked = {
+                        sendLine("LIVE_SCREEN_ERR", "user_revoked")
+                    })) {
+                        is ScreenLiveSession.Status.Started -> {
+                            sendLine("LIVE_SCREEN_URL", st.url)
+                            Log.i(TAG, "LIVE_SCREEN_START → ${st.url}")
+                        }
+                        ScreenLiveSession.Status.NoWifi ->
+                            sendLine("LIVE_SCREEN_ERR", "no_wifi")
+                        ScreenLiveSession.Status.NoConsent ->
+                            sendLine("LIVE_SCREEN_ERR", "consent_denied")
+                        ScreenLiveSession.Status.CaptureFailed ->
+                            sendLine("LIVE_SCREEN_ERR", "capture_failed")
+                    }
+                }.apply { isDaemon = true; start() }
+            }
+        }
+        try {
+            val intent = Intent(this, ProjectionConsentActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not launch ProjectionConsentActivity: ${e.message}")
+            ProjectionConsentActivity.pendingResult = null
+            sendLine("LIVE_SCREEN_ERR", "launch_failed")
+        }
+    }
+
+    private fun handleLiveScreenStop() {
+        screenLiveSession.stop()
+        releaseScreenMirrorWakeLock()
+        Log.i(TAG, "LIVE_SCREEN_STOP")
+    }
+
+    /** Held while the phone has the "keep glass screen on" toggle on
+     *  during a live mirror session. Released by handleLiveScreenStop
+     *  and closeAll so we never leak a lock past disconnect. */
+    private var screenMirrorWakeLock: PowerManager.WakeLock? = null
+
+    private fun handleLiveScreenKeepAwake(enabled: Boolean) {
+        if (enabled) acquireScreenMirrorWakeLock()
+        else releaseScreenMirrorWakeLock()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun acquireScreenMirrorWakeLock() {
+        if (screenMirrorWakeLock?.isHeld == true) return
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                "GlassHole:ScreenMirrorAwake"
+            )
+            wl.setReferenceCounted(false)
+            wl.acquire()
+            screenMirrorWakeLock = wl
+            Log.i(TAG, "screen-mirror wake lock acquired")
+        } catch (e: Exception) {
+            Log.w(TAG, "screen-mirror wake lock failed: ${e.message}")
+        }
+    }
+
+    private fun releaseScreenMirrorWakeLock() {
+        try {
+            screenMirrorWakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+        } catch (_: Exception) {}
+        if (screenMirrorWakeLock != null) {
+            Log.i(TAG, "screen-mirror wake lock released")
+        }
+        screenMirrorWakeLock = null
+    }
+
+    private fun batteryHealthString(health: Int): String = when (health) {
+        BatteryManager.BATTERY_HEALTH_COLD -> "cold"
+        BatteryManager.BATTERY_HEALTH_DEAD -> "dead"
+        BatteryManager.BATTERY_HEALTH_GOOD -> "good"
+        BatteryManager.BATTERY_HEALTH_OVERHEAT -> "overheat"
+        BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "over-voltage"
+        BatteryManager.BATTERY_HEALTH_UNKNOWN -> "unknown"
+        BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "failure"
+        else -> "unknown ($health)"
+    }
+
+    private fun batteryPluggedString(plugged: Int): String = when (plugged) {
+        0 -> "not plugged"
+        BatteryManager.BATTERY_PLUGGED_AC -> "AC"
+        BatteryManager.BATTERY_PLUGGED_USB -> "USB"
+        BatteryManager.BATTERY_PLUGGED_WIRELESS -> "wireless"
+        else -> "unknown ($plugged)"
     }
 
     /**
@@ -564,6 +1133,20 @@ class BluetoothListenerService : Service() {
                     line == "INFO_REQ" -> {
                         sendInfo()
                     }
+                    line == "PLUGIN_LIST_REQ" -> {
+                        // Phone-side BridgeService instances request a
+                        // re-send when they bind — handles the case where
+                        // the phone process restarted but the BT socket
+                        // survived (so the once-per-connect send was
+                        // missed).
+                        sendPluginList()
+                    }
+                    line == "DEVICE_INFO_REQ" -> {
+                        sendDeviceInfo()
+                    }
+                    line == "BATTERY_INFO_REQ" -> {
+                        sendBatteryInfo()
+                    }
                     line.startsWith("HOME_TZ:") -> {
                         val tz = line.removePrefix("HOME_TZ:").trim()
                         if (tz.isNotEmpty()) {
@@ -583,6 +1166,14 @@ class BluetoothListenerService : Service() {
                     line.startsWith("UNINSTALL:") -> {
                         handleUninstall(line.removePrefix("UNINSTALL:"))
                     }
+                    line == "LIVE_CAM_START" -> handleLiveCamStart()
+                    line == "LIVE_CAM_STOP" -> handleLiveCamStop()
+                    line == "LIVE_SCREEN_START" -> handleLiveScreenStart()
+                    line == "LIVE_SCREEN_STOP" -> handleLiveScreenStop()
+                    line.startsWith("LIVE_SCREEN_KEEP_AWAKE:") ->
+                        handleLiveScreenKeepAwake(
+                            line.removePrefix("LIVE_SCREEN_KEEP_AWAKE:").trim() == "1"
+                        )
                     else -> {
                         messageListener?.onMessageReceived(line)
                     }
@@ -640,6 +1231,9 @@ class BluetoothListenerService : Service() {
         } else {
             // Fallback: try broadcast for plugins that use broadcast instead of AIDL
             val intent = Intent(GlassPluginConstants.ACTION_MESSAGE_FROM_PHONE).apply {
+                // Bypass the package-stopped state so manifest receivers
+                // in killed plugin apps still wake on phone-side OPENs.
+                addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
                 putExtra(GlassPluginConstants.EXTRA_PLUGIN_ID, pluginId)
                 putExtra(GlassPluginConstants.EXTRA_MESSAGE_TYPE, type)
                 putExtra(GlassPluginConstants.EXTRA_PAYLOAD, payload)
@@ -682,6 +1276,7 @@ class BluetoothListenerService : Service() {
                 putExtra("title", obj.optString("title", ""))
                 putExtra("text", obj.optString("text", ""))
                 putExtra("icon", obj.optString("icon", ""))
+                putExtra("title_icon", obj.optString("title_icon", ""))
                 putExtra("picture", obj.optString("picture", ""))
                 putExtra("key", obj.optString("key", ""))
                 if (obj.has("actions")) {

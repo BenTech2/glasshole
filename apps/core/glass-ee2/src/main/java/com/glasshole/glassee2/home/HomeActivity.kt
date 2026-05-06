@@ -581,7 +581,8 @@ class HomeActivity : Activity() {
                 // registers shorter swipes than a phone screen.
                 if (absDx > 60 && absDx > absDy) {
                     val current = pager.currentItem
-                    val delta = if (dx > 0) 1 else -1
+                    val fwd = fwdSign()
+                    val delta = if (dx > 0) fwd else -fwd
                     val target = (current + delta).coerceIn(0, cardAdapter.itemCount - 1)
                     if (target != current) pager.setCurrentItem(target, true)
                     return true
@@ -614,11 +615,12 @@ class HomeActivity : Activity() {
             // SHIFT+TAB (Android's "previous focus" convention). XE/EE1
             // may send DPAD_LEFT / DPAD_RIGHT directly — keep those too.
             KeyEvent.KEYCODE_TAB -> {
-                if (event?.isShiftPressed == true) navigateCard(-1) else navigateCard(1)
+                val fwd = fwdSign()
+                navigateCard(if (event?.isShiftPressed == true) -fwd else fwd)
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { navigateCard(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { navigateCard(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { navigateCard(fwdSign()); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { navigateCard(-fwdSign()); true }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> {
                 // Consume the shift modifier that arrives just before the
                 // TAB in the swipe-back combo — nothing to do, but we don't
@@ -629,7 +631,39 @@ class HomeActivity : Activity() {
                 handleCardTap()
                 true
             }
+            // Fallback when the accessibility service isn't enabled —
+            // a11y consumes the key first when it IS enabled, so this
+            // only fires for users who never flipped the a11y toggle.
+            // No hold-to-record support on this fallback path; that
+            // requires the global keyDown/keyUp tracking the a11y
+            // service does. KEYCODE_FOCUS (half-press) consumed for
+            // symmetry so the framework doesn't treat it as focus nav.
+            KeyEvent.KEYCODE_CAMERA, KeyEvent.KEYCODE_FOCUS -> {
+                launchQuickCapture()
+                true
+            }
             else -> super.onKeyDown(keyCode, event)
+        }
+    }
+
+    private fun launchQuickCapture() {
+        val intent = Intent(Intent.ACTION_CAMERA_BUTTON).apply {
+            setPackage("com.glasshole.plugin.camera2.glass")
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Plugin not installed — fall back to the standard "still
+            // image" intent, which any default camera will handle.
+            try {
+                startActivity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            } catch (_: Exception) {}
         }
     }
 
@@ -699,4 +733,11 @@ class HomeActivity : Activity() {
         val target = (current + delta).coerceIn(0, cardAdapter.itemCount - 1)
         if (target != current) pager.setCurrentItem(target, true)
     }
+
+    /** +1 for the project default (forward swipe / TAB / DPAD_RIGHT
+     *  goes to the NEXT item) or -1 if the user has flipped the
+     *  "Invert glass navigation" toggle on the phone. Read fresh on
+     *  each gesture so the toggle takes effect without restarting. */
+    private fun fwdSign(): Int =
+        if (com.glasshole.glassee2.BaseSettings.isNavInverted(this)) -1 else 1
 }

@@ -75,4 +75,16 @@ object BaseSettings {
     /** When set, the Home carousel snaps back to the Time card on every
      *  screen-on event so the user always re-enters from a known position. */
     const val KEY_WAKE_TO_TIME_CARD = "wake_to_time_card"
+    /** User-facing inversion toggle for navigation gestures across
+     *  every base-app cover-flow / drawer surface. Read at gesture-time
+     *  so flipping the toggle on the phone takes effect immediately. */
+    const val KEY_INVERT_NAV = "invert_nav"
+    /** Mirrors the system "Stay awake" developer toggle. See the EE2
+     *  copy of this file for the WRITE_SECURE_SETTINGS adb-grant
+     *  command. */
+    const val KEY_STAY_AWAKE_WHEN_CHARGING = "stay_awake_when_charging"
+
+    fun isNavInverted(context: android.content.Context): Boolean =
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY_INVERT_NAV, false)
 }

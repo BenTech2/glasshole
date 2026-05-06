@@ -15,6 +15,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
+import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
@@ -72,6 +73,22 @@ class CameraActivity : Activity() {
     companion object {
         private const val TAG = "Camera2Glass"
         private const val REQUEST_PERMS = 101
+        /** Sent by the accessibility service when the user has started
+         *  press-and-holding the camera key globally (past the long-press
+         *  threshold). The activity opens straight into recording mode. */
+        const val ACTION_RECORD_HOLD =
+            "com.glasshole.plugin.camera2.glass.action.RECORD_HOLD"
+        /** Sent by the accessibility service when the user releases the
+         *  camera key after a long-press hold. The activity stops the
+         *  in-flight recording and saves the clip. */
+        const val ACTION_STOP_RECORDING =
+            "com.glasshole.plugin.camera2.glass.action.STOP_RECORDING"
+        /** Phone-triggered timed recording. Activity opens straight into
+         *  recording mode, runs for [EXTRA_DURATION_MS], then stops and
+         *  finishes itself (one-shot semantics). */
+        const val ACTION_RECORD_TIMED =
+            "com.glasshole.plugin.camera2.glass.action.RECORD_TIMED"
+        const val EXTRA_DURATION_MS = "duration_ms"
         // WRITE_EXTERNAL_STORAGE is only a runtime permission on API ≤ 28.
         // On API 29+ scoped storage lets us write to DCIM without it, so we
         // build the list dynamically.
@@ -111,8 +128,55 @@ class CameraActivity : Activity() {
 
     // --- Long-press detection ---
     private var keyDownTime = 0L
+    /** Distinguishes "we observed a real keyDown in this activity" from
+     *  "an orphan keyUp landed on us because the launching activity ate
+     *  the keyDown" (e.g. HomeActivity catching KEYCODE_CAMERA to launch
+     *  us in the first place). Without this, an orphan keyUp on a
+     *  freshly-launched CameraActivity is interpreted as a long press
+     *  (since keyDownTime is still 0, `now - 0` clears every threshold)
+     *  and starts video recording instead of taking a still. */
+    private var keyDownTracked = false
     private val longPressThresholdMs: Long
         get() = settingsPrefs.getInt("long_press_ms", 500).toLong()
+
+    /** Hold-to-record: while the camera/center key is held past the
+     *  long-press threshold, this runnable fires on the main thread and
+     *  flips the activity into recording mode. The matching keyUp stops
+     *  recording and saves the clip. */
+    private val longPressHandler = Handler(Looper.getMainLooper())
+    private val longPressRecordTrigger = Runnable {
+        if (!isRecording) {
+            recordingArmed = true
+            Log.i(TAG, "Long-press trigger fired — arming recording")
+            startRecording()
+        }
+    }
+    /** Bridges the gap between the trigger firing (which kicks off an
+     *  async camera-session reconfigure) and `isRecording` actually
+     *  flipping to true once the recorder is running. If the user
+     *  releases the button during that window we still want to honor
+     *  the gesture: keyUp checks this flag, and startRecording's
+     *  onConfigured callback aborts the recorder if the flag has been
+     *  cleared (user released during configure). */
+    @Volatile private var recordingArmed = false
+
+    /** Set when the activity is launched with ACTION_RECORD_HOLD —
+     *  tells the camera-open path to skip preview and go straight to
+     *  recording. Cleared once consumed. */
+    private var recordOnReady = false
+
+    /** Set when the activity was launched by the camera button (still
+     *  or hold-to-record). After the capture completes we auto-finish
+     *  so the user ends up back on whatever was foreground when they
+     *  hit the button, instead of stranded on the camera preview. */
+    private var oneShotMode = false
+
+    /** Duration of a phone-triggered timed recording. Set when the
+     *  activity is launched with ACTION_RECORD_TIMED; the
+     *  startRecording onConfigured callback schedules a stopRecording
+     *  this many ms later. 0 means "no timed stop" (i.e. not in
+     *  timed-record mode). */
+    private var timedRecordDurationMs = 0L
 
     private val settingsPrefs by lazy {
         getSharedPreferences(Camera2PluginService.PREFS_NAME, MODE_PRIVATE)
@@ -160,6 +224,28 @@ class CameraActivity : Activity() {
         quickCaptureMode = intent?.action in quickCaptureTriggerActions &&
             settingsPrefs.getBoolean("quick_capture", true)
         quickCaptureArmed = quickCaptureMode
+
+        // Hold-to-record launch path: accessibility service sends us
+        // ACTION_RECORD_HOLD when the user has been holding the camera
+        // key past the long-press threshold globally. Skip preview and
+        // start recording the moment the camera device is open.
+        // ACTION_RECORD_TIMED is the phone-triggered cousin — fixed
+        // duration instead of held until release.
+        if (intent?.action == ACTION_RECORD_HOLD ||
+            intent?.action == ACTION_RECORD_TIMED) {
+            recordOnReady = true
+            recordingArmed = true
+        }
+        if (intent?.action == ACTION_RECORD_TIMED) {
+            timedRecordDurationMs = intent.getLongExtra(EXTRA_DURATION_MS, 5_000L)
+        }
+
+        // Any one-shot launch (camera-button still, hold-to-record,
+        // phone-triggered timed record) auto-finishes after the
+        // capture/clip is saved.
+        oneShotMode = quickCaptureMode ||
+            intent?.action == ACTION_RECORD_HOLD ||
+            intent?.action == ACTION_RECORD_TIMED
 
         backGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(
@@ -292,10 +378,66 @@ class CameraActivity : Activity() {
     }
 
     override fun onPause() {
+        // Drop any pending hold-to-record trigger so it can't fire
+        // after the activity has stopped owning the camera.
+        longPressHandler.removeCallbacks(longPressRecordTrigger)
+        keyDownTracked = false
+        recordingArmed = false
         if (isRecording) stopRecording()
         closeCamera()
         stopBackgroundThread()
         super.onPause()
+    }
+
+    /**
+     * Routes accessibility-service driven actions (ACTION_RECORD_HOLD,
+     * ACTION_STOP_RECORDING, ACTION_CAMERA_BUTTON) when the activity is
+     * already foreground. singleTask launchMode means subsequent
+     * startActivity calls land here instead of recreating us.
+     */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        when (intent?.action) {
+            ACTION_RECORD_HOLD -> {
+                Log.i(TAG, "onNewIntent: RECORD_HOLD")
+                if (isRecording) return
+                recordingArmed = true
+                if (cameraDevice != null) {
+                    startRecording()
+                } else {
+                    // Camera not yet open — defer to onOpened.
+                    recordOnReady = true
+                }
+            }
+            ACTION_STOP_RECORDING -> {
+                Log.i(TAG, "onNewIntent: STOP_RECORDING")
+                if (isRecording) {
+                    recordingArmed = false
+                    stopRecording()
+                } else if (recordingArmed) {
+                    // Hold released while record session was still
+                    // configuring — clear the flag so the configure
+                    // callback aborts the recorder rather than starting
+                    // a clip the user can't see.
+                    recordingArmed = false
+                }
+            }
+            Intent.ACTION_CAMERA_BUTTON,
+            MediaStore.ACTION_IMAGE_CAPTURE,
+            MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA -> {
+                Log.i(TAG, "onNewIntent: still capture")
+                if (isRecording) return
+                if (captureSession != null && cameraDevice != null) {
+                    captureStillPicture()
+                } else {
+                    // Session not up yet — let the warm-frames path in
+                    // createPreviewSession's preview callback fire it.
+                    quickCaptureMode = true
+                    quickCaptureArmed = true
+                }
+            }
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -346,6 +488,12 @@ class CameraActivity : Activity() {
 
     // --- Camera open / close ---
     private fun openCamera(width: Int, height: Int) {
+        // If the camera is already open the existing session is still
+        // valid; a re-open here would close it and racing surfaces.
+        if (cameraDevice != null) {
+            Log.d(TAG, "openCamera: already open, skipping")
+            return
+        }
         val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
             cameraId = manager.cameraIdList.firstOrNull {
@@ -361,8 +509,20 @@ class CameraActivity : Activity() {
                 it.width <= 1280 && it.height <= 720
             } ?: Size(1280, 720)
 
-            imageReader = ImageReader.newInstance(largestJpeg.width, largestJpeg.height, ImageFormat.JPEG, 2).apply {
-                setOnImageAvailableListener(onImageAvailableListener, backgroundHandler)
+            // Don't replace an existing reader — Glass fires
+            // onSurfaceTextureAvailable a second time during initial
+            // layout, and a second openCamera() would otherwise blow
+            // away the surface that was just registered with the active
+            // capture session, causing every still-capture request to
+            // raise IllegalArgumentException ("Surface that is not part
+            // of current capture session"). closeCamera() owns the
+            // teardown.
+            if (imageReader == null) {
+                imageReader = ImageReader.newInstance(
+                    largestJpeg.width, largestJpeg.height, ImageFormat.JPEG, 2
+                ).apply {
+                    setOnImageAvailableListener(onImageAvailableListener, backgroundHandler)
+                }
             }
 
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -401,7 +561,13 @@ class CameraActivity : Activity() {
         override fun onOpened(camera: CameraDevice) {
             cameraOpenCloseLock.release()
             cameraDevice = camera
-            createPreviewSession()
+            if (recordOnReady) {
+                recordOnReady = false
+                Log.i(TAG, "onOpened: jumping straight to recording (hold-to-record)")
+                startRecording()
+            } else {
+                createPreviewSession()
+            }
         }
         override fun onDisconnected(camera: CameraDevice) {
             cameraOpenCloseLock.release()
@@ -438,12 +604,18 @@ class CameraActivity : Activity() {
                             CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
                         )
                         try {
-                            // In quick-capture mode we listen for the first
-                            // preview result, then fire the still immediately.
-                            // That gives AE one frame to converge — still under
-                            // ~200ms total — without waiting for an explicit
-                            // precapture sequence that Glass's fixed-focus
-                            // sensor doesn't meaningfully benefit from.
+                            // Quick-capture: count a handful of preview
+                            // frames before firing the still. On EE2 the
+                            // JPEG ImageReader's surface isn't fully
+                            // attached to the session's output set on the
+                            // very first onCaptureCompleted callback —
+                            // submitting a still-capture targeting that
+                            // surface raised IllegalArgumentException
+                            // ("Surface that is not part of current
+                            // capture session"). Waiting ~3 frames
+                            // (~100 ms) lets the HAL settle without
+                            // perceptibly slowing the trigger.
+                            var warmFrames = 0
                             val previewCallback = if (quickCaptureArmed) {
                                 object : CameraCaptureSession.CaptureCallback() {
                                     override fun onCaptureCompleted(
@@ -451,7 +623,9 @@ class CameraActivity : Activity() {
                                         request: CaptureRequest,
                                         result: TotalCaptureResult
                                     ) {
-                                        if (quickCaptureArmed) {
+                                        if (!quickCaptureArmed) return
+                                        warmFrames++
+                                        if (warmFrames >= 3) {
                                             quickCaptureArmed = false
                                             runOnUiThread { captureStillPicture() }
                                         }
@@ -476,17 +650,56 @@ class CameraActivity : Activity() {
 
     private fun applyModeFlags(builder: CaptureRequest.Builder) {
         builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+        applyLedControl(builder)
+    }
+
+    /**
+     * Sets `CaptureRequest.LED_TRANSMIT = OFF` if the user has toggled
+     * the privacy-LED override and we hold the
+     * CAMERA_DISABLE_TRANSMIT_LED permission. The Key field is `@hide`,
+     * so we read it via reflection — Camera2 quietly ignores unknown
+     * keys, and the camera HAL on stock Glass EE2 doesn't advertise
+     * LED_TRANSMIT in LED_AVAILABLE_LEDS anyway, so this is a no-op
+     * there. Mechanism is in place for any future privileged build.
+     */
+    private fun applyLedControl(builder: CaptureRequest.Builder) {
+        val prefs = getSharedPreferences(Camera2PluginService.PREFS_NAME, MODE_PRIVATE)
+        if (!prefs.getBoolean(Camera2PluginService.KEY_DISABLE_LED, false)) return
+        if (checkSelfPermission(Camera2PluginService.PERM_DISABLE_LED) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        try {
+            val ledKey = CaptureRequest::class.java
+                .getDeclaredField("LED_TRANSMIT")
+                .apply { isAccessible = true }
+                .get(null)
+            @Suppress("UNCHECKED_CAST")
+            builder.set(ledKey as CaptureRequest.Key<Byte>, 0.toByte())
+            Log.d(TAG, "LED_TRANSMIT set to OFF on capture builder")
+        } catch (e: Exception) {
+            Log.d(TAG, "LED_TRANSMIT reflection skipped: ${e.message}")
+        }
     }
 
     // --- Still capture ---
     private fun captureStillPicture() {
         try {
-            val device = cameraDevice ?: return
-            val session = captureSession ?: return
+            val device = cameraDevice ?: run {
+                Log.w(TAG, "captureStillPicture: cameraDevice null, dropping capture")
+                return
+            }
+            val session = captureSession ?: run {
+                Log.w(TAG, "captureStillPicture: captureSession null, dropping capture")
+                return
+            }
+            val reader = imageReader ?: run {
+                Log.w(TAG, "captureStillPicture: imageReader null, dropping capture")
+                return
+            }
+            Log.i(TAG, "captureStillPicture: submitting capture")
             statusText.text = "Capturing…"
 
             val captureBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
-            captureBuilder.addTarget(imageReader!!.surface)
+            captureBuilder.addTarget(reader.surface)
             applyModeFlags(captureBuilder)
             captureBuilder.set(
                 CaptureRequest.CONTROL_AF_MODE,
@@ -500,14 +713,56 @@ class CameraActivity : Activity() {
                     request: CaptureRequest,
                     result: TotalCaptureResult
                 ) {
+                    Log.i(TAG, "captureStillPicture: onCaptureCompleted")
                     runOnUiThread { statusText.text = "Saved" }
                     // Restart preview
                     createPreviewSession()
                 }
+                override fun onCaptureFailed(
+                    session: CameraCaptureSession,
+                    request: CaptureRequest,
+                    failure: CaptureFailure
+                ) {
+                    Log.w(TAG, "captureStillPicture: onCaptureFailed reason=${failure.reason} frame=${failure.frameNumber}")
+                    runOnUiThread { statusText.text = "Capture failed — tap again" }
+                }
+                override fun onCaptureSequenceAborted(
+                    session: CameraCaptureSession,
+                    sequenceId: Int
+                ) {
+                    Log.w(TAG, "captureStillPicture: onCaptureSequenceAborted seq=$sequenceId")
+                    runOnUiThread { statusText.text = "Capture aborted — tap again" }
+                }
             }, backgroundHandler)
         } catch (e: CameraAccessException) {
-            Log.e(TAG, "captureStillPicture: ${e.message}")
+            Log.e(TAG, "captureStillPicture CameraAccessException: ${e.message}")
+            recoverFromCaptureFailure()
+        } catch (e: IllegalArgumentException) {
+            // The session's output surface set went stale before the
+            // request landed (typical on EE2 when quick-capture fires too
+            // soon after session config — Glass's HAL appears to detach
+            // the JPEG reader between configure and the first repeating-
+            // result callback). Don't crash; rebuild the session and let
+            // the user tap to capture instead.
+            Log.w(TAG, "captureStillPicture surface mismatch: ${e.message}")
+            recoverFromCaptureFailure()
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "captureStillPicture session closed: ${e.message}")
+            recoverFromCaptureFailure()
         }
+    }
+
+    private fun recoverFromCaptureFailure() {
+        runOnUiThread {
+            statusText.text = "Tap to capture"
+            quickCaptureOverlay.visibility = View.GONE
+        }
+        // Drop the quick-capture flag so subsequent preview frames don't
+        // re-enter the failing path. The session itself is still healthy
+        // for tap-to-capture, since recreating it is heavy and we'd lose
+        // the user's chance to retry quickly.
+        quickCaptureArmed = false
+        quickCaptureMode = false
     }
 
     private val onImageAvailableListener = ImageReader.OnImageAvailableListener { reader ->
@@ -622,16 +877,44 @@ class CameraActivity : Activity() {
                 object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
                         captureSession = session
+                        // If the user already released the button while
+                        // we were configuring, abort the recorder and
+                        // resume preview rather than start a clip
+                        // they didn't actually mean to record.
+                        if (!recordingArmed) {
+                            Log.i(TAG, "Record session configured but hold released — aborting")
+                            try { mediaRecorder?.reset() } catch (_: Exception) {}
+                            try { mediaRecorder?.release() } catch (_: Exception) {}
+                            mediaRecorder = null
+                            currentVideoFile?.delete()
+                            currentVideoFile = null
+                            runOnUiThread { createPreviewSession() }
+                            return
+                        }
                         session.setRepeatingRequest(recordBuilder.build(), null, backgroundHandler)
                         runOnUiThread {
                             isRecording = true
                             mediaRecorder?.start()
                             statusText.text = "● Recording…"
                             updateModeText()
+                            // Phone-triggered timed recording: schedule
+                            // an auto-stop now that the recorder is
+                            // really running. We can't schedule earlier
+                            // because mediaRecorder.stop() before start
+                            // raises IllegalStateException.
+                            if (timedRecordDurationMs > 0L) {
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    if (isRecording) {
+                                        recordingArmed = false
+                                        stopRecording()
+                                    }
+                                }, timedRecordDurationMs)
+                            }
                         }
                     }
                     override fun onConfigureFailed(session: CameraCaptureSession) {
                         Log.e(TAG, "Record session configure failed")
+                        recordingArmed = false
                     }
                 },
                 backgroundHandler
@@ -658,7 +941,14 @@ class CameraActivity : Activity() {
         statusText.text = "Saved ${currentVideoFile?.name ?: "video"}"
         currentVideoFile = null
         updateModeText()
-        createPreviewSession()
+        if (oneShotMode) {
+            // Match the still-capture path: brief confirmation, then
+            // dismiss so the user lands back on whatever screen they
+            // were on when they triggered the hold-to-record.
+            Handler(Looper.getMainLooper()).postDelayed({ finish() }, 1200)
+        } else {
+            createPreviewSession()
+        }
     }
 
     private fun closeCameraSessionOnly() {
@@ -670,7 +960,14 @@ class CameraActivity : Activity() {
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         return when (keyCode) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_CAMERA -> {
-                if (event?.repeatCount == 0) keyDownTime = System.currentTimeMillis()
+                if (event?.repeatCount == 0) {
+                    keyDownTime = System.currentTimeMillis()
+                    keyDownTracked = true
+                    // Hold-to-record: arm a delayed recording trigger.
+                    // Cancelled in onKeyUp if the user released first.
+                    longPressHandler.removeCallbacks(longPressRecordTrigger)
+                    longPressHandler.postDelayed(longPressRecordTrigger, longPressThresholdMs)
+                }
                 true
             }
             KeyEvent.KEYCODE_BACK -> {
@@ -689,12 +986,37 @@ class CameraActivity : Activity() {
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         return when (keyCode) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_CAMERA -> {
-                val held = System.currentTimeMillis() - keyDownTime
-                if (held >= longPressThresholdMs) {
-                    if (isRecording) stopRecording() else startRecording()
-                } else {
-                    if (!isRecording) captureStillPicture()
+                // Cancel the pending recording trigger; if it already
+                // fired we'll fall through to the recording branch.
+                longPressHandler.removeCallbacks(longPressRecordTrigger)
+
+                when {
+                    isRecording -> {
+                        // Recording is fully running — release saves it.
+                        recordingArmed = false
+                        stopRecording()
+                    }
+                    recordingArmed -> {
+                        // Trigger fired but the recording session is
+                        // still configuring. Drop the flag — the
+                        // configure callback will see it cleared and
+                        // abort the recorder rather than starting a
+                        // 0-second clip.
+                        Log.i(TAG, "Released during record-configure — aborting recording")
+                        recordingArmed = false
+                    }
+                    !keyDownTracked -> {
+                        // Orphan keyUp — the launching activity ate the
+                        // down. Treat as a quick still capture.
+                        captureStillPicture()
+                    }
+                    else -> {
+                        // Released before the long-press threshold —
+                        // quick still capture.
+                        captureStillPicture()
+                    }
                 }
+                keyDownTracked = false
                 true
             }
             else -> super.onKeyUp(keyCode, event)

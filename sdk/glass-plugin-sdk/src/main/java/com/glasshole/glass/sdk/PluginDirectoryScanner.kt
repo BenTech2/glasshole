@@ -29,7 +29,12 @@ object PluginDirectoryScanner {
         val name: String,
         val description: String,
         val version: String,
-        val hasSchema: Boolean
+        val hasSchema: Boolean,
+        /** True when the plugin's APK declares an Activity with
+         *  ACTION_MAIN + CATEGORY_LAUNCHER. The phone uses this to
+         *  decide whether to show a quick-launch icon — silent
+         *  plugins (workers, broadcast routers) hide the icon. */
+        val hasLauncher: Boolean
     )
 
     fun scan(context: Context): List<Entry> {
@@ -53,6 +58,7 @@ object PluginDirectoryScanner {
             val description = md.getString(GlassPluginConstants.META_PLUGIN_DESCRIPTION) ?: ""
             val version = packageInfo?.versionName ?: ""
             val schemaRes = md.getInt(GlassPluginConstants.META_PLUGIN_SCHEMA, 0)
+            val hasLauncher = pm.getLaunchIntentForPackage(pkg) != null
 
             out.add(
                 Entry(
@@ -61,7 +67,8 @@ object PluginDirectoryScanner {
                     name = name,
                     description = description,
                     version = version,
-                    hasSchema = schemaRes != 0
+                    hasSchema = schemaRes != 0,
+                    hasLauncher = hasLauncher
                 )
             )
         }
@@ -80,6 +87,7 @@ object PluginDirectoryScanner {
                     .put("description", e.description)
                     .put("version", e.version)
                     .put("has_schema", e.hasSchema)
+                    .put("has_launcher", e.hasLauncher)
             )
         }
         return arr.toString()

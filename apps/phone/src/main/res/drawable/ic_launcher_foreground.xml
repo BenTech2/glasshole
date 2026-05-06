@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive-icon foreground. The orb itself fills ~95% of the source
+  image, so dropping it straight onto the 108dp adaptive-icon canvas
+  leaves no room for the device's circular/squircle launcher mask —
+  the outer ring of the orb gets cropped and the icon looks zoomed.
+
+  Wrapping the bitmap in an inset of 20dp on every side yields a
+  visible 68dp area on a 108dp canvas. With the orb at 95% of that
+  inner area we get ~64dp diameter, comfortably inside the 66dp
+  guaranteed-visible safe zone (and inside the 72dp typical mask
+  viewport too).
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/glasshole_logo"
+    android:insetLeft="20dp"
+    android:insetTop="20dp"
+    android:insetRight="20dp"
+    android:insetBottom="20dp" />

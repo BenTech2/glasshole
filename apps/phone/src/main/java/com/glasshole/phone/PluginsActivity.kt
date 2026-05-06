@@ -36,7 +36,8 @@ class PluginsActivity : AppCompatActivity() {
     // These are data-viewer activities (note list, calc history), not settings.
     private val phoneCompanions: Map<String, Class<*>> = mapOf(
         "com.glasshole.plugin.notes.glass" to NotesActivity::class.java,
-        "com.glasshole.plugin.calc.glass" to CalcHistoryActivity::class.java
+        "com.glasshole.plugin.calc.glass" to CalcHistoryActivity::class.java,
+        "com.glasshole.plugin.ssh.glass" to com.glasshole.phone.plugins.ssh.SshActivity::class.java
     )
 
     private lateinit var listContainer: LinearLayout
@@ -118,6 +119,25 @@ class PluginsActivity : AppCompatActivity() {
                 openBtn.setOnClickListener { startActivity(Intent(this, companion)) }
             } else {
                 openBtn.visibility = View.GONE
+            }
+
+            val launchBtn = row.findViewById<ImageButton>(R.id.pluginLaunchButton)
+            if (e.hasLauncher) {
+                launchBtn.visibility = View.VISIBLE
+                launchBtn.setOnClickListener {
+                    val bridge = bridgeService
+                    if (bridge == null || !bridge.isConnected) {
+                        android.widget.Toast.makeText(
+                            this, "Glass not connected", android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        return@setOnClickListener
+                    }
+                    val payload = org.json.JSONObject()
+                        .put("pkg", e.packageName).toString()
+                    bridge.sendPluginMessage("base", "LAUNCH_PACKAGE", payload)
+                }
+            } else {
+                launchBtn.visibility = View.GONE
             }
 
             val settingsBtn = row.findViewById<ImageButton>(R.id.pluginSettingsButton)

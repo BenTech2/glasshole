@@ -135,12 +135,12 @@ class NotificationDrawerActivity : Activity() {
         return when (keyCode) {
             KeyEvent.KEYCODE_BACK -> { finish(); true }
             KeyEvent.KEYCODE_TAB -> {
-                val dir = if (event?.isShiftPressed == true) -1 else 1
-                navigatePage(dir)
+                val fwd = fwdSign()
+                navigatePage(if (event?.isShiftPressed == true) -fwd else fwd)
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { navigatePage(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { navigatePage(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { navigatePage(fwdSign()); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { navigatePage(-fwdSign()); true }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                 showOverlay(); true
@@ -153,11 +153,12 @@ class NotificationDrawerActivity : Activity() {
         return when (keyCode) {
             KeyEvent.KEYCODE_BACK -> { hideOverlay(); true }
             KeyEvent.KEYCODE_TAB -> {
-                cycleOverlaySelection(if (event?.isShiftPressed == true) -1 else 1)
+                val fwd = fwdSign()
+                cycleOverlaySelection(if (event?.isShiftPressed == true) -fwd else fwd)
                 true
             }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { cycleOverlaySelection(1); true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { cycleOverlaySelection(-1); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { cycleOverlaySelection(fwdSign()); true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { cycleOverlaySelection(-fwdSign()); true }
             KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> true
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                 executeOverlaySelection()
@@ -387,6 +388,16 @@ class NotificationDrawerActivity : Activity() {
             if (e.iconBitmap != null) icon?.setImageBitmap(e.iconBitmap)
             else icon?.setImageDrawable(null)
 
+            val titleIcon = holder.itemView.findViewById<ImageView>(R.id.pageTitleIcon)
+            if (titleIcon != null) {
+                if (e.titleIconBitmap != null) {
+                    titleIcon.setImageBitmap(e.titleIconBitmap)
+                    titleIcon.visibility = View.VISIBLE
+                } else {
+                    titleIcon.visibility = View.GONE
+                }
+            }
+
             val picture = holder.itemView.findViewById<ImageView>(R.id.pagePicture)
             val gradient = holder.itemView.findViewById<View>(R.id.pagePictureGradient)
             val topSpacer = holder.itemView.findViewById<View>(R.id.pageTopSpacer)
@@ -423,4 +434,8 @@ class NotificationDrawerActivity : Activity() {
     }
 
     private class PageHolder(view: View) : RecyclerView.ViewHolder(view)
+
+    /** +1 default, -1 when "Invert glass nav" is on. */
+    private fun fwdSign(): Int =
+        if (com.glasshole.glassee2.BaseSettings.isNavInverted(this)) -1 else 1
 }

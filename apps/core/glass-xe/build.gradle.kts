@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+extra["versionFamily"] = listOf(":glass-ee1", ":glass-ee2", ":glass-xe")
+apply(from = "${rootDir}/build-versioning.gradle.kts")
+
 android {
     namespace = "com.glasshole.glassxe"
     compileSdk = 34
@@ -11,8 +14,8 @@ android {
         applicationId = "com.glasshole.glassxe"
         minSdk = 19
         targetSdk = 19
-        versionCode = 4
-        versionName = "0.4.0-alpha"
+        versionCode = (project.extra["computedVersionCode"] as Int)
+        versionName = (project.extra["computedVersionName"] as String)
     }
 
     buildTypes {

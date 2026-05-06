@@ -38,6 +38,11 @@ class BridgeService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "glasshole_bridge"
         private const val HEARTBEAT_INTERVAL = 10_000L
+        // Background battery sample cadence. Coarse — we want a rolling
+        // history that survives across activity opens/closes, not a
+        // live readout. The device-info activity does its own 5s poll
+        // when it's foreground; both paths write to the same store.
+        private const val BATTERY_POLL_INTERVAL_MS = 60_000L
         // If we've heard nothing back from the glass for this long, assume
         // the glass-side socket is dead even if writes still appear to
         // succeed (BT RFCOMM buffers can mask a half-closed connection,
@@ -72,6 +77,30 @@ class BridgeService : Service() {
     private var bluetoothSocket: BluetoothSocket? = null
     private var outputStream: OutputStream? = null
     @Volatile private var btConnected = false
+    /** Latest GlassInfo from the heartbeat. The Glass Device Info
+     *  page and the BatteryHistoryStore both look up the current
+     *  device id from here. */
+    @Volatile var lastGlassInfo: GlassInfo? = null
+        private set
+    /** Stable ID for the connected glass — serial when present, falls
+     *  back to model+android. Used as the file key for
+     *  BatteryHistoryStore so each glass keeps its own log. */
+    val currentDeviceId: String
+        get() {
+            val info = lastGlassInfo ?: return ""
+            val serial = info.serial
+            if (serial.isNotBlank() && serial != "?" && serial != "unknown") return serial
+            return "${info.model}-${info.androidVersion}".trim('-').ifEmpty { "" }
+        }
+    private val batteryPollHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val batteryPollRunnable = object : Runnable {
+        override fun run() {
+            if (btConnected) {
+                requestBatteryInfo()
+                batteryPollHandler.postDelayed(this, BATTERY_POLL_INTERVAL_MS)
+            }
+        }
+    }
     @Volatile private var running = false
     private var readerThread: Thread? = null
     private var heartbeatThread: Thread? = null
@@ -105,6 +134,11 @@ class BridgeService : Service() {
     var onLog: ((String) -> Unit)? = null
     var onConnectionChanged: ((Boolean) -> Unit)? = null
     var onGlassInfo: ((GlassInfo) -> Unit)? = null
+    /** Raw DEVICE_INFO json — consumed by GlassDeviceInfoActivity. */
+    var onGlassDeviceInfo: ((String) -> Unit)? = null
+    /** Raw BATTERY_INFO json — lightweight 5s poll for the live battery
+     *  graph + values inside GlassDeviceInfoActivity. */
+    var onGlassBatteryInfo: ((String) -> Unit)? = null
     var onNotificationReply: ((String) -> Unit)? = null
 
     // APK manager callbacks
@@ -118,6 +152,16 @@ class BridgeService : Service() {
 
     // Notification forwarding callback
     var onNotificationFromGlass: ((String) -> Unit)? = null
+
+    // Debug live-stream callbacks. DebugActivity registers these for
+    // the duration of a request — the bridge forwards LIVE_*_URL on
+    // success and LIVE_*_ERR with a short machine-readable reason
+    // string on failure (no_wifi / camera_busy / unsupported_edition /
+    // consent_denied / capture_failed / user_revoked).
+    var onLiveCamUrl: ((String) -> Unit)? = null
+    var onLiveCamErr: ((String) -> Unit)? = null
+    var onLiveScreenUrl: ((String) -> Unit)? = null
+    var onLiveScreenErr: ((String) -> Unit)? = null
 
     val isConnected: Boolean get() = btConnected
 
@@ -489,6 +533,20 @@ class BridgeService : Service() {
         pluginRouter?.notifyConnectionChanged(true)
         workerManager.onConnectionChanged(true)
         updateNotification("Connected to ${device.name}")
+        // Glass auto-sends PLUGIN_LIST on socket accept, but if our
+        // process restarted while the BT socket survived (e.g. an `adb
+        // install` that didn't bring down the OS Bluetooth stack), we
+        // miss that one-shot send and the on-phone PluginDirectory
+        // stays empty. Always re-request after we know we're alive.
+        // Raw command — wrapping in MSG: would surface this as a
+        // user-visible notification on the glass.
+        sendRaw(ProtocolCodec.encodePluginListReq())
+        // Background battery sampling for the history graph. First
+        // request fires after a brief delay so the heartbeat INFO can
+        // populate lastGlassInfo first (we need a device id to file
+        // the sample under).
+        batteryPollHandler.removeCallbacks(batteryPollRunnable)
+        batteryPollHandler.postDelayed(batteryPollRunnable, 5_000L)
         notifyConnectionSuccess(device.name ?: "Glass")
 
         wireNotificationListener()
@@ -505,6 +563,7 @@ class BridgeService : Service() {
     fun disconnectBluetooth() {
         autoReconnect = false
         btConnected = false
+        batteryPollHandler.removeCallbacks(batteryPollRunnable)
         reconnectThread?.interrupt()
         reconnectThread = null
         heartbeatThread?.interrupt()
@@ -662,8 +721,37 @@ class BridgeService : Service() {
             }
             is DecodedMessage.Info -> {
                 val info = GlassInfo.fromJson(msg.json)
+                lastGlassInfo = info
                 log("Glass info: ${info.model} (battery: ${info.battery}%)")
                 onGlassInfo?.invoke(info)
+                // Heartbeat INFO already carries the battery percent —
+                // log it so the history is fresh even if the
+                // device-info activity has never been opened.
+                if (info.battery in 0..100) {
+                    val deviceId = currentDeviceId
+                    if (deviceId.isNotEmpty()) {
+                        com.glasshole.phone.widget.BatteryHistoryStore.get(this)
+                            .add(deviceId, System.currentTimeMillis(), info.battery.toFloat())
+                    }
+                }
+            }
+            is DecodedMessage.DeviceInfo -> {
+                onGlassDeviceInfo?.invoke(msg.json)
+            }
+            is DecodedMessage.BatteryInfo -> {
+                onGlassBatteryInfo?.invoke(msg.json)
+                // Persist for the history graph. The activity also
+                // calls add() from its 5s in-app poll; both writers
+                // hit the same per-device file.
+                try {
+                    val percent = org.json.JSONObject(msg.json)
+                        .opt("percent")?.toString()?.toFloatOrNull()
+                    val deviceId = currentDeviceId
+                    if (percent != null && deviceId.isNotEmpty()) {
+                        com.glasshole.phone.widget.BatteryHistoryStore.get(this)
+                            .add(deviceId, System.currentTimeMillis(), percent)
+                    }
+                } catch (_: Exception) {}
             }
             is DecodedMessage.InstallAck -> {
                 log("Install result: ${msg.status}")
@@ -697,6 +785,22 @@ class BridgeService : Service() {
                     val ok = listener.invokeAction(msg.notifKey, msg.actionId, msg.replyText)
                     log("  ${if (ok) "✓ fired" else "✗ FAILED (no pending action)"}")
                 }
+            }
+            is DecodedMessage.LiveCamUrl -> {
+                log("Live cam URL: ${msg.url}")
+                onLiveCamUrl?.invoke(msg.url)
+            }
+            is DecodedMessage.LiveCamErr -> {
+                log("Live cam err: ${msg.reason}")
+                onLiveCamErr?.invoke(msg.reason)
+            }
+            is DecodedMessage.LiveScreenUrl -> {
+                log("Live screen URL: ${msg.url}")
+                onLiveScreenUrl?.invoke(msg.url)
+            }
+            is DecodedMessage.LiveScreenErr -> {
+                log("Live screen err: ${msg.reason}")
+                onLiveScreenErr?.invoke(msg.reason)
             }
             is DecodedMessage.Pong -> { /* heartbeat alive */ }
             is DecodedMessage.Unknown -> {
@@ -732,6 +836,27 @@ class BridgeService : Service() {
     }
 
     fun requestGlassInfo() = sendRaw(ProtocolCodec.encodeInfoReq())
+
+    /** Ask Glass for the extensive device-info dump (hardware, OS,
+     *  network, advanced battery, storage, memory) used by the
+     *  Glass Device Info page. Heavier than the heartbeat INFO so
+     *  it's a separate command, polled only while that page is open. */
+    fun requestDeviceInfo(): Boolean =
+        sendRaw(ProtocolCodec.encodeDeviceInfoReq())
+
+    /** Lighter-weight battery-only refresh — just the battery section
+     *  of the device info, no kernel string / network scan / etc.
+     *  Polled every few seconds while the device-info page is open
+     *  to drive the live battery graph. */
+    fun requestBatteryInfo(): Boolean =
+        sendRaw(ProtocolCodec.encodeBatteryInfoReq())
+
+    fun sendLiveCamStart(): Boolean = sendRaw(ProtocolCodec.encodeLiveCamStart())
+    fun sendLiveCamStop(): Boolean = sendRaw(ProtocolCodec.encodeLiveCamStop())
+    fun sendLiveScreenStart(): Boolean = sendRaw(ProtocolCodec.encodeLiveScreenStart())
+    fun sendLiveScreenStop(): Boolean = sendRaw(ProtocolCodec.encodeLiveScreenStop())
+    fun sendLiveScreenKeepAwake(enabled: Boolean): Boolean =
+        sendRaw(ProtocolCodec.encodeLiveScreenKeepAwake(enabled))
 
     /** Ask Glass Home to clear its "already prompted" flag for the
      *  device-admin dialog so the next HomeActivity open re-asks. */

@@ -64,17 +64,11 @@ object NotificationReplayStore {
         save(ctx, trimmed)
     }
 
-    /** Today's (local-time) entries, newest first. */
-    fun todayNewestFirst(context: Context): List<Entry> {
-        val startOfToday = java.util.Calendar.getInstance().apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        return load(context.applicationContext)
-            .filter { it.timestampMs >= startOfToday }
-            .reversed()
+    /** All stored entries, newest first. The dropdown caps at the
+     *  user's chosen retention limit (default 100) so we don't ever
+     *  paint a runaway list. */
+    fun allNewestFirst(context: Context): List<Entry> {
+        return load(context.applicationContext).reversed()
     }
 
     fun clear(context: Context) {

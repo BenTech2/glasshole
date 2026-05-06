@@ -1,12 +1,16 @@
 package com.glasshole.plugin.gallery.glass
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.ThumbnailUtils
+import android.net.wifi.WifiManager
 import android.os.Environment
 import android.provider.MediaStore
+import android.text.format.Formatter
 import android.util.Base64
 import android.util.Log
+import com.glasshole.glass.sdk.GalleryHttpServer
 import com.glasshole.glass.sdk.GlassPluginMessage
 import com.glasshole.glass.sdk.GlassPluginService
 import org.json.JSONArray
@@ -14,6 +18,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
+import java.util.UUID
 
 /**
  * Scans the glass device for photos and videos and streams them to the phone
@@ -50,11 +55,32 @@ class GalleryGlassPluginService : GlassPluginService() {
     // id → path so GET_FULL / DELETE can resolve without round-tripping the full path
     private val mediaIndex = mutableMapOf<String, String>()
 
+    /** Persistent HTTP server. Lazily started on the first LIST_REQ
+     *  when WiFi is up; reused for the lifetime of the plugin process.
+     *  Resolves ids and generates thumbs by calling back into this
+     *  service so it doesn't have to keep its own copy of mediaIndex. */
+    private val httpServer by lazy {
+        GalleryHttpServer(
+            resolveFile = { id -> mediaIndex[id]?.let { File(it) }?.takeIf { it.exists() } },
+            generateThumbBytes = { file -> generateThumbBytes(file) }
+        )
+    }
+    @Volatile private var httpServerStarted = false
+
+    override fun onDestroy() {
+        try { httpServer.stop() } catch (_: Exception) {}
+        super.onDestroy()
+    }
+
     override fun onMessageFromPhone(message: GlassPluginMessage) {
         Log.d(TAG, "Message from phone: type=${message.type}")
         when (message.type) {
             "LIST_REQ" -> handleList()
-            "GET_FULL" -> handleGetFull(message.payload)
+            // Default GET_FULL prefers WiFi when available; falls back to
+            // BT chunks when the glass has no WiFi. Phone can re-issue
+            // GET_FULL_BT to force the chunk path if a WiFi offer fails.
+            "GET_FULL" -> handleGetFull(message.payload, allowWifi = true)
+            "GET_FULL_BT" -> handleGetFull(message.payload, allowWifi = false)
             "DELETE" -> handleDelete(message.payload)
             else -> Log.w(TAG, "Unknown message type: ${message.type}")
         }
@@ -65,9 +91,12 @@ class GalleryGlassPluginService : GlassPluginService() {
     private fun handleList() {
         Thread {
             try {
-                val items = JSONArray()
+                // Pre-scan + index. We need mediaIndex populated before
+                // touching httpServer because the server resolves ids via
+                // the index callback.
                 mediaIndex.clear()
-                scanMedia().forEach { file ->
+                val files = scanMedia()
+                val typedFiles = files.map { file ->
                     val id = shortId(file.absolutePath)
                     mediaIndex[id] = file.absolutePath
                     val ext = file.extension.lowercase()
@@ -76,6 +105,27 @@ class GalleryGlassPluginService : GlassPluginService() {
                         ext in VIDEO_EXTS -> "video"
                         else -> "file"
                     }
+                    Triple(id, type, file)
+                }
+
+                // Decide whether to advertise WiFi-LAN URLs alongside (or
+                // instead of) the inline base64 thumbs. If the glass is
+                // on WiFi we start the persistent HTTP server (idempotent)
+                // and include /file and /thumb URLs per item. The base64
+                // thumb stays in the payload as a fallback for phones
+                // that can't reach the LAN URL — small enough that the
+                // belt-and-suspenders cost is acceptable.
+                val ip = wifiIpString()
+                val wifiAvailable = ip != null
+                if (wifiAvailable) {
+                    if (!httpServerStarted) {
+                        httpServer.start()
+                        httpServerStarted = true
+                    }
+                }
+
+                val items = JSONArray()
+                for ((id, type, file) in typedFiles) {
                     val obj = JSONObject().apply {
                         put("id", id)
                         put("name", file.name)
@@ -83,19 +133,32 @@ class GalleryGlassPluginService : GlassPluginService() {
                         put("size", file.length())
                         put("ts", file.lastModified())
                         put("path", file.absolutePath)
+                        // Always send a base64 thumb as fallback — small,
+                        // and lets the gallery render even when the phone
+                        // is on a different network than the glass.
                         put("thumb", generateThumb(file, type))
+                        if (wifiAvailable && ip != null) {
+                            put("thumb_url", httpServer.thumbUrl(ip, id))
+                            put("file_url", httpServer.fileUrl(ip, id))
+                        }
                     }
                     items.put(obj)
                 }
-                // Newest first
+
+                // Newest first.
                 val sorted = JSONArray()
                 val sortable = (0 until items.length()).map { items.getJSONObject(it) }
                     .sortedByDescending { it.optLong("ts", 0L) }
                 sortable.forEach { sorted.put(it) }
 
-                val json = JSONObject().apply { put("items", sorted) }.toString()
-                sendToPhone(GlassPluginMessage("LIST", json))
-                Log.i(TAG, "Sent LIST with ${sorted.length()} items")
+                val rootJson = JSONObject().apply {
+                    put("items", sorted)
+                    if (wifiAvailable && ip != null) {
+                        put("wifi_base_url", "http://$ip:${httpServer.port}")
+                    }
+                }.toString()
+                sendToPhone(GlassPluginMessage("LIST", rootJson))
+                Log.i(TAG, "Sent LIST with ${sorted.length()} items, wifi=$wifiAvailable")
             } catch (e: Exception) {
                 Log.e(TAG, "LIST failed: ${e.message}")
             }
@@ -128,13 +191,35 @@ class GalleryGlassPluginService : GlassPluginService() {
 
     private fun generateThumb(file: File, type: String): String {
         return try {
+            val bytes = generateThumbBytes(file, type) ?: return ""
+            Base64.encodeToString(bytes, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.w(TAG, "thumb base64 failed for ${file.name}: ${e.message}")
+            ""
+        }
+    }
+
+    /** Auto-detect type from extension and delegate. Used by the HTTP
+     *  server, which doesn't track type per id. */
+    private fun generateThumbBytes(file: File): ByteArray? {
+        val ext = file.extension.lowercase()
+        val type = when {
+            ext in IMAGE_EXTS -> "image"
+            ext in VIDEO_EXTS -> "video"
+            else -> return null
+        }
+        return generateThumbBytes(file, type)
+    }
+
+    private fun generateThumbBytes(file: File, type: String): ByteArray? {
+        return try {
             val bitmap = when (type) {
                 "image" -> decodeScaledImage(file, THUMB_PX)
                 "video" -> ThumbnailUtils.createVideoThumbnail(
                     file.absolutePath, MediaStore.Images.Thumbnails.MINI_KIND
                 )
                 else -> null
-            } ?: return ""
+            } ?: return null
 
             val square = ThumbnailUtils.extractThumbnail(bitmap, THUMB_PX, THUMB_PX)
             if (square !== bitmap) bitmap.recycle()
@@ -142,10 +227,10 @@ class GalleryGlassPluginService : GlassPluginService() {
             val stream = ByteArrayOutputStream()
             square.compress(Bitmap.CompressFormat.JPEG, 70, stream)
             square.recycle()
-            Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+            stream.toByteArray()
         } catch (e: Exception) {
             Log.w(TAG, "thumb failed for ${file.name}: ${e.message}")
-            ""
+            null
         }
     }
 
@@ -163,7 +248,7 @@ class GalleryGlassPluginService : GlassPluginService() {
 
     // --- GET_FULL ---
 
-    private fun handleGetFull(payload: String) {
+    private fun handleGetFull(payload: String, allowWifi: Boolean) {
         Thread {
             try {
                 val id = JSONObject(payload).getString("id")
@@ -176,6 +261,17 @@ class GalleryGlassPluginService : GlassPluginService() {
                 if (!file.exists()) {
                     sendChunkEnd(id)
                     return@Thread
+                }
+
+                if (allowWifi) {
+                    val ip = wifiIpString()
+                    if (ip != null && tryWifiOffer(id, file, ip)) {
+                        // Server is now waiting for the phone to fetch.
+                        // Done — no chunked fallback unless phone re-asks
+                        // via GET_FULL_BT.
+                        return@Thread
+                    }
+                    Log.i(TAG, "WiFi unavailable, falling back to BT chunks for $id")
                 }
 
                 val total = file.length()
@@ -198,11 +294,46 @@ class GalleryGlassPluginService : GlassPluginService() {
                     }
                 }
                 sendChunkEnd(id)
-                Log.i(TAG, "Sent $total bytes for $id")
+                Log.i(TAG, "Sent $total bytes for $id (BT)")
             } catch (e: Exception) {
                 Log.e(TAG, "GET_FULL failed: ${e.message}")
             }
         }.apply { isDaemon = true; start() }
+    }
+
+    /**
+     * Send a WIFI_OFFER pointing the phone at the persistent HTTP
+     * server's /file URL. Returns true if the offer was sent (phone
+     * now owns the fetch); false if the server couldn't be started.
+     */
+    private fun tryWifiOffer(id: String, file: File, ip: String): Boolean {
+        return try {
+            if (!httpServerStarted) {
+                httpServer.start()
+                httpServerStarted = true
+            }
+            val url = httpServer.fileUrl(ip, id)
+            val offer = JSONObject().apply {
+                put("id", id)
+                put("url", url)
+                put("size", file.length())
+                put("name", file.name)
+            }.toString()
+            sendToPhone(GlassPluginMessage("WIFI_OFFER", offer))
+            Log.i(TAG, "WIFI_OFFER for $id at $url")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "WiFi offer setup failed: ${e.message}")
+            false
+        }
+    }
+
+    private fun wifiIpString(): String? {
+        return try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val ip = wifi.connectionInfo?.ipAddress ?: 0
+            if (ip == 0) null else Formatter.formatIpAddress(ip)
+        } catch (_: Exception) { null }
     }
 
     private fun sendChunkEnd(id: String) {

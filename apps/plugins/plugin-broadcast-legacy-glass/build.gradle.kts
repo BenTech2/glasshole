@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+apply(from = "${rootDir}/build-versioning.gradle.kts")
+
 android {
     // Different namespace from the Camera2 variant so Gradle doesn't
     // fight over R-class generation when both modules are included.
@@ -17,8 +19,8 @@ android {
         applicationId = "com.glasshole.plugin.broadcast.legacy.glass"
         minSdk = 19
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.4.0-alpha"
+        versionCode = (project.extra["computedVersionCode"] as Int)
+        versionName = (project.extra["computedVersionName"] as String)
         multiDexEnabled = true
     }
 
