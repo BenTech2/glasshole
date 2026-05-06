@@ -533,6 +533,12 @@ class BridgeService : Service() {
         pluginRouter?.notifyConnectionChanged(true)
         workerManager.onConnectionChanged(true)
         updateNotification("Connected to ${device.name}")
+        // Glass auto-sends PLUGIN_LIST on socket accept, but if our
+        // process restarted while the BT socket survived (e.g. an `adb
+        // install` that didn't bring down the OS Bluetooth stack), we
+        // miss that one-shot send and the on-phone PluginDirectory
+        // stays empty. Always re-request after we know we're alive.
+        sendRaw(ProtocolCodec.encodeMsg("PLUGIN_LIST_REQ"))
         // Background battery sampling for the history graph. First
         // request fires after a brief delay so the heartbeat INFO can
         // populate lastGlassInfo first (we need a device id to file

@@ -70,6 +70,14 @@ object BaseSettings {
      *  next one. Read at gesture-time so flipping the toggle on the
      *  phone takes effect immediately without restarting activities. */
     const val KEY_INVERT_NAV = "invert_nav"
+    /** When true, push Settings.Global.STAY_ON_WHILE_PLUGGED_IN to
+     *  AC|USB|WIRELESS so the glass display never blanks while charging.
+     *  Equivalent to the system "Stay awake" developer toggle. Requires
+     *  WRITE_SECURE_SETTINGS, granted via:
+     *      adb shell pm grant com.glasshole.glassee2.launcher \
+     *          android.permission.WRITE_SECURE_SETTINGS
+     *  (and the matching standalone applicationId where applicable). */
+    const val KEY_STAY_AWAKE_WHEN_CHARGING = "stay_awake_when_charging"
 
     /** Convenience accessor for the invert flag — every nav surface
      *  reads this once per gesture; the cost of a SharedPreferences

@@ -150,6 +150,15 @@ class BluetoothListenerService : Service() {
         // branch (where nothing is listening on EE2).
         startPluginHost()
 
+        // Re-assert the user's "stay awake while charging" preference
+        // — Settings.Global.STAY_ON_WHILE_PLUGGED_IN persists, but if
+        // anything else flipped it (developer-options dabbling, factory
+        // reset) we want our stored choice to win on the next boot.
+        val basePrefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        applyStayAwakeWhenCharging(
+            basePrefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false)
+        )
+
         startListening()
     }
 
@@ -361,6 +370,16 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Invert nav ${if (enabled) "enabled" else "disabled"}")
                 sendBaseStateToPhone()
             }
+            "SET_STAY_AWAKE_WHEN_CHARGING" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, enabled).apply()
+                applyStayAwakeWhenCharging(enabled)
+                sendBaseStateToPhone()
+            }
+            "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
             else -> Log.d(TAG, "Unknown base message: $type")
@@ -438,8 +457,71 @@ class BluetoothListenerService : Service() {
             put("navWakeOnUpdate", prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false))
             put("wakeToTimeCard", prefs.getBoolean(BaseSettings.KEY_WAKE_TO_TIME_CARD, false))
             put("invertNav", prefs.getBoolean(BaseSettings.KEY_INVERT_NAV, false))
+            put("stayAwakeWhenCharging", prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false))
+            put("stayAwakeWhenChargingGranted", canWriteSecureSettings())
         }.toString()
         sendPluginMessage("base", "STATE", json)
+    }
+
+    /** Whether the system has granted us WRITE_SECURE_SETTINGS yet —
+     *  reported back to the phone so the toggle can show a hint when
+     *  the permission isn't there. The check is a cheap PackageManager
+     *  call; safe to do on the BT listener thread. */
+    private fun canWriteSecureSettings(): Boolean =
+        packageManager.checkPermission(
+            android.Manifest.permission.WRITE_SECURE_SETTINGS,
+            packageName
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    /** Push the user's chosen "stay awake while charging" state to the
+     *  global system setting that controls the platform's screen-on
+     *  behaviour while plugged in. We set the flag for AC + USB +
+     *  wireless charging so any cradle / cable combo keeps the display
+     *  alive. Silently no-ops without WRITE_SECURE_SETTINGS — the
+     *  phone toggle surfaces that situation via the granted-flag in
+     *  STATE so the user can grant via adb. */
+    /** Foreground a plugin's main activity by package name. The phone
+     *  uses this from the Plugins screen's quick-launch icon — pressing
+     *  it on the phone immediately wakes the glass into that plugin
+     *  without a separate cover-flow swipe. Silently no-ops if the
+     *  package has no launcher intent (worker-style plugins). */
+    private fun handleLaunchPackage(payload: String) {
+        val pkg = try { JSONObject(payload).optString("pkg") } catch (_: Exception) { "" }
+        if (pkg.isEmpty()) return
+        val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
+        if (launchIntent == null) {
+            Log.w(TAG, "LAUNCH_PACKAGE: no launcher intent for $pkg")
+            return
+        }
+        try {
+            launchIntent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            )
+            startActivity(launchIntent)
+            Log.i(TAG, "Launched $pkg")
+        } catch (e: Exception) {
+            Log.w(TAG, "LAUNCH_PACKAGE failed for $pkg: ${e.message}")
+        }
+    }
+
+    private fun applyStayAwakeWhenCharging(enabled: Boolean) {
+        val flags = if (enabled) {
+            android.os.BatteryManager.BATTERY_PLUGGED_AC or
+            android.os.BatteryManager.BATTERY_PLUGGED_USB or
+            android.os.BatteryManager.BATTERY_PLUGGED_WIRELESS
+        } else 0
+        try {
+            android.provider.Settings.Global.putInt(
+                contentResolver,
+                android.provider.Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
+                flags
+            )
+            Log.i(TAG, "STAY_ON_WHILE_PLUGGED_IN = $flags")
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Need WRITE_SECURE_SETTINGS — adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS")
+        } catch (e: Exception) {
+            Log.w(TAG, "STAY_ON_WHILE_PLUGGED_IN write failed: ${e.message}")
+        }
     }
 
     private fun sendInfo() {
@@ -961,6 +1043,14 @@ class BluetoothListenerService : Service() {
                     }
                     line == "INFO_REQ" -> {
                         sendInfo()
+                    }
+                    line == "PLUGIN_LIST_REQ" -> {
+                        // Phone-side BridgeService instances request a
+                        // re-send when they bind — handles the case where
+                        // the phone process restarted but the BT socket
+                        // survived (so the once-per-connect send was
+                        // missed).
+                        sendPluginList()
                     }
                     line == "DEVICE_INFO_REQ" -> {
                         sendDeviceInfo()

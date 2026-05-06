@@ -121,6 +121,25 @@ class PluginsActivity : AppCompatActivity() {
                 openBtn.visibility = View.GONE
             }
 
+            val launchBtn = row.findViewById<ImageButton>(R.id.pluginLaunchButton)
+            if (e.hasLauncher) {
+                launchBtn.visibility = View.VISIBLE
+                launchBtn.setOnClickListener {
+                    val bridge = bridgeService
+                    if (bridge == null || !bridge.isConnected) {
+                        android.widget.Toast.makeText(
+                            this, "Glass not connected", android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        return@setOnClickListener
+                    }
+                    val payload = org.json.JSONObject()
+                        .put("pkg", e.packageName).toString()
+                    bridge.sendPluginMessage("base", "LAUNCH_PACKAGE", payload)
+                }
+            } else {
+                launchBtn.visibility = View.GONE
+            }
+
             val settingsBtn = row.findViewById<ImageButton>(R.id.pluginSettingsButton)
             if (e.hasSchema) {
                 settingsBtn.visibility = View.VISIBLE

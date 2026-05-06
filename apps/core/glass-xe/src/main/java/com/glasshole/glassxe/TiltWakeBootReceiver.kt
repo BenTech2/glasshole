@@ -79,6 +79,10 @@ object BaseSettings {
      *  every base-app cover-flow / drawer surface. Read at gesture-time
      *  so flipping the toggle on the phone takes effect immediately. */
     const val KEY_INVERT_NAV = "invert_nav"
+    /** Mirrors the system "Stay awake" developer toggle. See the EE2
+     *  copy of this file for the WRITE_SECURE_SETTINGS adb-grant
+     *  command. */
+    const val KEY_STAY_AWAKE_WHEN_CHARGING = "stay_awake_when_charging"
 
     fun isNavInverted(context: android.content.Context): Boolean =
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)

@@ -19,7 +19,10 @@ object PluginDirectory {
         val name: String,
         val description: String,
         val version: String,
-        val hasSchema: Boolean
+        val hasSchema: Boolean,
+        /** Mirrors PluginDirectoryScanner.Entry.hasLauncher — drives
+         *  the Plugins screen's quick-launch icon. */
+        val hasLauncher: Boolean
     )
 
     @Volatile private var entries: List<Entry> = emptyList()
@@ -41,7 +44,8 @@ object PluginDirectory {
                     name = o.optString("name"),
                     description = o.optString("description"),
                     version = o.optString("version"),
-                    hasSchema = o.optBoolean("has_schema")
+                    hasSchema = o.optBoolean("has_schema"),
+                    hasLauncher = o.optBoolean("has_launcher")
                 )
             )
         }

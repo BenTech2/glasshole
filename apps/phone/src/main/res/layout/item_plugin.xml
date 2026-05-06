@@ -46,6 +46,17 @@
             </LinearLayout>
 
             <ImageButton
+                android:id="@+id/pluginLaunchButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_media_play"
+                android:contentDescription="Launch on glass"
+                android:layout_marginEnd="4dp"
+                app:tint="?attr/colorOnSurfaceVariant"
+                android:visibility="gone" />
+
+            <ImageButton
                 android:id="@+id/pluginSettingsButton"
                 android:layout_width="40dp"
                 android:layout_height="40dp"

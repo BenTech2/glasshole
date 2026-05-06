@@ -43,6 +43,8 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var navWakeOnUpdateSwitch: MaterialSwitch
     private lateinit var wakeToTimeCardSwitch: MaterialSwitch
     private lateinit var invertNavSwitch: MaterialSwitch
+    private lateinit var stayAwakeWhenChargingSwitch: MaterialSwitch
+    private lateinit var stayAwakeWhenChargingSubtitle: TextView
 
     private lateinit var wakeButton: Button
     private lateinit var syncTimeButton: Button
@@ -85,6 +87,8 @@ class DeviceActivity : AppCompatActivity() {
         navWakeOnUpdateSwitch = findViewById(R.id.navWakeOnUpdateSwitch)
         wakeToTimeCardSwitch = findViewById(R.id.wakeToTimeCardSwitch)
         invertNavSwitch = findViewById(R.id.invertNavSwitch)
+        stayAwakeWhenChargingSwitch = findViewById(R.id.stayAwakeWhenChargingSwitch)
+        stayAwakeWhenChargingSubtitle = findViewById(R.id.stayAwakeWhenChargingSubtitle)
         wakeButton = findViewById(R.id.wakeButton)
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
@@ -280,6 +284,20 @@ class DeviceActivity : AppCompatActivity() {
             val json = JSONObject().apply { put("enabled", isChecked) }.toString()
             val sent = bridge.sendPluginMessage("base", "SET_INVERT_NAV", json)
             toast(if (sent) "Glass nav direction ${if (isChecked) "inverted" else "normal"}"
+                  else "Send failed")
+        }
+
+        stayAwakeWhenChargingSwitch.isChecked = prefs.getBoolean("stay_awake_when_charging", false)
+        stayAwakeWhenChargingSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("stay_awake_when_charging", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_STAY_AWAKE_WHEN_CHARGING", json)
+            toast(if (sent) "Stay awake while charging ${if (isChecked) "enabled" else "disabled"}"
                   else "Send failed")
         }
 

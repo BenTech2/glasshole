@@ -158,6 +158,13 @@ class BluetoothListenerService : Service() {
             }
         }
 
+        // Re-assert the user's stay-awake-while-charging preference —
+        // see EE2 for the rationale.
+        val basePrefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        applyStayAwakeWhenCharging(
+            basePrefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false)
+        )
+
         startListening()
     }
 
@@ -463,6 +470,16 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Invert nav ${if (enabled) "enabled" else "disabled"}")
                 sendBaseStateToPhone()
             }
+            "SET_STAY_AWAKE_WHEN_CHARGING" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                prefs.edit().putBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, enabled).apply()
+                applyStayAwakeWhenCharging(enabled)
+                sendBaseStateToPhone()
+            }
+            "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
             else -> Log.d(TAG, "Unknown base message: $type")
@@ -529,8 +546,58 @@ class BluetoothListenerService : Service() {
             put("navWakeOnUpdate", prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false))
             put("wakeToTimeCard", prefs.getBoolean(BaseSettings.KEY_WAKE_TO_TIME_CARD, false))
             put("invertNav", prefs.getBoolean(BaseSettings.KEY_INVERT_NAV, false))
+            put("stayAwakeWhenCharging", prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false))
+            put("stayAwakeWhenChargingGranted", canWriteSecureSettings())
         }.toString()
         sendPluginMessage("base", "STATE", json)
+    }
+
+    private fun canWriteSecureSettings(): Boolean =
+        packageManager.checkPermission(
+            android.Manifest.permission.WRITE_SECURE_SETTINGS,
+            packageName
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun handleLaunchPackage(payload: String) {
+        val pkg = try { JSONObject(payload).optString("pkg") } catch (_: Exception) { "" }
+        if (pkg.isEmpty()) return
+        val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
+        if (launchIntent == null) {
+            Log.w(TAG, "LAUNCH_PACKAGE: no launcher intent for $pkg")
+            return
+        }
+        try {
+            launchIntent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            )
+            // Mark as a foreground launch so the SCREEN_ON receiver in
+            // launcher mode doesn't race-relaunch HomeActivity over us.
+            lastForegroundLaunchMs = android.os.SystemClock.elapsedRealtime()
+            startActivity(launchIntent)
+            Log.i(TAG, "Launched $pkg")
+        } catch (e: Exception) {
+            Log.w(TAG, "LAUNCH_PACKAGE failed for $pkg: ${e.message}")
+        }
+    }
+
+    private fun applyStayAwakeWhenCharging(enabled: Boolean) {
+        val flags = if (enabled) {
+            android.os.BatteryManager.BATTERY_PLUGGED_AC or
+            android.os.BatteryManager.BATTERY_PLUGGED_USB or
+            android.os.BatteryManager.BATTERY_PLUGGED_WIRELESS
+        } else 0
+        try {
+            android.provider.Settings.Global.putInt(
+                contentResolver,
+                android.provider.Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
+                flags
+            )
+            Log.i(TAG, "STAY_ON_WHILE_PLUGGED_IN = $flags")
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Need WRITE_SECURE_SETTINGS — adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS")
+        } catch (e: Exception) {
+            Log.w(TAG, "STAY_ON_WHILE_PLUGGED_IN write failed: ${e.message}")
+        }
     }
 
     private fun sendInfo() {
@@ -910,6 +977,12 @@ class BluetoothListenerService : Service() {
                     }
                     line == "INFO_REQ" -> {
                         sendInfo()
+                    }
+                    line == "PLUGIN_LIST_REQ" -> {
+                        // Re-send the plugin directory when the phone
+                        // explicitly asks for it — survives phone-app
+                        // restarts that don't reset the BT socket.
+                        sendPluginList()
                     }
                     line == "DEVICE_INFO_REQ" -> {
                         sendDeviceInfo()

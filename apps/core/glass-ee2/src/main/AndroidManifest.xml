@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
@@ -22,6 +23,14 @@
          timeout, time/timezone sync, sleep-now. WRITE_SETTINGS is the
          runtime-toggled one — HomeActivity prompts for it on first run. -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- "Stay awake while charging" toggle — flips
+         Settings.Global.STAY_ON_WHILE_PLUGGED_IN. Same scope the
+         Developer Options "Stay awake" item uses. The platform reserves
+         this permission for system apps; the user grants it once via:
+             adb shell pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS
+         and the toggle silently no-ops until that grant lands. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- SET_TIME / SET_TIME_ZONE are signature|system; request anyway in
          case the device ships them, the handler falls back to su / Settings.

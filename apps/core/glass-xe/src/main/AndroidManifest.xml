@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
@@ -23,6 +24,10 @@
     <!-- Device handler (formerly plugin-device-glass): brightness, screen
          timeout, time/timezone sync, sleep-now. -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Stay-awake-while-charging — see EE2 manifest comment for the
+         WRITE_SECURE_SETTINGS adb-grant command. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.SET_TIME" />
     <uses-permission android:name="android.permission.SET_TIME_ZONE" />
