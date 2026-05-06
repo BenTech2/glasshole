@@ -68,6 +68,15 @@ class TerminalActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Wake the screen on launch — the wake-lock the plugin service
+        // grabs before startActivity is only good for ~3s; these flags
+        // keep the activity visible once it lands. FLAG_KEEP_SCREEN_ON
+        // is also added below conditionally via applyKeepScreenOnFlag().
+        @Suppress("DEPRECATION")
+        window.addFlags(
+            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+        )
         applyKeepScreenOnFlag()
 
         val root = FrameLayout(this).apply {

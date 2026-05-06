@@ -158,6 +158,16 @@ class BluetoothListenerService : Service() {
         applyStayAwakeWhenCharging(
             basePrefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false)
         )
+        // Listen for plug/unplug so the wakelock-backup tracks state
+        // even when the user (or the toggle) didn't change.
+        try {
+            registerReceiver(powerStateReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "powerStateReceiver register failed: ${e.message}")
+        }
 
         startListening()
     }
@@ -196,6 +206,8 @@ class BluetoothListenerService : Service() {
         closeAll()
         wakeLock?.release()
         wakeLock = null
+        try { unregisterReceiver(powerStateReceiver) } catch (_: Exception) {}
+        try { if (stayAwakeWakeLock.isHeld) stayAwakeWakeLock.release() } catch (_: Exception) {}
         stopForeground(true)
         super.onDestroy()
     }
@@ -493,6 +505,10 @@ class BluetoothListenerService : Service() {
             Log.w(TAG, "LAUNCH_PACKAGE: no launcher intent for $pkg")
             return
         }
+        // Wake the display first — same pattern as the NAV wake — so a
+        // remote-launch from the phone actually surfaces on the glass
+        // even if it's currently dozing.
+        wakeScreen(reason = "launch:$pkg")
         try {
             launchIntent.addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
@@ -504,7 +520,49 @@ class BluetoothListenerService : Service() {
         }
     }
 
+    /** Brief SCREEN_BRIGHT wakelock with ACQUIRE_CAUSES_WAKEUP — pops
+     *  the display on long enough for the just-started activity's own
+     *  showWhenLocked / turnScreenOn flags (where they exist) to keep
+     *  it lit. Same trick maybeWakeForNavUpdate uses. */
+    @Suppress("DEPRECATION")
+    private fun wakeScreen(reason: String) {
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "GlassHole:LaunchWake"
+            )
+            wl.acquire(3_000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeScreen($reason) failed: ${e.message}")
+        }
+    }
+
+    /** SCREEN_BRIGHT wakelock held while the user has stay-awake-while-
+     *  charging enabled AND the device is plugged in. EE2's OEM doesn't
+     *  honour STAY_ON_WHILE_PLUGGED_IN reliably (verified: setting reads
+     *  7, AC plugged, screen still times out at 15s), so we pin the
+     *  display via wakelock instead. The Settings.Global write still
+     *  goes out as a best-effort for devices that *do* honour it. */
+    @Suppress("DEPRECATION")
+    private val stayAwakeWakeLock: PowerManager.WakeLock by lazy {
+        (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK,
+            "GlassHole:StayAwakeCharging"
+        ).apply { setReferenceCounted(false) }
+    }
+
+    private val powerStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            // Either ACTION_POWER_CONNECTED / DISCONNECTED — re-evaluate
+            // the lock based on current pref + plugged state.
+            refreshStayAwakeWakeLock()
+        }
+    }
+
     private fun applyStayAwakeWhenCharging(enabled: Boolean) {
+        // 1. Best-effort Settings.Global write — works on stock Android,
+        //    silent no-op on Glass OEM builds that don't read this flag.
         val flags = if (enabled) {
             android.os.BatteryManager.BATTERY_PLUGGED_AC or
             android.os.BatteryManager.BATTERY_PLUGGED_USB or
@@ -522,6 +580,37 @@ class BluetoothListenerService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "STAY_ON_WHILE_PLUGGED_IN write failed: ${e.message}")
         }
+        // 2. Wakelock backup for the OEM-doesn't-listen case. Re-evaluate
+        //    immediately so toggling on while already plugged works.
+        refreshStayAwakeWakeLock()
+    }
+
+    /** Acquire / release the stay-awake wakelock based on the current
+     *  pref + the device's plugged state. Idempotent — safe to call any
+     *  time the inputs change. */
+    private fun refreshStayAwakeWakeLock() {
+        val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        val enabled = prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false)
+        val plugged = isPlugged()
+        val shouldHold = enabled && plugged
+        try {
+            if (shouldHold && !stayAwakeWakeLock.isHeld) {
+                stayAwakeWakeLock.acquire()
+                Log.i(TAG, "stay-awake-while-charging wakelock acquired")
+            } else if (!shouldHold && stayAwakeWakeLock.isHeld) {
+                stayAwakeWakeLock.release()
+                Log.i(TAG, "stay-awake-while-charging wakelock released")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "stay-awake wakelock toggle failed: ${e.message}")
+        }
+    }
+
+    private fun isPlugged(): Boolean {
+        val status = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?: return false
+        val plugged = status.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0)
+        return plugged != 0
     }
 
     private fun sendInfo() {

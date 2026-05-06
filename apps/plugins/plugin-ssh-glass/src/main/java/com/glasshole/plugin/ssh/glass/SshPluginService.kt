@@ -1,6 +1,7 @@
 package com.glasshole.plugin.ssh.glass
 
 import android.content.Intent
+import android.os.PowerManager
 import android.util.Log
 import com.glasshole.glass.sdk.GlassPluginMessage
 import com.glasshole.glass.sdk.GlassPluginService
@@ -67,9 +68,28 @@ class SshPluginService : GlassPluginService() {
             Log.w(TAG, "OPEN with unknown profile id $id")
             return
         }
+        // Wake the display so a phone-side Quick Connect surfaces the
+        // terminal even when the glass is dozing. The activity itself
+        // then declares showWhenLocked + turnScreenOn to keep it lit
+        // past the wake lock's brief lifetime.
+        wakeScreen()
         startActivity(Intent(this, TerminalActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(TerminalActivity.EXTRA_PROFILE_ID, id)
         })
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wakeScreen() {
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "GlassHole:SshOpenWake"
+            )
+            wl.acquire(3_000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeScreen failed: ${e.message}")
+        }
     }
 }

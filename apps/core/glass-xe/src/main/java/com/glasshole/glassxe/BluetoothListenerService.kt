@@ -162,6 +162,14 @@ class BluetoothListenerService : Service() {
         applyStayAwakeWhenCharging(
             basePrefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false)
         )
+        try {
+            registerReceiver(powerStateReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_POWER_CONNECTED)
+                addAction(Intent.ACTION_POWER_DISCONNECTED)
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "powerStateReceiver register failed: ${e.message}")
+        }
 
         startListening()
     }
@@ -232,6 +240,8 @@ class BluetoothListenerService : Service() {
         closeAll()
         wakeLock?.release()
         wakeLock = null
+        try { unregisterReceiver(powerStateReceiver) } catch (_: Exception) {}
+        try { if (stayAwakeWakeLock.isHeld) stayAwakeWakeLock.release() } catch (_: Exception) {}
         stopForeground(true)
         super.onDestroy()
     }
@@ -564,6 +574,7 @@ class BluetoothListenerService : Service() {
             Log.w(TAG, "LAUNCH_PACKAGE: no launcher intent for $pkg")
             return
         }
+        wakeScreen(reason = "launch:$pkg")
         try {
             launchIntent.addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
@@ -572,6 +583,34 @@ class BluetoothListenerService : Service() {
             Log.i(TAG, "Launched $pkg")
         } catch (e: Exception) {
             Log.w(TAG, "LAUNCH_PACKAGE failed for $pkg: ${e.message}")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wakeScreen(reason: String) {
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "GlassHole:LaunchWake"
+            )
+            wl.acquire(3_000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "wakeScreen($reason) failed: ${e.message}")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private val stayAwakeWakeLock: PowerManager.WakeLock by lazy {
+        (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK,
+            "GlassHole:StayAwakeCharging"
+        ).apply { setReferenceCounted(false) }
+    }
+
+    private val powerStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            refreshStayAwakeWakeLock()
         }
     }
 
@@ -593,6 +632,34 @@ class BluetoothListenerService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "STAY_ON_WHILE_PLUGGED_IN write failed: ${e.message}")
         }
+        refreshStayAwakeWakeLock()
+    }
+
+    /** Wakelock backup for OEMs that don't honor STAY_ON_WHILE_PLUGGED_IN
+     *  — see EE2 for the rationale. */
+    private fun refreshStayAwakeWakeLock() {
+        val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        val enabled = prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false)
+        val plugged = isPlugged()
+        val shouldHold = enabled && plugged
+        try {
+            if (shouldHold && !stayAwakeWakeLock.isHeld) {
+                stayAwakeWakeLock.acquire()
+                Log.i(TAG, "stay-awake-while-charging wakelock acquired")
+            } else if (!shouldHold && stayAwakeWakeLock.isHeld) {
+                stayAwakeWakeLock.release()
+                Log.i(TAG, "stay-awake-while-charging wakelock released")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "stay-awake wakelock toggle failed: ${e.message}")
+        }
+    }
+
+    private fun isPlugged(): Boolean {
+        val status = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?: return false
+        val plugged = status.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0)
+        return plugged != 0
     }
 
     private fun sendInfo() {
