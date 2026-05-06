@@ -93,6 +93,27 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".plugins.ssh.SshActivity"
+            android:exported="false"
+            android:label="SSH"
+            android:parentActivityName=".MainActivity"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".plugins.ssh.SshProfileEditorActivity"
+            android:exported="false"
+            android:label="SSH connection"
+            android:parentActivityName=".plugins.ssh.SshActivity"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".plugins.ssh.SshKeyManagerActivity"
+            android:exported="false"
+            android:label="SSH keys"
+            android:parentActivityName=".plugins.ssh.SshActivity"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".LiveStreamActivity"
             android:exported="false"
             android:label="Glass live stream"

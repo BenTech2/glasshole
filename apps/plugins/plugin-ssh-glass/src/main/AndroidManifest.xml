@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:allowBackup="true"
+        android:label="SSH"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.GlassHoleGlass">
+
+        <meta-data
+            android:name="com.google.android.glass.TouchEnabledApplication"
+            android:value="true" />
+
+        <service
+            android:name=".SshPluginService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
+            </intent-filter>
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="ssh" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="SSH" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="SSH client for connecting to remote shells with a Bluetooth keyboard" />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA"
+                android:resource="@raw/plugin_schema" />
+        </service>
+
+        <activity
+            android:name=".SshLaunchActivity"
+            android:label="SSH"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.google.android.glass.category.DIRECTORY" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ProfilePickerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
+        <activity
+            android:name=".TerminalActivity"
+            android:exported="false"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
+    </application>
+</manifest>

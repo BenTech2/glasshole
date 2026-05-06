@@ -36,7 +36,8 @@ class PluginsActivity : AppCompatActivity() {
     // These are data-viewer activities (note list, calc history), not settings.
     private val phoneCompanions: Map<String, Class<*>> = mapOf(
         "com.glasshole.plugin.notes.glass" to NotesActivity::class.java,
-        "com.glasshole.plugin.calc.glass" to CalcHistoryActivity::class.java
+        "com.glasshole.plugin.calc.glass" to CalcHistoryActivity::class.java,
+        "com.glasshole.plugin.ssh.glass" to com.glasshole.phone.plugins.ssh.SshActivity::class.java
     )
 
     private lateinit var listContainer: LinearLayout

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "keep_screen_on",
+      "type": "checkbox",
+      "label": "Keep screen on while connected",
+      "description": "Disables the glass display timeout while the SSH terminal is open. Turn off to let the screen sleep normally.",
+      "default": true
+    }
+  ],
+  "workers": []
+}
