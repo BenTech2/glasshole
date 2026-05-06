@@ -538,7 +538,9 @@ class BridgeService : Service() {
         // install` that didn't bring down the OS Bluetooth stack), we
         // miss that one-shot send and the on-phone PluginDirectory
         // stays empty. Always re-request after we know we're alive.
-        sendRaw(ProtocolCodec.encodeMsg("PLUGIN_LIST_REQ"))
+        // Raw command — wrapping in MSG: would surface this as a
+        // user-visible notification on the glass.
+        sendRaw(ProtocolCodec.encodePluginListReq())
         // Background battery sampling for the history graph. First
         // request fires after a brief delay so the heartbeat INFO can
         // populate lastGlassInfo first (we need a device id to file

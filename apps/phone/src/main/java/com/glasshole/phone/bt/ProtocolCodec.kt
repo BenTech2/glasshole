@@ -88,6 +88,8 @@ object ProtocolCodec {
 
     fun encodeBatteryInfoReq(): String = "BATTERY_INFO_REQ\n"
 
+    fun encodePluginListReq(): String = "PLUGIN_LIST_REQ\n"
+
     fun encodePing(): String = "PING\n"
     fun encodePong(): String = "PONG\n"
 
