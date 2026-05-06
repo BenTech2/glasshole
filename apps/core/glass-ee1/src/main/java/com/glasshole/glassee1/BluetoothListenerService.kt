@@ -70,6 +70,12 @@ class BluetoothListenerService : Service() {
     private var serverSocket: BluetoothServerSocket? = null
     private var clientSocket: BluetoothSocket? = null
     private var outputStream: OutputStream? = null
+    // Serializes every write to outputStream. Without this, the BT
+    // reader thread (PONG), the main thread (PluginMessageReceiver →
+    // sendPluginMessage), AIDL plugin callbacks, and worker threads can
+    // all hit the socket simultaneously and interleave bytes mid-frame —
+    // the phone parses garbage and tears the link.
+    private val writeLock = Any()
     @Volatile private var running = false
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -298,16 +304,31 @@ class BluetoothListenerService : Service() {
         try { cameraLiveSession.stop() } catch (_: Exception) {}
     }
 
+    // --- Outbound writer ---
+
+    /**
+     * Sends one already-newline-terminated frame to the phone, holding
+     * [writeLock] for the duration of the write+flush so concurrent
+     * callers can't interleave bytes on the wire.
+     */
+    private fun writeRaw(line: String): Boolean {
+        return synchronized(writeLock) {
+            val os = outputStream ?: return@synchronized false
+            try {
+                os.write(line.toByteArray(Charsets.UTF_8))
+                os.flush()
+                true
+            } catch (e: IOException) {
+                Log.e(TAG, "BT write failed: ${e.message}")
+                false
+            }
+        }
+    }
+
     // --- Live stream debug feature ---
 
     private fun sendLine(prefix: String, value: String) {
-        val os = outputStream ?: return
-        try {
-            os.write("$prefix:$value\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-        } catch (e: IOException) {
-            Log.w(TAG, "sendLine $prefix failed: ${e.message}")
-        }
+        writeRaw("$prefix:$value\n")
     }
 
     private fun handleLiveCamStart() {
@@ -345,62 +366,32 @@ class BluetoothListenerService : Service() {
     // --- Send methods ---
 
     fun sendReply(message: String): Boolean {
-        val os = outputStream ?: return false
-        return try {
-            val escaped = message.replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("REPLY:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Send reply failed: ${e.message}")
-            false
-        }
+        val escaped = message.replace("\\", "\\\\").replace("\n", "\\n")
+        return writeRaw("REPLY:$escaped\n")
     }
 
     fun sendPluginMessage(pluginId: String, type: String, payload: String): Boolean {
-        val os = outputStream ?: return false
-        return try {
-            val escaped = payload.replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("PLUGIN:$pluginId:$type:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Send plugin message failed: ${e.message}")
-            false
-        }
+        val escaped = payload.replace("\\", "\\\\").replace("\n", "\\n")
+        return writeRaw("PLUGIN:$pluginId:$type:$escaped\n")
     }
 
     fun sendNotifAction(notifKey: String, actionId: String, replyText: String? = null): Boolean {
-        val os = outputStream ?: return false
-        return try {
-            val obj = JSONObject().apply {
-                put("key", notifKey)
-                put("id", actionId)
-                if (replyText != null) put("text", replyText)
-            }
-            val escaped = obj.toString().replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("NOTIF_ACTION:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            Log.i(TAG, "NOTIF_ACTION sent: $actionId")
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Send notif action failed: ${e.message}")
-            false
+        val obj = JSONObject().apply {
+            put("key", notifKey)
+            put("id", actionId)
+            if (replyText != null) put("text", replyText)
         }
+        val escaped = obj.toString().replace("\\", "\\\\").replace("\n", "\\n")
+        val ok = writeRaw("NOTIF_ACTION:$escaped\n")
+        if (ok) Log.i(TAG, "NOTIF_ACTION sent: $actionId")
+        return ok
     }
 
     fun sendNotifDismiss(notifKey: String): Boolean {
-        val os = outputStream ?: return false
-        return try {
-            val escaped = notifKey.replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("NOTIF_DISMISS:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            Log.i(TAG, "NOTIF_DISMISS sent: $notifKey")
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Send notif dismiss failed: ${e.message}")
-            false
-        }
+        val escaped = notifKey.replace("\\", "\\\\").replace("\n", "\\n")
+        val ok = writeRaw("NOTIF_DISMISS:$escaped\n")
+        if (ok) Log.i(TAG, "NOTIF_DISMISS sent: $notifKey")
+        return ok
     }
 
     fun playStreamLocally(url: String) {
@@ -668,7 +659,6 @@ class BluetoothListenerService : Service() {
     }
 
     private fun sendInfo() {
-        val os = outputStream ?: return
         try {
             // API 19 has no BatteryManager.getIntProperty; use sticky broadcast.
             val batteryIntent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -686,8 +676,7 @@ class BluetoothListenerService : Service() {
                 @Suppress("DEPRECATION")
                 put("serial", Build.SERIAL)
             }
-            os.write("INFO:$json\n".toByteArray(Charsets.UTF_8))
-            os.flush()
+            writeRaw("INFO:$json\n")
             // Don't piggyback PLUGIN_LIST onto every INFO response — the
             // phone heartbeats every 10s, and the directory is ~8KB. That
             // saturates the BT RFCOMM buffer and queues notifications
@@ -705,11 +694,9 @@ class BluetoothListenerService : Service() {
      * heartbeat so we don't burn ~3KB of bandwidth every 10s.
      */
     private fun sendDeviceInfo() {
-        val os = outputStream ?: return
         try {
             val json = gatherDeviceInfo().toString()
-            os.write("DEVICE_INFO:$json\n".toByteArray(Charsets.UTF_8))
-            os.flush()
+            writeRaw("DEVICE_INFO:$json\n")
         } catch (e: Exception) {
             Log.e(TAG, "Send device info failed: ${e.message}")
         }
@@ -721,11 +708,9 @@ class BluetoothListenerService : Service() {
      * (~200 bytes) so polling every 5s costs nothing.
      */
     private fun sendBatteryInfo() {
-        val os = outputStream ?: return
         try {
             val json = gatherBatteryInfo().toString()
-            os.write("BATTERY_INFO:$json\n".toByteArray(Charsets.UTF_8))
-            os.flush()
+            writeRaw("BATTERY_INFO:$json\n")
         } catch (e: Exception) {
             Log.e(TAG, "Send battery info failed: ${e.message}")
         }
@@ -926,14 +911,13 @@ class BluetoothListenerService : Service() {
     }
 
     private fun sendPluginList() {
-        val os = outputStream ?: return
         try {
             val entries = com.glasshole.glass.sdk.PluginDirectoryScanner.scan(this)
             val json = com.glasshole.glass.sdk.PluginDirectoryScanner.toJson(entries)
             val escaped = json.replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("PLUGIN_LIST:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            Log.i(TAG, "PLUGIN_LIST sent (${entries.size} plugins)")
+            if (writeRaw("PLUGIN_LIST:$escaped\n")) {
+                Log.i(TAG, "PLUGIN_LIST sent (${entries.size} plugins)")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Send plugin list failed: ${e.message}")
         }
@@ -1037,10 +1021,7 @@ class BluetoothListenerService : Service() {
                         showNotification(message)
                     }
                     line == "PING" -> {
-                        try {
-                            outputStream?.write("PONG\n".toByteArray(Charsets.UTF_8))
-                            outputStream?.flush()
-                        } catch (_: IOException) {}
+                        writeRaw("PONG\n")
                     }
                     line == "INFO_REQ" -> {
                         sendInfo()
@@ -1396,10 +1377,7 @@ class BluetoothListenerService : Service() {
     }
 
     private fun sendInstallAck(status: String) {
-        try {
-            outputStream?.write("INSTALL_ACK:$status\n".toByteArray(Charsets.UTF_8))
-            outputStream?.flush()
-        } catch (_: IOException) {}
+        writeRaw("INSTALL_ACK:$status\n")
     }
 
     // --- Package list / uninstall ---
@@ -1428,12 +1406,8 @@ class BluetoothListenerService : Service() {
                 put("glasshole", pkg.startsWith("com.glasshole."))
             })
         }
-        try {
-            outputStream?.write("LIST_PACKAGES:$arr\n".toByteArray(Charsets.UTF_8))
-            outputStream?.flush()
+        if (writeRaw("LIST_PACKAGES:$arr\n")) {
             Log.i(TAG, "Sent package list (${arr.length()} entries)")
-        } catch (e: IOException) {
-            Log.e(TAG, "Send package list failed: ${e.message}")
         }
     }
 
@@ -1505,9 +1479,6 @@ class BluetoothListenerService : Service() {
     }
 
     private fun sendUninstallAck(pkg: String, status: String) {
-        try {
-            outputStream?.write("UNINSTALL_ACK:$pkg:$status\n".toByteArray(Charsets.UTF_8))
-            outputStream?.flush()
-        } catch (_: IOException) {}
+        writeRaw("UNINSTALL_ACK:$pkg:$status\n")
     }
 }
