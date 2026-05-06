@@ -60,6 +60,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var openApkManagerButton: Button
     private lateinit var openDebugButton: Button
     private lateinit var openLicensesButton: Button
+
+    private var updateBannerCard: View? = null
+    private var updateBannerVersion: TextView? = null
+    private var updateBannerDismiss: View? = null
+    private var pendingUpdate: UpdateChecker.AvailableUpdate? = null
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
 
@@ -198,6 +203,16 @@ class MainActivity : AppCompatActivity() {
         val pluginIntent = Intent(this, PluginHostService::class.java)
         startService(pluginIntent)
         bindService(pluginIntent, pluginHostConnection, Context.BIND_AUTO_CREATE)
+
+        // Background-check GitHub for a newer release. The checker is
+        // throttled to one network call every 6h and persists the
+        // result so the banner reappears across app restarts without
+        // hammering the API.
+        UpdateChecker.checkInBackground(
+            context = this,
+            currentVersion = BuildConfig.VERSION_NAME,
+            onResult = { update -> applyUpdateBanner(update) }
+        )
     }
 
     override fun onResume() {
@@ -285,6 +300,10 @@ class MainActivity : AppCompatActivity() {
         openApkManagerButton = findViewById(R.id.openApkManagerButton)
         openDebugButton = findViewById(R.id.openDebugButton)
         openLicensesButton = findViewById(R.id.openLicensesButton)
+        updateBannerCard = findViewById(R.id.updateBannerCard)
+        updateBannerVersion = findViewById(R.id.updateBannerVersion)
+        updateBannerDismiss = findViewById(R.id.updateBannerDismiss)
+        wireUpdateBanner()
         logText = findViewById(R.id.logText)
         logScroll = findViewById(R.id.logScroll)
         findViewById<TextView>(R.id.versionLabel)?.text =
@@ -488,6 +507,38 @@ class MainActivity : AppCompatActivity() {
             connectButton.text = "Connect"
         }
         connectButton.isEnabled = true
+    }
+
+    /** Bind the update banner once per layout — the click and dismiss
+     *  handlers stay alive across config changes since [pendingUpdate]
+     *  carries the current state. Re-call after bindViews() repopulates
+     *  the View references on fold/unfold. */
+    private fun wireUpdateBanner() {
+        updateBannerCard?.setOnClickListener {
+            val u = pendingUpdate ?: return@setOnClickListener
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(u.url)))
+            } catch (_: Exception) { /* no browser installed — silent */ }
+        }
+        updateBannerDismiss?.setOnClickListener {
+            val u = pendingUpdate ?: return@setOnClickListener
+            UpdateChecker.dismiss(this, u.tag)
+            pendingUpdate = null
+            updateBannerCard?.visibility = View.GONE
+        }
+        // Re-apply current state after a re-bind — the banner stays
+        // visible across fold/unfold instead of vanishing.
+        applyUpdateBanner(pendingUpdate)
+    }
+
+    private fun applyUpdateBanner(update: UpdateChecker.AvailableUpdate?) {
+        pendingUpdate = update
+        if (update == null) {
+            updateBannerCard?.visibility = View.GONE
+            return
+        }
+        updateBannerVersion?.text = "${update.tag} — tap to view release notes"
+        updateBannerCard?.visibility = View.VISIBLE
     }
 
     private fun log(msg: String) {

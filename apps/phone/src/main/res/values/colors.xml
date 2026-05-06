@@ -8,4 +8,9 @@
     <color name="seed_primary_container">#D9E2FF</color>
     <color name="seed_on_primary_container">#001A41</color>
     <color name="seed_secondary">#445E91</color>
+
+    <!-- Adaptive-icon background. The galaxy-orb foreground sits over a
+         deep space-black so the bezel reads as part of the icon rather
+         than the launcher's wallpaper. -->
+    <color name="ic_launcher_background">#000000</color>
 </resources>
