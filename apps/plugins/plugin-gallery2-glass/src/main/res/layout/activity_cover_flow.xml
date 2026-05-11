@@ -10,20 +10,33 @@
         android:layout_height="match_parent"
         android:orientation="horizontal" />
 
-    <TextView
-        android:id="@+id/titleText"
+    <!-- Stationary title chip. Wrapper FrameLayout exists so the chip
+         can sit on its own software layer without dragging the whole
+         activity's hw acceleration into CPU rendering — same trick the
+         base-app cover-flow drawers use to dodge KitKat alpha-ghosting
+         around the chip's edges. -->
+    <FrameLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="12dp"
-        android:background="#99000000"
-        android:paddingStart="14dp"
-        android:paddingEnd="14dp"
-        android:paddingTop="6dp"
-        android:paddingBottom="6dp"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:text="" />
+        android:layout_gravity="center_horizontal|bottom"
+        android:layout_marginBottom="30dp">
+
+        <TextView
+            android:id="@+id/titleText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/drawer_label_chip"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/emptyText"
