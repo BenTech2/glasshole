@@ -706,10 +706,15 @@ class BluetoothListenerService : Service() {
      * heartbeat so we don't burn ~3KB of bandwidth every 10s.
      */
     private fun sendDeviceInfo() {
+        // Catch Throwable, not just Exception — gather methods reference
+        // Build/VERSION fields that may be missing on older glass
+        // editions, and an unhandled Error would propagate up to the BT
+        // thread's run() and tear the connection down (which is what
+        // happened on EE1 with SECURITY_PATCH).
         try {
             val json = gatherDeviceInfo().toString()
             writeRaw("DEVICE_INFO:$json\n")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Send device info failed: ${e.message}")
         }
     }
@@ -723,7 +728,7 @@ class BluetoothListenerService : Service() {
         try {
             val json = gatherBatteryInfo().toString()
             writeRaw("BATTERY_INFO:$json\n")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Send battery info failed: ${e.message}")
         }
     }
@@ -770,7 +775,15 @@ class BluetoothListenerService : Service() {
         put("fingerprint", Build.FINGERPRINT)
         put("display_id", Build.DISPLAY)
         put("incremental", Build.VERSION.INCREMENTAL)
-        try { put("security_patch", Build.VERSION.SECURITY_PATCH) } catch (_: Exception) {}
+        // SECURITY_PATCH was added in API 23. On EE1/XE (API 19) the field
+        // doesn't exist and *just referencing it* throws NoSuchFieldError —
+        // which is an Error, not Exception, so a plain try/catch (Exception)
+        // wouldn't have caught it. Guard with SDK_INT and catch Throwable
+        // as belt-and-braces in case another API gets ambushed by a future
+        // additions to this method.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try { put("security_patch", Build.VERSION.SECURITY_PATCH) } catch (_: Throwable) {}
+        }
         try {
             val kernel = java.io.File("/proc/version").readText().trim()
             put("kernel", kernel)
