@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -33,6 +35,8 @@ class AppDrawerActivity : Activity() {
         /** Duration of one keycode's smooth scroll. Short enough that
          *  stacked TABs from consecutive swipes feel like one motion. */
         private const val SCROLL_MS = 220
+        /** Each half of the overlay-label fade transition (out, then in). */
+        private const val FADE_MS = 110L
     }
 
     private data class AppEntry(
@@ -45,6 +49,25 @@ class AppDrawerActivity : Activity() {
     private lateinit var pager: ViewPager2
     private lateinit var adapter: AppAdapter
     private lateinit var emptyText: TextView
+    private lateinit var overlayLabel: TextView
+    private lateinit var apps: List<AppEntry>
+
+    /** Position whose label the overlay currently shows. We only swap the
+     *  overlay text once the cover-flow scroll has fully settled. */
+    private var shownPosition: Int = -1
+    /** Target position after the in-flight glideBy completes — updated
+     *  synchronously when the swipe is recognized, not via ViewPager2's
+     *  callbacks (which don't reliably fire with our offset-padding
+     *  RecyclerView setup). */
+    private var pendingPosition: Int = 0
+
+    private val labelHandler = Handler(Looper.getMainLooper())
+    private val labelUpdateRunnable = Runnable {
+        if (pendingPosition != shownPosition) {
+            crossfadeOverlayLabel(apps.getOrNull(pendingPosition)?.label ?: "")
+            shownPosition = pendingPosition
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,8 +75,9 @@ class AppDrawerActivity : Activity() {
 
         pager = findViewById(R.id.appPager)
         emptyText = findViewById(R.id.emptyText)
+        overlayLabel = findViewById(R.id.overlayLabel)
 
-        val apps = loadLauncherApps()
+        apps = loadLauncherApps()
         if (apps.isEmpty()) {
             emptyText.visibility = View.VISIBLE
             return
@@ -61,6 +85,19 @@ class AppDrawerActivity : Activity() {
 
         adapter = AppAdapter(apps)
         pager.adapter = adapter
+
+        // Seed the overlay with the initial page's label — no fade since
+        // the drawer just opened and there's nothing to transition from.
+        overlayLabel.text = apps[0].label
+        shownPosition = 0
+        pendingPosition = 0
+
+        // Force software rendering on the chip + its wrapper. KitKat's
+        // hardware-accelerated alpha + width-change combo leaves edge
+        // ghosting around the chip as it re-centers on each text swap;
+        // CPU rendering of one tiny TextView is cheap and pixel-clean.
+        overlayLabel.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        (overlayLabel.parent as? View)?.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         // Keep 4 pages on each side in memory so the transformer has
         // something to tilt/shrink — cover flow without neighbors loaded
         // just looks like a regular single-page pager.
@@ -124,11 +161,23 @@ class AppDrawerActivity : Activity() {
         val itemWidth = rv.width - rv.paddingLeft - rv.paddingRight
         if (itemWidth <= 0) return
         rv.smoothScrollBy(direction * itemWidth, 0, DecelerateInterpolator(), SCROLL_MS)
+
+        // Advance our tracked position and schedule the overlay label
+        // swap so it fires once the cover-flow has finished animating.
+        // Doing this manually (rather than via an OnPageChangeCallback
+        // reading pager.currentItem) avoids ViewPager2's tracking
+        // quirks with our offset-padded RecyclerView.
+        val newPos = (pendingPosition + direction).coerceIn(0, apps.size - 1)
+        if (newPos != pendingPosition) {
+            pendingPosition = newPos
+            labelHandler.removeCallbacks(labelUpdateRunnable)
+            labelHandler.postDelayed(labelUpdateRunnable, SCROLL_MS.toLong() + 30L)
+        }
     }
 
     private fun launchCurrent() {
         if (!::adapter.isInitialized) return
-        val pkg = adapter.pkgAt(pager.currentItem) ?: return
+        val pkg = adapter.pkgAt(pendingPosition) ?: return
         val launch = packageManager.getLaunchIntentForPackage(pkg) ?: return
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try { startActivity(launch) } catch (_: Exception) {}
@@ -165,6 +214,23 @@ class AppDrawerActivity : Activity() {
         )
     }
 
+    /** Fade the overlay label out, swap its text, then fade it back in.
+     *  The wrapper FrameLayout has animateLayoutChanges=true so the chip
+     *  background morphs to the new text width during the alpha-0 window. */
+    private fun crossfadeOverlayLabel(newText: String) {
+        overlayLabel.animate()
+            .alpha(0f)
+            .setDuration(FADE_MS)
+            .withEndAction {
+                overlayLabel.text = newText
+                overlayLabel.animate()
+                    .alpha(1f)
+                    .setDuration(FADE_MS)
+                    .start()
+            }
+            .start()
+    }
+
     private class AppAdapter(private val items: List<AppEntry>) :
         RecyclerView.Adapter<PageHolder>() {
 
@@ -185,12 +251,6 @@ class AppDrawerActivity : Activity() {
         override fun onBindViewHolder(holder: PageHolder, position: Int) {
             val e = items[position]
             holder.itemView.findViewById<ImageView>(R.id.appIcon)?.setImageDrawable(e.icon)
-            val label = holder.itemView.findViewById<TextView>(R.id.appLabel)
-            label?.text = e.label
-            // Reset alpha in case this view was recycled from a faded-out
-            // neighbor slot. The transformer will override on the next pass
-            // if this page isn't the center.
-            label?.alpha = 1f
         }
     }
 

@@ -16,6 +16,36 @@
         android:focusableInTouchMode="false"
         android:descendantFocusability="blocksDescendants" />
 
+    <!-- Stationary label for the currently-focused tile. Lives at the
+         activity level rather than inside each page so it doesn't scroll
+         with the cover-flow icons; the activity fades+swaps its text on
+         page-settle. The chip snaps to the new text width during the
+         alpha-0 window of the crossfade — we deliberately avoid
+         animateLayoutChanges here because the default LayoutTransition's
+         CHANGING animation leaves residual pixels on KitKat. -->
+    <FrameLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|bottom"
+        android:layout_marginBottom="30dp">
+
+        <TextView
+            android:id="@+id/overlayLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/drawer_label_chip"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="" />
+    </FrameLayout>
+
     <TextView
         android:id="@+id/emptyText"
         android:layout_width="wrap_content"

@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.LayoutInflater
@@ -34,6 +36,8 @@ class SettingsDrawerActivity : Activity() {
         private const val SCROLL_MS = 220
         private const val PREFS = "settings_drawer"
         private const val KEY_LAST_INDEX = "last_index"
+        /** Each half of the overlay-label fade transition (out, then in). */
+        private const val FADE_MS = 110L
 
         private data class Entry(
             val label: String,
@@ -60,12 +64,36 @@ class SettingsDrawerActivity : Activity() {
     }
 
     private lateinit var pager: ViewPager2
+    private lateinit var overlayLabel: TextView
     /** SETTINGS_ENTRIES filtered to only those whose intent the device can
      *  actually handle — Glass EE1's stock Settings is a narrower subset
      *  than EE2 so pre-filtering at runtime via PackageManager removes
      *  dead tiles entirely instead of relying on launchCurrent's
      *  ActivityNotFound fallback. */
     private lateinit var entries: List<Entry>
+    /** Position whose label the overlay currently shows. We only swap the
+     *  overlay text once the pager has fully settled on a new tile. */
+    private var shownPosition: Int = -1
+    /** Target position after the in-flight glideBy completes, tracked
+     *  manually since ViewPager2's callbacks don't fire reliably with
+     *  our offset-padded RecyclerView setup. */
+    private var pendingPosition: Int = 0
+
+    private val labelHandler = Handler(Looper.getMainLooper())
+    private val labelUpdateRunnable = Runnable {
+        if (pendingPosition != shownPosition) {
+            crossfadeOverlayLabel(entries.getOrNull(pendingPosition)?.label ?: "")
+            shownPosition = pendingPosition
+            // Persist the latest tile so swipe-down from a launched
+            // activity returns the user to the same spot. Replaces the
+            // OnPageChangeCallback.onPageSelected that handled this
+            // before we switched to manual position tracking.
+            getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_LAST_INDEX, pendingPosition)
+                .apply()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,6 +106,7 @@ class SettingsDrawerActivity : Activity() {
         }
 
         pager = findViewById(R.id.settingsPager)
+        overlayLabel = findViewById(R.id.overlayLabel)
         pager.offscreenPageLimit = 4
         pager.isUserInputEnabled = false
         pager.adapter = SettingsAdapter(entries)
@@ -102,14 +131,34 @@ class SettingsDrawerActivity : Activity() {
             .coerceIn(0, (entries.size - 1).coerceAtLeast(0))
         if (lastIdx > 0) pager.setCurrentItem(lastIdx, false)
 
-        pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
-            override fun onPageSelected(position: Int) {
-                getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .putInt(KEY_LAST_INDEX, position)
-                    .apply()
+        // Seed the overlay with the restored page's label — no fade since
+        // the drawer just opened and there's nothing to transition from.
+        overlayLabel.text = entries.getOrNull(lastIdx)?.label ?: ""
+        shownPosition = lastIdx
+        pendingPosition = lastIdx
+
+        // Force software rendering on the chip + its wrapper. KitKat's
+        // hardware-accelerated alpha + width-change combo leaves edge
+        // ghosting around the chip as it re-centers on each text swap.
+        overlayLabel.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        (overlayLabel.parent as? View)?.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+    }
+
+    /** Fade the overlay label out, swap its text, fade back in.
+     *  The wrapper FrameLayout has animateLayoutChanges=true so the chip
+     *  background morphs to the new text width during the alpha-0 window. */
+    private fun crossfadeOverlayLabel(newText: String) {
+        overlayLabel.animate()
+            .alpha(0f)
+            .setDuration(FADE_MS)
+            .withEndAction {
+                overlayLabel.text = newText
+                overlayLabel.animate()
+                    .alpha(1f)
+                    .setDuration(FADE_MS)
+                    .start()
             }
-        })
+            .start()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
@@ -173,6 +222,13 @@ class SettingsDrawerActivity : Activity() {
         val itemWidth = rv.width - rv.paddingLeft - rv.paddingRight
         if (itemWidth <= 0) return
         rv.smoothScrollBy(direction * itemWidth, 0, DecelerateInterpolator(), SCROLL_MS)
+
+        val newPos = (pendingPosition + direction).coerceIn(0, entries.size - 1)
+        if (newPos != pendingPosition) {
+            pendingPosition = newPos
+            labelHandler.removeCallbacks(labelUpdateRunnable)
+            labelHandler.postDelayed(labelUpdateRunnable, SCROLL_MS.toLong() + 30L)
+        }
     }
 
     private fun resolvesActivity(action: String): Boolean {
@@ -184,7 +240,7 @@ class SettingsDrawerActivity : Activity() {
     }
 
     private fun launchCurrent() {
-        val entry = entries.getOrNull(pager.currentItem) ?: return
+        val entry = entries.getOrNull(pendingPosition) ?: return
         val intent = Intent(entry.action).apply {
             if (entry.useAppPackage) {
                 data = Uri.parse("package:$packageName")
@@ -226,9 +282,6 @@ class SettingsDrawerActivity : Activity() {
         override fun onBindViewHolder(holder: PageHolder, position: Int) {
             val e = items[position]
             holder.itemView.findViewById<ImageView>(R.id.settingIcon)?.setImageResource(e.iconRes)
-            val label = holder.itemView.findViewById<TextView>(R.id.settingLabel)
-            label?.text = e.label
-            label?.alpha = 1f  // reset in case recycled from a faded slot
         }
     }
 

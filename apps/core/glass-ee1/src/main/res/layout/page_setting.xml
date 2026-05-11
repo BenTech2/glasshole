@@ -1,39 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A single Settings drawer tile. Same visual language as the app
-     drawer's page_app (white rounded tile around an icon + label
-     below) so the carousel feels consistent. -->
+<!-- The label/title is rendered once at the activity level (overlayLabel
+     in activity_settings_drawer.xml) so it stays stationary while the
+     icons scroll past, and is animated on page-settle. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:gravity="center">
+    android:gravity="center"
+    android:paddingTop="24dp"
+    android:clipChildren="false"
+    android:clipToPadding="false">
 
-    <FrameLayout
+    <com.glasshole.glassee1.home.ReflectionImageView
+        android:id="@+id/settingIcon"
         android:layout_width="160dp"
         android:layout_height="160dp"
-        android:background="@drawable/settings_tile_bg">
+        android:background="@drawable/settings_tile_bg"
+        android:padding="40dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="Setting icon" />
 
-        <ImageView
-            android:id="@+id/settingIcon"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_gravity="center"
-            android:padding="40dp"
-            android:scaleType="fitCenter"
-            android:contentDescription="Setting icon" />
-
-    </FrameLayout>
-
-    <TextView
-        android:id="@+id/settingLabel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:textColor="#FFFFFF"
-        android:textSize="20sp"
-        android:fontFamily="sans-serif-medium"
-        android:maxLines="1"
-        android:ellipsize="end"
-        android:text="" />
+    <!-- Reserves space below the icon for the reflection (which draws
+         outside the ReflectionImageView's measured bounds). -->
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="36dp" />
 
 </LinearLayout>
