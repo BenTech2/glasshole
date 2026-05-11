@@ -489,12 +489,24 @@ class BluetoothListenerService : Service() {
 
     private fun maybeWakeForNavUpdate() {
         val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
-        if (!prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false)) return
+        if (!prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false)) {
+            Log.d(TAG, "Nav wake: skipped (toggle off)")
+            return
+        }
+        Log.i(TAG, "Nav wake: firing wakelock")
         @Suppress("DEPRECATION")
         try {
             val pm = getSystemService(POWER_SERVICE) as PowerManager
+            // FULL_WAKE_LOCK is deprecated but more reliable than
+            // SCREEN_BRIGHT on KitKat-era Glass firmwares — some OEM
+            // builds silently no-op the lighter lock. ON_AFTER_RELEASE
+            // keeps the display lit briefly after the 3 s timeout so
+            // HomeActivity has time to take over with FLAG_KEEP_SCREEN_ON
+            // (when the user also has that toggle on).
             val wl = pm.newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                PowerManager.FULL_WAKE_LOCK or
+                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
                 "GlassHole:NavWake"
             )
             wl.acquire(3_000L)
