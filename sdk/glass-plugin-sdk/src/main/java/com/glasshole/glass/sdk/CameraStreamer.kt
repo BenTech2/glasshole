@@ -28,13 +28,15 @@ import java.io.ByteArrayOutputStream
 class CameraStreamer(
     private val onFrame: (ByteArray) -> Unit,
     private val targetWidthHint: Int = 640,
-    private val targetFps: Int = 10,
-    private val jpegQuality: Int = 60,
-    /** Rotation applied to each NV21 frame before JPEG encode.
-     *  Supported: 0 and 90 (clockwise). EE1's camera sensor is mounted
-     *  90° off the display so frames need a CW rotation before they
-     *  reach the phone viewer. EE2 reports 0° and stays as-is. */
-    private val rotationDegrees: Int = 0
+    /** 15fps is the sweet spot on Glass EE1 — 10 feels visibly choppy
+     *  and 20 starts losing frames to the encoder taking >50ms per
+     *  JPEG on KitKat's CPU. */
+    private val targetFps: Int = 15,
+    /** JPEG quality 50 trims ~20% off encode time vs. 60 and the
+     *  resulting frame still looks fine for a low-latency live
+     *  preview. Bandwidth drops too, which helps over BT-tethered
+     *  Wi-Fi setups. */
+    private val jpegQuality: Int = 50,
 ) {
     companion object {
         private const val TAG = "CameraStreamer"
@@ -50,10 +52,6 @@ class CameraStreamer(
     private var frameHeight: Int = 0
     @Volatile private var lastEmitMs: Long = 0L
     @Volatile private var running = false
-    /** Reusable scratch buffer for 90° NV21 rotation. Same total byte
-     *  count as the source so a single allocation services every
-     *  frame; only touched on the encoder thread. */
-    private var rotationScratch: ByteArray? = null
 
     @Synchronized
     fun start(): Boolean {
@@ -113,13 +111,31 @@ class CameraStreamer(
             camera = cam
             val params = cam.parameters
 
-            // Pick a preview size near the hint, prefer the one closest
-            // to (and not exceeding) the requested width.
+            // Pick a preview size near the hint that matches the
+            // sensor's native 4:3 aspect. Glass EE1 reports a mix of
+            // 1:1 (640×640), 9:16 (720×1280), and 4:3 (480×640) options;
+            // 1:1 produces an obviously squashed image (1:1 of a 4:3
+            // scene) and 9:16 looks slightly horizontally stretched.
+            // Sort by aspect-distance-from-4:3 first, then by how close
+            // the width is to the hint.
             val previewSizes = params.supportedPreviewSizes
+            Log.i(TAG, "supportedPreviewSizes: " +
+                previewSizes.joinToString { "${it.width}x${it.height}" })
+            val targetAspect = 4f / 3f
+            fun aspectDelta(s: Camera.Size): Float {
+                val longSide = maxOf(s.width, s.height).toFloat()
+                val shortSide = minOf(s.width, s.height).toFloat()
+                if (shortSide == 0f) return Float.MAX_VALUE
+                return Math.abs(longSide / shortSide - targetAspect)
+            }
             val chosen = previewSizes
-                .filter { it.width <= targetWidthHint * 2 } // skip hideously huge ones
-                .minByOrNull { Math.abs(it.width - targetWidthHint) }
+                .filter { it.width <= targetWidthHint * 2 }
+                .minWithOrNull(
+                    compareBy<Camera.Size>({ aspectDelta(it) })
+                        .thenBy { Math.abs(it.width - targetWidthHint) }
+                )
                 ?: previewSizes.first()
+            Log.i(TAG, "chose preview size ${chosen.width}x${chosen.height}")
             params.setPreviewSize(chosen.width, chosen.height)
             frameWidth = chosen.width
             frameHeight = chosen.height
@@ -175,20 +191,16 @@ class CameraStreamer(
 
         val w = frameWidth
         val h = frameHeight
-        // Encode off the camera thread so we don't starve the HAL.
+        // Encode off the camera thread so we don't starve the HAL. Any
+        // orientation correction the viewer needs happens phone-side —
+        // we used to rotate NV21 bytes here, but the chroma
+        // realignment had subtle bugs on some preview sizes that
+        // produced stretched output.
         encoderHandler?.post {
             try {
-                val (data, encW, encH) = if (rotationDegrees == 90) {
-                    val scratch = rotationScratch
-                        ?: ByteArray(w * h * 3 / 2).also { rotationScratch = it }
-                    rotateNV21Cw90(nv21, w, h, scratch)
-                    Triple(scratch, h, w) // dims swap after CW 90
-                } else {
-                    Triple(nv21, w, h)
-                }
-                val yuv = YuvImage(data, ImageFormat.NV21, encW, encH, null)
+                val yuv = YuvImage(nv21, ImageFormat.NV21, w, h, null)
                 val baos = ByteArrayOutputStream()
-                yuv.compressToJpeg(Rect(0, 0, encW, encH), jpegQuality, baos)
+                yuv.compressToJpeg(Rect(0, 0, w, h), jpegQuality, baos)
                 onFrame(baos.toByteArray())
             } catch (e: Exception) {
                 Log.w(TAG, "encode failed: ${e.message}")
@@ -200,32 +212,6 @@ class CameraStreamer(
             }
         } ?: run {
             try { cam.addCallbackBuffer(nv21) } catch (_: Exception) {}
-        }
-    }
-
-    /**
-     * Rotate an NV21 frame 90° clockwise into [dst]. NV21 is a Y plane
-     * of W×H bytes followed by an interleaved VU plane at half
-     * resolution (each VU pair covers a 2×2 block of Y). Rotating swaps
-     * the dimensions: dst is treated as H×W. Y rotates per-pixel; the
-     * VU plane rotates per-pair (V then U) to keep chroma aligned.
-     */
-    private fun rotateNV21Cw90(src: ByteArray, w: Int, h: Int, dst: ByteArray) {
-        var di = 0
-        for (x in 0 until w) {
-            for (y in h - 1 downTo 0) {
-                dst[di++] = src[y * w + x]
-            }
-        }
-        val frameSize = w * h
-        di = frameSize + frameSize / 2 - 1
-        var x = w - 1
-        while (x > 0) {
-            for (y in 0 until h / 2) {
-                dst[di--] = src[frameSize + y * w + x]      // V
-                dst[di--] = src[frameSize + y * w + x - 1]  // U
-            }
-            x -= 2
         }
     }
 

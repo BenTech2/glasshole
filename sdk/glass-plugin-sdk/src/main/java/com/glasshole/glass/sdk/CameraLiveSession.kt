@@ -24,10 +24,13 @@ import android.util.Log
  */
 class CameraLiveSession(
     private val context: Context,
-    /** CW degrees the streamer should rotate frames before encoding.
-     *  EE1's sensor is mounted 90° off the display so we rotate at the
-     *  source instead of pushing the burden onto the phone viewer.
-     *  EE2 reports 0° natively so it stays the default. */
+    /** CW degrees the phone viewer should rotate frames after decoding.
+     *  EE1's sensor is mounted 90° off the display, so we advertise
+     *  this in the stream URL (as a `&rot=N` query param) and let the
+     *  phone apply a single Bitmap matrix rotation — cleaner than
+     *  rotating NV21 bytes on the glass, which had a chroma-alignment
+     *  bug that produced subtly stretched frames on some preview
+     *  sizes. EE2 reports 0° natively so it stays the default. */
     private val rotationDegrees: Int = 0
 ) {
 
@@ -53,8 +56,7 @@ class CameraLiveSession(
         }
         if (streamer == null) {
             val s = CameraStreamer(
-                onFrame = { bytes -> srv.pushFrame(bytes) },
-                rotationDegrees = rotationDegrees
+                onFrame = { bytes -> srv.pushFrame(bytes) }
             )
             if (!s.start()) {
                 // Camera HAL may already be in use; release the server
@@ -64,7 +66,10 @@ class CameraLiveSession(
             }
             streamer = s
         }
-        return Status.Started(srv.streamUrl(ip))
+        val url = srv.streamUrl(ip).let {
+            if (rotationDegrees != 0) "$it&rot=$rotationDegrees" else it
+        }
+        return Status.Started(url)
     }
 
     @Synchronized

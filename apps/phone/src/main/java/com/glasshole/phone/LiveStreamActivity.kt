@@ -7,6 +7,8 @@ import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Matrix
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -82,6 +84,12 @@ class LiveStreamActivity : AppCompatActivity() {
 
     private lateinit var streamUrl: String
     private lateinit var streamKind: String
+    /** Degrees the glass advertised in the URL (`?rot=N`) — applied to
+     *  every decoded frame so the viewer sees an upright image. EE1
+     *  reports 90 because its sensor is mounted sideways; EE2 reports
+     *  nothing and we leave frames as-is. */
+    private var frameRotationDeg: Float = 0f
+    private val loggedFirstFrame = java.util.concurrent.atomic.AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,6 +99,12 @@ class LiveStreamActivity : AppCompatActivity() {
             finish()
             return
         }
+        frameRotationDeg = try {
+            Uri.parse(streamUrl).getQueryParameter("rot")?.toFloatOrNull() ?: 0f
+        } catch (_: Exception) {
+            0f
+        }
+        Log.i(TAG, "stream URL=$streamUrl rot=$frameRotationDeg")
 
         // Keep the screen on while the user is watching.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -247,12 +261,37 @@ class LiveStreamActivity : AppCompatActivity() {
     }
 
     private fun showFrame(bytes: ByteArray) {
-        val bmp = try {
+        val raw = try {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         } catch (e: Exception) {
             Log.w(TAG, "decode frame failed: ${e.message}")
             null
         } ?: return
+        // Rotate the decoded bitmap if the glass asked us to (EE1's
+        // sensor is mounted 90° off the display). Done here rather
+        // than via ImageView.rotation so the ImageView's FIT_CENTER
+        // scaleType lays out against the correctly-oriented bitmap
+        // dimensions.
+        val bmp = if (frameRotationDeg != 0f) {
+            try {
+                val m = Matrix().apply { postRotate(frameRotationDeg) }
+                val rotated = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
+                if (loggedFirstFrame.compareAndSet(false, true)) {
+                    Log.i(TAG, "first frame: raw=${raw.width}x${raw.height} " +
+                        "rotated=${rotated.width}x${rotated.height} deg=$frameRotationDeg")
+                }
+                if (rotated !== raw) raw.recycle()
+                rotated
+            } catch (e: Exception) {
+                Log.w(TAG, "rotate failed: ${e.message}")
+                raw
+            }
+        } else {
+            if (loggedFirstFrame.compareAndSet(false, true)) {
+                Log.i(TAG, "first frame: raw=${raw.width}x${raw.height} no-rotate")
+            }
+            raw
+        }
         ui.post {
             image.setImageBitmap(bmp)
             // First successful frame: hide the loading overlay and
