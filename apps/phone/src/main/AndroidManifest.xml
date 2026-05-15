@@ -158,6 +158,12 @@
         </activity>
 
         <activity
+            android:name=".plugins.notes.TeleprompterControlActivity"
+            android:exported="false"
+            android:label="Teleprompter"
+            android:parentActivityName=".plugins.notes.NotesActivity" />
+
+        <activity
             android:name=".plugins.calc.CalcHistoryActivity"
             android:exported="false"
             android:label="Calculator History"

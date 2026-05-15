@@ -51,5 +51,11 @@
             android:exported="false"
             android:theme="@style/Theme.GlassHoleGlass" />
 
+        <activity
+            android:name=".TeleprompterActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.GlassHoleGlass" />
+
     </application>
 </manifest>
