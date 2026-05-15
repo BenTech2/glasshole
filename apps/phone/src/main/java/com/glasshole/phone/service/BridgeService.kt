@@ -477,6 +477,7 @@ class BridgeService : Service() {
                     val url = try {
                         org.json.JSONObject(payload).optString("url", "")
                     } catch (_: Exception) { "" }
+                    Log.i(TAG, "BG_UPLOAD_OPEN url=$url bytes=${bytes.size}")
                     if (url.isEmpty()) {
                         onBaseMessage = prevHandler
                         onResult(false, "Glass returned no URL")
@@ -489,8 +490,9 @@ class BridgeService : Service() {
                             // DONE / ERR reply that confirms the disk
                             // write went through.
                         } catch (e: Exception) {
+                            Log.e(TAG, "Wallpaper POST failed: ${e.javaClass.simpleName}: ${e.message}", e)
                             onBaseMessage = prevHandler
-                            onResult(false, "POST failed: ${e.message}")
+                            onResult(false, "POST failed: ${e.javaClass.simpleName}: ${e.message}")
                         }
                     }.apply { isDaemon = true; name = "BgUpload-post"; start() }
                 }
@@ -529,6 +531,7 @@ class BridgeService : Service() {
         val sep = if (url.contains('?')) '&' else '?'
         val encoded = java.net.URLEncoder.encode(filename, "UTF-8")
         val finalUrl = "$url${sep}filename=$encoded"
+        Log.i(TAG, "POSTing $bytes.size bytes to $finalUrl")
         val conn = (java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
@@ -539,6 +542,7 @@ class BridgeService : Service() {
         }
         conn.outputStream.use { it.write(bytes) }
         val code = conn.responseCode
+        Log.i(TAG, "POST response code=$code")
         try { conn.inputStream.close() } catch (_: Exception) {}
         if (code != 200) {
             throw java.io.IOException("HTTP $code")

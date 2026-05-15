@@ -193,6 +193,20 @@ class HomeActivity : Activity() {
         }
     }
 
+    /** Make sure the wallpaper directory exists so adb push works on a
+     *  fresh device without the user having to mkdir it first, and so a
+     *  failed phone upload doesn't leave a confusing "no folder" state.
+     *  Best-effort: storage permission may not yet be granted, in which
+     *  case we silently fail and the dir gets created on first
+     *  successful BG_UPLOAD instead. */
+    private fun ensureWallpaperDir() {
+        try {
+            val dir = java.io.File("/sdcard/GlassHole/backgrounds")
+            if (!dir.exists()) dir.mkdirs()
+        } catch (_: Exception) {
+        }
+    }
+
     /** Pull the first JPEG/PNG out of /sdcard/GlassHole/backgrounds/
      *  on a worker thread, sub-sample to the display dimensions, and
      *  install it into the backgroundImage view. Wallpaper-tier work
@@ -312,6 +326,7 @@ class HomeActivity : Activity() {
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
+        ensureWallpaperDir()
         setContentView(R.layout.activity_home)
 
         pager = findViewById(R.id.cardPager)
