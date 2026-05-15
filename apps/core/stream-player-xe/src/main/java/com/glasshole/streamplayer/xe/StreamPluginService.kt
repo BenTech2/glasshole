@@ -51,8 +51,9 @@ class StreamPluginService : GlassPluginService() {
     }
 
     private fun handlePlayUrl(payload: String) {
-        val url = try {
-            JSONObject(payload).getString("url")
+        val (url, startMs) = try {
+            val obj = JSONObject(payload)
+            obj.getString("url") to obj.optLong("startMs", 0L)
         } catch (e: Exception) {
             Log.e(TAG, "Bad PLAY_URL payload: ${e.message}")
             return
@@ -60,12 +61,13 @@ class StreamPluginService : GlassPluginService() {
 
         wakeScreen()
 
-        Log.i(TAG, "Launching MainActivity with url=$url")
+        Log.i(TAG, "Launching MainActivity with url=$url (startMs=$startMs)")
         // CLEAR_TASK on every share — otherwise a second PLAY_URL stacks
         // a second PlayerActivity on top of the first, and closing the new
         // one drops the user back into the still-playing previous video.
         val intent = Intent(this, MainActivity::class.java).apply {
             putExtra(MainActivity.EXTRA_URL, url)
+            if (startMs > 0L) putExtra(MainActivity.EXTRA_START_MS, startMs)
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_CLEAR_TASK

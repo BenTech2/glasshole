@@ -22,6 +22,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "GlassStream"
         const val EXTRA_URL = "com.glasshole.streamplayer.EXTRA_URL"
+        const val EXTRA_START_MS = "com.glasshole.streamplayer.EXTRA_START_MS"
         const val ACTION_PLAY_URL = "com.glasshole.streamplayer.ACTION_PLAY_URL"
     }
 
@@ -38,8 +39,9 @@ class MainActivity : AppCompatActivity() {
             )
 
         val externalUrl = intent?.getStringExtra(EXTRA_URL)
+        val startMs = intent?.getLongExtra(EXTRA_START_MS, 0L) ?: 0L
         if (!externalUrl.isNullOrBlank()) {
-            launchPlayer(externalUrl)
+            launchPlayer(externalUrl, startMs)
         } else {
             binding.statusText.text = "Share a video URL from your phone"
         }
@@ -48,24 +50,28 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         val externalUrl = intent?.getStringExtra(EXTRA_URL)
+        val startMs = intent?.getLongExtra(EXTRA_START_MS, 0L) ?: 0L
         if (!externalUrl.isNullOrBlank()) {
-            launchPlayer(externalUrl)
+            launchPlayer(externalUrl, startMs)
         }
     }
 
-    private fun launchPlayer(url: String) {
-        Log.d(TAG, "Received URL: $url")
+    private fun launchPlayer(url: String, startMs: Long = 0L) {
+        Log.d(TAG, "Received URL: $url (startMs=$startMs)")
         val platform = StreamResolver.identify(url)
         val name = StreamResolver.displayName(url)
         binding.statusText.text = "$name found! Loading..."
 
         val target = if (platform == StreamPlatform.WEBVIEW_FALLBACK) {
+            // WebView loads the URL directly — YouTube itself honours the
+            // `?t=` timestamp so we don't need to forward startMs here.
             Intent(this, WebViewPlayerActivity::class.java).apply {
                 putExtra(WebViewPlayerActivity.EXTRA_URL, url)
             }
         } else {
             Intent(this, PlayerActivity::class.java).apply {
                 putExtra(PlayerActivity.EXTRA_URL, url)
+                if (startMs > 0L) putExtra(PlayerActivity.EXTRA_START_MS, startMs)
             }
         }
         // Every PLAY_URL replaces whatever's playing — wipe the stream
