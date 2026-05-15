@@ -88,6 +88,36 @@
                     android:layout_marginBottom="12dp" />
 
                 <TextView
+                    android:id="@+id/backgroundFadeLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Background fade: 0 / 255"
+                    android:textAppearance="?attr/textAppearanceBodyLarge"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Dim the home wallpaper so UI text stays readable. Drop a JPG/PNG into /sdcard/GlassHole/backgrounds/ on glass."
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:layout_marginTop="2dp" />
+
+                <SeekBar
+                    android:id="@+id/backgroundFadeSeek"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="255"
+                    android:layout_marginTop="4dp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?attr/colorOutlineVariant"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
                     android:id="@+id/volumeLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"

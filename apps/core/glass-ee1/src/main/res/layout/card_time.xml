@@ -2,7 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@android:color/transparent">
 
     <!-- Top-left status icons: phone (BT) and Wi-Fi. Each is hidden when
          the corresponding link is down — we intentionally show nothing

@@ -83,6 +83,12 @@ object BaseSettings {
      *  copy of this file for the WRITE_SECURE_SETTINGS adb-grant
      *  command. */
     const val KEY_STAY_AWAKE_WHEN_CHARGING = "stay_awake_when_charging"
+    /** Alpha (0..255) of the black "fade" layer drawn over the
+     *  background wallpaper so UI text stays readable. HomeActivity
+     *  reads this on resume + when the pref changes. 0 = no fade
+     *  (background fully visible); 255 = solid black (background
+     *  effectively hidden). */
+    const val KEY_BACKGROUND_FADE = "background_fade"
 
     fun isNavInverted(context: android.content.Context): Boolean =
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)

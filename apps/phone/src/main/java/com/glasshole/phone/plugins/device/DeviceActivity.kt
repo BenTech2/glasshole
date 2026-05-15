@@ -27,6 +27,9 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var brightnessLabel: TextView
     private lateinit var brightnessAutoSwitch: MaterialSwitch
 
+    private lateinit var backgroundFadeSeek: SeekBar
+    private lateinit var backgroundFadeLabel: TextView
+
     private lateinit var volumeSeek: SeekBar
     private lateinit var volumeLabel: TextView
 
@@ -74,6 +77,8 @@ class DeviceActivity : AppCompatActivity() {
         brightnessSeek = findViewById(R.id.brightnessSeek)
         brightnessLabel = findViewById(R.id.brightnessLabel)
         brightnessAutoSwitch = findViewById(R.id.brightnessAutoSwitch)
+        backgroundFadeSeek = findViewById(R.id.backgroundFadeSeek)
+        backgroundFadeLabel = findViewById(R.id.backgroundFadeLabel)
         volumeSeek = findViewById(R.id.volumeSeek)
         volumeLabel = findViewById(R.id.volumeLabel)
         timeoutSeek = findViewById(R.id.timeoutSeek)
@@ -146,6 +151,30 @@ class DeviceActivity : AppCompatActivity() {
             brightnessSeek.isEnabled = !isChecked
         }
 
+        // Background fade — drives the alpha (0..255) of the black
+        // overlay on top of HomeActivity's wallpaper, so UI text
+        // stays readable over an arbitrary user image. Routes to the
+        // glass base plugin (not device plugin) since it's a base-app
+        // UI feature, not a system Settings.System value.
+        backgroundFadeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                backgroundFadeLabel.text = "Background fade: $progress / 255"
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                val value = sb?.progress ?: 0
+                getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+                    .edit().putInt("background_fade", value).apply()
+                val bridge = BridgeService.instance
+                if (bridge == null || !bridge.isConnected) {
+                    toast("Glass not connected — will apply on next connect")
+                    return
+                }
+                val json = JSONObject().apply { put("value", value) }.toString()
+                bridge.sendPluginMessage("base", "SET_BACKGROUND_FADE", json)
+            }
+        })
+
         volumeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 val max = DevicePlugin.instance?.latestState?.volumeMax ?: 15
@@ -202,6 +231,10 @@ class DeviceActivity : AppCompatActivity() {
         // not through the device plugin. Cache UI state locally so the
         // switch shows correctly before the glass reports back.
         val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+
+        val cachedFade = prefs.getInt("background_fade", 0).coerceIn(0, 255)
+        backgroundFadeSeek.progress = cachedFade
+        backgroundFadeLabel.text = "Background fade: $cachedFade / 255"
 
         tiltWakeSwitch.isChecked = prefs.getBoolean("tilt_wake_enabled", false)
         tiltWakeSwitch.setOnCheckedChangeListener { _, isChecked ->

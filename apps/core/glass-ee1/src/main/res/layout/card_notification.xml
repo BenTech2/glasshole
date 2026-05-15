@@ -16,7 +16,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#000000">
+    android:background="@android:color/transparent">
 
     <!-- Stack region: hosts the two back cards. Each is a real card
          shape (rounded top corners, hairline border, grey fill) so the

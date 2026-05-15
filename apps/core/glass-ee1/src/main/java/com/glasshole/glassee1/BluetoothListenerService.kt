@@ -179,6 +179,19 @@ class BluetoothListenerService : Service() {
             Log.w(TAG, "powerStateReceiver register failed: ${e.message}")
         }
 
+        // React the moment the BT adapter actually flips on — clears
+        // our retry-backoff so the listen thread can stop sleeping and
+        // immediately re-open the server socket, instead of waiting
+        // out the remainder of the current backoff window.
+        try {
+            registerReceiver(
+                bluetoothStateReceiver,
+                IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "bluetoothStateReceiver register failed: ${e.message}")
+        }
+
         startListening()
     }
 
@@ -249,6 +262,7 @@ class BluetoothListenerService : Service() {
         wakeLock?.release()
         wakeLock = null
         try { unregisterReceiver(powerStateReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}
         try { if (stayAwakeWakeLock.isHeld) stayAwakeWakeLock.release() } catch (_: Exception) {}
         stopForeground(true)
         super.onDestroy()
@@ -480,6 +494,15 @@ class BluetoothListenerService : Service() {
                 applyStayAwakeWhenCharging(enabled)
                 sendBaseStateToPhone()
             }
+            "SET_BACKGROUND_FADE" -> {
+                val value = try {
+                    JSONObject(payload).optInt("value", 0).coerceIn(0, 255)
+                } catch (_: Exception) { 0 }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putInt(BaseSettings.KEY_BACKGROUND_FADE, value).apply()
+                Log.i(TAG, "Background fade=$value")
+                sendBaseStateToPhone()
+            }
             "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
@@ -561,6 +584,7 @@ class BluetoothListenerService : Service() {
             put("invertNav", prefs.getBoolean(BaseSettings.KEY_INVERT_NAV, false))
             put("stayAwakeWhenCharging", prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false))
             put("stayAwakeWhenChargingGranted", canWriteSecureSettings())
+            put("backgroundFade", prefs.getInt(BaseSettings.KEY_BACKGROUND_FADE, 0))
         }.toString()
         sendPluginMessage("base", "STATE", json)
     }
@@ -619,6 +643,24 @@ class BluetoothListenerService : Service() {
     private val powerStateReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             refreshStayAwakeWakeLock()
+        }
+    }
+
+    /** Resets the BT-enable backoff when the system observes
+     *  STATE_ON, so the listen-thread can immediately re-attempt
+     *  the server socket once the adapter is actually usable
+     *  again — typically after a manual toggle in Settings or
+     *  the BT stack finishing its own error recovery. */
+    private val bluetoothStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val state = intent.getIntExtra(
+                BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR
+            )
+            if (state == BluetoothAdapter.STATE_ON && bluetoothEnableAttempts > 0) {
+                Log.i(TAG, "ACTION_STATE_CHANGED: STATE_ON — clearing enable backoff")
+                bluetoothEnableAttempts = 0
+                bluetoothNextEnableElapsedMs = 0L
+            }
         }
     }
 
@@ -950,6 +992,14 @@ class BluetoothListenerService : Service() {
 
     // --- BT Server ---
 
+    /** Backoff state for the "BT is off, please turn on" recovery path.
+     *  When the Glass BT stack falls into ENABLE_TIMEOUT /
+     *  recoverBluetoothServiceFromError, calling adapter.enable()
+     *  every retry just keeps the BT manager spinning. Track
+     *  consecutive failures and slow our retries down. */
+    private var bluetoothEnableAttempts: Int = 0
+    private var bluetoothNextEnableElapsedMs: Long = 0L
+
     private fun startListening() {
         Thread {
             while (running) {
@@ -962,7 +1012,21 @@ class BluetoothListenerService : Service() {
                     }
 
                     if (!adapter.isEnabled) {
-                        Log.w(TAG, "Bluetooth is off — attempting to enable")
+                        // Backoff so we don't hammer adapter.enable() every
+                        // 6 s while the BT stack is stuck in error recovery.
+                        // Schedule grows on each consecutive failure; resets
+                        // to 0 the moment we observe STATE_ON.
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now < bluetoothNextEnableElapsedMs) {
+                            val sleep = (bluetoothNextEnableElapsedMs - now).coerceAtMost(2_000L)
+                            try { Thread.sleep(sleep) } catch (_: InterruptedException) { break }
+                            continue
+                        }
+                        if (bluetoothEnableAttempts == 0) {
+                            Log.w(TAG, "Bluetooth is off — attempting to enable")
+                        } else {
+                            Log.d(TAG, "Bluetooth still off — re-attempting enable (#${bluetoothEnableAttempts + 1})")
+                        }
                         try { adapter.enable() } catch (_: Exception) {}
                         // Wait for STATE_ON; up to ~6s before falling through
                         // to the listen attempt (which will fail and retry).
@@ -971,7 +1035,30 @@ class BluetoothListenerService : Service() {
                             try { Thread.sleep(500) } catch (_: InterruptedException) { break }
                             waited += 500
                         }
-                        if (!adapter.isEnabled) continue
+                        if (!adapter.isEnabled) {
+                            bluetoothEnableAttempts++
+                            val backoffMs = when (bluetoothEnableAttempts) {
+                                1 -> 5_000L
+                                2 -> 15_000L
+                                3 -> 30_000L
+                                else -> 60_000L
+                            }
+                            bluetoothNextEnableElapsedMs =
+                                android.os.SystemClock.elapsedRealtime() + backoffMs
+                            Log.w(
+                                TAG,
+                                "Bluetooth enable failed (#$bluetoothEnableAttempts) — " +
+                                    "next retry in ${backoffMs / 1000}s. " +
+                                    "Reboot the glass if this persists."
+                            )
+                            continue
+                        }
+                        // Adapter came online — clear backoff state.
+                        if (bluetoothEnableAttempts > 0) {
+                            Log.i(TAG, "Bluetooth came back online after $bluetoothEnableAttempts attempts")
+                        }
+                        bluetoothEnableAttempts = 0
+                        bluetoothNextEnableElapsedMs = 0L
                     }
 
                     serverSocket = adapter.listenUsingRfcommWithServiceRecord(SERVICE_NAME, APP_UUID)
