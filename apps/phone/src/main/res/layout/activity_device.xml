@@ -110,6 +110,14 @@
                     android:max="255"
                     android:layout_marginTop="4dp" />
 
+                <Button
+                    android:id="@+id/uploadBackgroundButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:text="Upload wallpaper" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"

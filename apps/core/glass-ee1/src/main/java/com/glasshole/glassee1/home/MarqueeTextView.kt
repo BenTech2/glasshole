@@ -74,8 +74,15 @@ class MarqueeTextView @JvmOverloads constructor(
         )
         val baseLine = baseline.toFloat()
         val startX = paddingStart.toFloat() - offset
+        // On KitKat the TextView paint's color isn't always synced to
+        // currentTextColor outside of the StaticLayout draw path, so
+        // drawing directly with `paint` ends up invisible (black on
+        // black). Force the right color before each frame.
+        val savedColor = paint.color
+        paint.color = currentTextColor
         canvas.drawText(content, startX, baseLine, paint)
         canvas.drawText(content, startX + cycleDist, baseLine, paint)
+        paint.color = savedColor
         canvas.restoreToCount(saved)
 
         postInvalidateOnAnimation()

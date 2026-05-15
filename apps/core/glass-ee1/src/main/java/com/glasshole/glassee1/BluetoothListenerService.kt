@@ -503,6 +503,7 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Background fade=$value")
                 sendBaseStateToPhone()
             }
+            "BG_UPLOAD_REQ" -> handleBgUploadReq(payload)
             "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
@@ -594,6 +595,111 @@ class BluetoothListenerService : Service() {
             android.Manifest.permission.WRITE_SECURE_SETTINGS,
             packageName
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    /** Active wallpaper upload server. Built on-demand on the first
+     *  BG_UPLOAD_REQ and stopped after the single upload completes
+     *  (or its idle timeout fires); see WallpaperUploadServer for
+     *  the protocol. Held here so a subsequent BG_UPLOAD_REQ during
+     *  an in-flight upload can return the existing URL rather than
+     *  spinning up a second server. */
+    private var wallpaperUploadServer: WallpaperUploadServer? = null
+
+    private fun handleBgUploadReq(payload: String) {
+        // Sanity-check the requested size up-front so we can fail
+        // fast over BT instead of having the phone discover the
+        // 413 after streaming the body.
+        val size = try { JSONObject(payload).optLong("size", -1L) } catch (_: Exception) { -1L }
+        if (size <= 0L) {
+            sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                put("reason", "bad_size")
+            }.toString())
+            return
+        }
+        if (size > WallpaperUploadServer.MAX_SIZE_BYTES) {
+            sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                put("reason", "too_large")
+                put("max", WallpaperUploadServer.MAX_SIZE_BYTES)
+            }.toString())
+            return
+        }
+
+        // Spin up (or re-use) the upload server. Reusing on retry
+        // keeps the same URL valid for phone-side retries inside
+        // the idle window.
+        val existing = wallpaperUploadServer
+        val server = existing ?: WallpaperUploadServer(
+            this,
+            onComplete = { filename, bytes -> writeUploadedWallpaper(filename, bytes) },
+            onError = { reason ->
+                sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                    put("reason", reason)
+                }.toString())
+                wallpaperUploadServer = null
+            }
+        ).also { wallpaperUploadServer = it }
+
+        val url = server.start()
+        if (url == null) {
+            Log.w(TAG, "BG_UPLOAD_REQ: no Wi-Fi LAN to advertise")
+            sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                put("reason", "no_wifi")
+            }.toString())
+            wallpaperUploadServer = null
+            return
+        }
+        sendPluginMessage("base", "BG_UPLOAD_OPEN", JSONObject().apply {
+            put("url", url)
+        }.toString())
+    }
+
+    private fun writeUploadedWallpaper(filename: String, bytes: ByteArray) {
+        // Sanitize filename — keep only what looks like a basename so
+        // a malicious phone can't path-traverse into / etc. Also pin
+        // to .jpg if the phone sent something weird; HomeActivity
+        // accepts jpg/jpeg/png.
+        val safeName = filename
+            .substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifEmpty { "wallpaper.jpg" }
+            .let {
+                val ext = it.substringAfterLast('.', "").lowercase()
+                if (ext in setOf("jpg", "jpeg", "png")) it else "$it.jpg"
+            }
+        val dir = java.io.File("/sdcard/GlassHole/backgrounds")
+        try {
+            if (!dir.exists()) dir.mkdirs()
+            val target = java.io.File(dir, safeName)
+            target.outputStream().use { it.write(bytes) }
+            Log.i(TAG, "Wallpaper written: ${target.absolutePath} (${bytes.size} bytes)")
+            // Only keep the latest wallpaper — older uploads waste space
+            // on the glass. Delete anything in the dir that isn't the
+            // file we just wrote.
+            dir.listFiles()?.forEach { f ->
+                if (f.isFile && f.absolutePath != target.absolutePath) {
+                    if (f.delete()) Log.i(TAG, "Pruned old wallpaper: ${f.name}")
+                    else Log.w(TAG, "Failed to delete old wallpaper: ${f.name}")
+                }
+            }
+            // Local broadcast so a foregrounded HomeActivity can pick
+            // up the new wallpaper without the user backing out and
+            // re-opening Home.
+            sendBroadcast(
+                Intent("com.glasshole.glass.WALLPAPER_CHANGED").setPackage(packageName)
+            )
+            sendPluginMessage("base", "BG_UPLOAD_DONE", JSONObject().apply {
+                put("filename", safeName)
+                put("size", bytes.size)
+            }.toString())
+        } catch (e: Exception) {
+            Log.e(TAG, "Wallpaper write failed: ${e.message}")
+            sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                put("reason", "write_failed")
+                put("detail", e.message ?: "")
+            }.toString())
+        } finally {
+            wallpaperUploadServer = null
+        }
+    }
 
     private fun handleLaunchPackage(payload: String) {
         val pkg = try { JSONObject(payload).optString("pkg") } catch (_: Exception) { "" }

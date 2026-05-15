@@ -237,10 +237,12 @@ class HomeActivity : Activity() {
             "GlassHoleHome",
             "Wallpaper listing: ${files?.joinToString { it.name } ?: "(null)"}"
         )
+        // Most-recently-modified wins, so the latest upload from the
+        // phone-side picker is always the active wallpaper without
+        // requiring the user to manage filenames.
         val candidate = files
             ?.filter { it.isFile && it.extension.lowercase() in setOf("jpg", "jpeg", "png") }
-            ?.sortedBy { it.name.lowercase() }
-            ?.firstOrNull()
+            ?.maxByOrNull { it.lastModified() }
             ?: return null
         android.util.Log.i("GlassHoleHome", "Wallpaper picked: ${candidate.absolutePath}")
         // Two-pass decode: first inJustDecodeBounds to read the source
@@ -267,6 +269,16 @@ class HomeActivity : Activity() {
 
     private val notifStoreListener: () -> Unit = {
         runOnUiThread { cardAdapter.refreshNotificationCard() }
+    }
+
+    /** Fired by BluetoothListenerService after a successful
+     *  wallpaper upload from the phone. Triggers an immediate
+     *  re-scan of the backgrounds directory so the new image
+     *  appears without the user backing out of Home. */
+    private val wallpaperChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            loadBackgroundAsync()
+        }
     }
 
     private val pluginMessageReceiver = object : BroadcastReceiver() {
@@ -486,6 +498,17 @@ class HomeActivity : Activity() {
             registerReceiver(pluginMessageReceiver, filter)
         }
 
+        // Live reload when the phone uploads a new wallpaper —
+        // BluetoothListenerService fires this broadcast after writing
+        // the file so the user sees the change without backing out
+        // and re-opening Home.
+        val wallpaperFilter = IntentFilter("com.glasshole.glass.WALLPAPER_CHANGED")
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(wallpaperChangedReceiver, wallpaperFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(wallpaperChangedReceiver, wallpaperFilter)
+        }
+
         NotificationStore.addListener(notifStoreListener)
         cardAdapter.refreshNotificationCard()
         refreshFromPhone()
@@ -505,6 +528,7 @@ class HomeActivity : Activity() {
         tickHandler.removeCallbacks(tickRunnable)
         tickHandler.removeCallbacks(dimRunnable)
         try { unregisterReceiver(pluginMessageReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
         NotificationStore.removeListener(notifStoreListener)
         try {
             getSharedPreferences(com.glasshole.glassee1.BaseSettings.PREFS, MODE_PRIVATE)

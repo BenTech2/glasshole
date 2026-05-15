@@ -52,6 +52,8 @@ class HomeActivity : Activity() {
     private lateinit var cardAdapter: CardAdapter
     private lateinit var mediaOverlay: View
     private lateinit var sleepOverlay: View
+    private lateinit var backgroundImage: android.widget.ImageView
+    private lateinit var backgroundFade: View
     private var mediaOverlayVisible: Boolean = false
 
     // Swipe-down detection (same pattern the plugins use). We track in
@@ -169,10 +171,86 @@ class HomeActivity : Activity() {
 
     private val prefsChangeListener =
         android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == com.glasshole.glassxe.BaseSettings.KEY_NAV_KEEP_SCREEN_ON) {
-                updateKeepScreenOn()
+            when (key) {
+                com.glasshole.glassxe.BaseSettings.KEY_NAV_KEEP_SCREEN_ON -> updateKeepScreenOn()
+                com.glasshole.glassxe.BaseSettings.KEY_BACKGROUND_FADE -> applyBackgroundFade()
             }
         }
+
+    /** Read the fade slider value (0..255) from prefs and apply it to
+     *  the black overlay covering the wallpaper. 0 = no fade,
+     *  255 = solid black (wallpaper effectively hidden). */
+    private fun applyBackgroundFade() {
+        val alpha = getSharedPreferences(
+            com.glasshole.glassxe.BaseSettings.PREFS, MODE_PRIVATE
+        ).getInt(com.glasshole.glassxe.BaseSettings.KEY_BACKGROUND_FADE, 0)
+            .coerceIn(0, 255)
+        if (alpha == 0) {
+            backgroundFade.visibility = View.GONE
+        } else {
+            backgroundFade.visibility = View.VISIBLE
+            backgroundFade.alpha = alpha / 255f
+        }
+    }
+
+    /** Pull the latest JPEG/PNG out of /sdcard/GlassHole/backgrounds/
+     *  on a worker thread, sub-sample to the display dimensions, and
+     *  install it into the backgroundImage view. */
+    private fun loadBackgroundAsync() {
+        val dm = resources.displayMetrics
+        val targetW = dm.widthPixels
+        val targetH = dm.heightPixels
+        Thread {
+            val bmp = try {
+                decodeFirstWallpaper(targetW, targetH)
+            } catch (t: Throwable) {
+                android.util.Log.w("GlassHoleHome", "Wallpaper decode threw: ${t.message}")
+                null
+            }
+            runOnUiThread {
+                if (bmp != null) {
+                    android.util.Log.i("GlassHoleHome", "Wallpaper loaded: ${bmp.width}x${bmp.height}")
+                    backgroundImage.setImageBitmap(bmp)
+                    backgroundImage.visibility = View.VISIBLE
+                } else {
+                    android.util.Log.i("GlassHoleHome", "Wallpaper: no image installed")
+                    backgroundImage.setImageBitmap(null)
+                    backgroundImage.visibility = View.GONE
+                }
+            }
+        }.apply { isDaemon = true; name = "HomeBgLoader" }.start()
+    }
+
+    private fun decodeFirstWallpaper(targetW: Int, targetH: Int): android.graphics.Bitmap? {
+        val dir = java.io.File("/sdcard/GlassHole/backgrounds")
+        if (!dir.isDirectory) return null
+        // Most-recently-modified wins, so the latest upload from the
+        // phone-side picker is always the active wallpaper.
+        val candidate = dir.listFiles()
+            ?.filter { it.isFile && it.extension.lowercase() in setOf("jpg", "jpeg", "png") }
+            ?.maxByOrNull { it.lastModified() }
+            ?: return null
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(candidate.absolutePath, bounds)
+        var sample = 1
+        while (bounds.outWidth / sample > targetW * 2 ||
+            bounds.outHeight / sample > targetH * 2
+        ) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+        }
+        return android.graphics.BitmapFactory.decodeFile(candidate.absolutePath, opts)
+    }
+
+    /** Fired by BluetoothListenerService after a successful
+     *  wallpaper upload. Triggers an immediate re-scan so the new
+     *  image appears without re-opening Home. */
+    private val wallpaperChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            loadBackgroundAsync()
+        }
+    }
 
     private fun setBrightness(value: Float) {
         val lp = window.attributes
@@ -220,6 +298,8 @@ class HomeActivity : Activity() {
         pager = findViewById(R.id.cardPager)
         mediaOverlay = findViewById(R.id.mediaOverlay)
         sleepOverlay = findViewById(R.id.sleepOverlay)
+        backgroundImage = findViewById(R.id.backgroundImage)
+        backgroundFade = findViewById(R.id.backgroundFade)
         cardAdapter = CardAdapter(this)
         pager.adapter = cardAdapter
         pager.offscreenPageLimit = 1
@@ -403,6 +483,17 @@ class HomeActivity : Activity() {
             registerReceiver(pluginMessageReceiver, filter)
         }
 
+        // Live reload when the phone uploads a new wallpaper —
+        // BluetoothListenerService fires this broadcast after writing
+        // the file so the user sees the change without backing out
+        // and re-opening Home.
+        val wallpaperFilter = IntentFilter("com.glasshole.glass.WALLPAPER_CHANGED")
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(wallpaperChangedReceiver, wallpaperFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(wallpaperChangedReceiver, wallpaperFilter)
+        }
+
         NotificationStore.addListener(notifStoreListener)
         cardAdapter.refreshNotificationCard()
         refreshFromPhone()
@@ -413,6 +504,8 @@ class HomeActivity : Activity() {
         getSharedPreferences(com.glasshole.glassxe.BaseSettings.PREFS, MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsChangeListener)
         updateKeepScreenOn()
+        applyBackgroundFade()
+        loadBackgroundAsync()
     }
 
     override fun onStop() {
@@ -420,6 +513,7 @@ class HomeActivity : Activity() {
         tickHandler.removeCallbacks(tickRunnable)
         tickHandler.removeCallbacks(dimRunnable)
         try { unregisterReceiver(pluginMessageReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
         NotificationStore.removeListener(notifStoreListener)
         try {
             getSharedPreferences(com.glasshole.glassxe.BaseSettings.PREFS, MODE_PRIVATE)
