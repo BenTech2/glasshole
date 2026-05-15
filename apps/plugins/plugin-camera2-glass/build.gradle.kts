@@ -33,6 +33,15 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+
+    // Reflective access to LED_AVAILABLE_LEDS / LED_TRANSMIT keeps the
+    // IR-LED control alive on the Glass EE2 firmwares that expose it.
+    // BlockedPrivateApi is a hard lint error at compileSdk 34; we
+    // ship debug-signed builds and accept the SDK-incompat risk
+    // because EE2 firmware never moves past API 27.
+    lint {
+        disable += "BlockedPrivateApi"
+    }
 }
 
 dependencies {

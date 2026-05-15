@@ -118,6 +118,40 @@ class NotesActivity : AppCompatActivity() {
     }
 
     private fun showEditDialog(note: Note) {
+        // Glass-options first; the dialog itself stays a simple edit-or-
+        // dismiss surface, but giving the user a quick action menu first
+        // avoids cluttering the Save dialog with too many neutral-button
+        // slots (Android only allows one).
+        val options = arrayOf("Edit", "Send to Glass", "Teleprompter mode")
+        AlertDialog.Builder(this)
+            .setTitle(note.text.lines().firstOrNull()?.take(40) ?: "Note")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showEditTextDialog(note)
+                    1 -> {
+                        val updated = db.getNoteById(note.id) ?: return@setItems
+                        val sent = NotesPlugin.instance?.sendNoteToGlass(updated) ?: false
+                        val msg = if (sent) "Sent to Glass" else "Glass not connected"
+                        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                    }
+                    2 -> {
+                        val updated = db.getNoteById(note.id) ?: return@setItems
+                        val title = updated.text.lines().firstOrNull()?.take(50) ?: "Note"
+                        val intent = android.content.Intent(
+                            this, TeleprompterControlActivity::class.java
+                        ).apply {
+                            putExtra(TeleprompterControlActivity.EXTRA_NOTE_ID, updated.id)
+                            putExtra(TeleprompterControlActivity.EXTRA_NOTE_TITLE, title)
+                            putExtra(TeleprompterControlActivity.EXTRA_NOTE_TEXT, updated.text)
+                        }
+                        startActivity(intent)
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun showEditTextDialog(note: Note) {
         val input = EditText(this).apply {
             setText(note.text)
             minLines = 3
@@ -132,14 +166,6 @@ class NotesActivity : AppCompatActivity() {
                 if (text.isNotEmpty()) {
                     db.updateNote(note.id, text)
                     refreshNotes()
-                }
-            }
-            .setNeutralButton("Send to Glass") { _, _ ->
-                val updated = db.getNoteById(note.id)
-                if (updated != null) {
-                    val sent = NotesPlugin.instance?.sendNoteToGlass(updated) ?: false
-                    val msg = if (sent) "Sent to Glass" else "Glass not connected"
-                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton("Cancel", null)

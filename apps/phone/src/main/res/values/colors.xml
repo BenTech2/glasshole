@@ -9,6 +9,14 @@
     <color name="seed_on_primary_container">#001A41</color>
     <color name="seed_secondary">#445E91</color>
 
+    <!-- Dark-mode variants — only referenced from values-night/styles.xml,
+         but lint wants base-values fallbacks so the resource is defined
+         under every configuration. Same values as values-night/colors.xml
+         on purpose; they should never resolve outside night mode. -->
+    <color name="seed_primary_dark">#AFC6FF</color>
+    <color name="seed_primary_container_dark">#0040A1</color>
+    <color name="seed_secondary_dark">#ADC6FF</color>
+
     <!-- Adaptive-icon background. The galaxy-orb foreground sits over a
          deep space-black so the bezel reads as part of the icon rather
          than the launcher's wallpaper. -->

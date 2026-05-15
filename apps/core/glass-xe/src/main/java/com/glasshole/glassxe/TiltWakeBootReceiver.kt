@@ -83,6 +83,11 @@ object BaseSettings {
      *  copy of this file for the WRITE_SECURE_SETTINGS adb-grant
      *  command. */
     const val KEY_STAY_AWAKE_WHEN_CHARGING = "stay_awake_when_charging"
+    /** Alpha (0..255) of the black overlay drawn on top of the
+     *  user-uploaded wallpaper on Home. 0 = wallpaper at full brightness,
+     *  255 = wallpaper fully hidden (solid black). Driven by the
+     *  phone-side fade slider in DeviceActivity. */
+    const val KEY_BACKGROUND_FADE = "background_fade"
 
     fun isNavInverted(context: android.content.Context): Boolean =
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)

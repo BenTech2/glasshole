@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The label/title is rendered once at the activity level (overlayLabel
+     in activity_app_drawer.xml) so it stays stationary while the icons
+     scroll past, and is animated on page-settle. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:gravity="center">
+    android:gravity="center"
+    android:paddingTop="24dp"
+    android:clipChildren="false"
+    android:clipToPadding="false">
 
-    <ImageView
+    <com.glasshole.glassee2.home.ReflectionImageView
         android:id="@+id/appIcon"
         android:layout_width="160dp"
         android:layout_height="160dp"
@@ -14,16 +20,10 @@
         android:scaleType="fitCenter"
         android:contentDescription="App icon" />
 
-    <TextView
-        android:id="@+id/appLabel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:textColor="#FFFFFF"
-        android:textSize="20sp"
-        android:fontFamily="sans-serif-medium"
-        android:maxLines="1"
-        android:ellipsize="end"
-        android:text="" />
+    <!-- Reserves space below the icon for the reflection (which draws
+         outside the ReflectionImageView's measured bounds). -->
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="36dp" />
 
 </LinearLayout>

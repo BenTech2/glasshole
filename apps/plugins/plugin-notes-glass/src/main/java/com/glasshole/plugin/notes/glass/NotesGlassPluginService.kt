@@ -13,9 +13,27 @@ class NotesGlassPluginService : GlassPluginService() {
     companion object {
         private const val TAG = "NotesGlassPlugin"
         const val PREFS_NAME = "notes_settings"
+
+        /** Static handle so the teleprompter activity can call back into
+         *  the plugin bridge (sendToPhone) for state echo without having
+         *  to bind the service itself. Null when the service isn't
+         *  running. */
+        @Volatile
+        var instance: NotesGlassPluginService? = null
+            private set
     }
 
     override val pluginId: String = "notes"
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+    }
+
+    override fun onDestroy() {
+        instance = null
+        super.onDestroy()
+    }
 
     // Routes SCHEMA_REQ / CONFIG_READ / CONFIG_WRITE for the dynamic
     // settings UI. The schema is the res/raw/plugin_schema.json we ship,
@@ -38,8 +56,61 @@ class NotesGlassPluginService : GlassPluginService() {
             "NOTE_CONTENT" -> handleNoteContent(message.payload)
             "NOTE_LIST" -> handleNoteList(message.payload)
             "NOTE_SAVED_ACK" -> handleSaveAck(message.payload)
+            "TELEPROMPTER_START" -> handleTeleprompterStart(message.payload)
+            "TELEPROMPTER_CONTROL" -> handleTeleprompterControl(message.payload)
+            "TELEPROMPTER_STOP" -> handleTeleprompterStop()
             else -> Log.w(TAG, "Unknown message type: ${message.type}")
         }
+    }
+
+    private fun handleTeleprompterStart(payload: String) {
+        try {
+            val json = JSONObject(payload)
+            val intent = Intent(this, TeleprompterActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                putExtra(TeleprompterActivity.EXTRA_TEXT, json.optString("text", ""))
+                if (json.has("speedPxPerSec")) putExtra(
+                    TeleprompterActivity.EXTRA_SPEED_PX_PER_SEC,
+                    json.getDouble("speedPxPerSec").toFloat()
+                )
+                if (json.has("fontSp")) putExtra(
+                    TeleprompterActivity.EXTRA_FONT_SP,
+                    json.getDouble("fontSp").toFloat()
+                )
+                if (json.has("playing")) putExtra(
+                    TeleprompterActivity.EXTRA_PLAYING,
+                    json.getBoolean("playing")
+                )
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Teleprompter start failed: ${e.message}")
+        }
+    }
+
+    private fun handleTeleprompterControl(payload: String) {
+        // Re-fire as a local broadcast so the activity (which holds the
+        // text + scroll state) can apply the change without needing a
+        // bind back into this service.
+        val intent = Intent(TeleprompterActivity.ACTION_CONTROL).apply {
+            setPackage(packageName)
+            putExtra("payload", payload)
+        }
+        sendBroadcast(intent)
+    }
+
+    private fun handleTeleprompterStop() {
+        val intent = Intent(TeleprompterActivity.ACTION_STOP).apply {
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+    }
+
+    /** Called by TeleprompterActivity after every state change so the
+     *  phone-side control panel can reflect what's actually happening
+     *  on glass (including local tap-to-pause / speed adjustments). */
+    fun sendTeleprompterState(payload: String) {
+        sendToPhone(GlassPluginMessage("TELEPROMPTER_STATE", payload))
     }
 
     private fun handleNoteContent(payload: String) {

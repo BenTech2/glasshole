@@ -7,6 +7,29 @@
     android:focusableInTouchMode="false"
     android:descendantFocusability="blocksDescendants">
 
+    <!-- User-supplied wallpaper. HomeActivity loads the first image
+         in /sdcard/GlassHole/backgrounds/ (case-insensitive .jpg /
+         .png) into this view in onResume. Drawn first → underneath
+         every other UI element. -->
+    <ImageView
+        android:id="@+id/backgroundImage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:visibility="gone"
+        android:contentDescription="Wallpaper" />
+
+    <!-- Translucent black layer on top of the wallpaper. Alpha is
+         driven by BaseSettings.KEY_BACKGROUND_FADE (0..255) from the
+         phone-side fade slider so the user can dial in enough dim
+         for UI text to stay readable. -->
+    <View
+        android:id="@+id/backgroundFade"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone" />
+
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/cardPager"
         android:layout_width="match_parent"

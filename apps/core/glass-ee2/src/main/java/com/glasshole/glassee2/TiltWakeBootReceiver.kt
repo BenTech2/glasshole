@@ -78,6 +78,11 @@ object BaseSettings {
      *          android.permission.WRITE_SECURE_SETTINGS
      *  (and the matching standalone applicationId where applicable). */
     const val KEY_STAY_AWAKE_WHEN_CHARGING = "stay_awake_when_charging"
+    /** Alpha (0..255) of the black overlay drawn on top of the
+     *  user-uploaded wallpaper on Home. 0 = wallpaper at full brightness,
+     *  255 = wallpaper fully hidden (solid black). Driven by the
+     *  phone-side fade slider in DeviceActivity. */
+    const val KEY_BACKGROUND_FADE = "background_fade"
 
     /** Convenience accessor for the invert flag — every nav surface
      *  reads this once per gesture; the cost of a SharedPreferences

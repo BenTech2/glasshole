@@ -15,6 +15,7 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "GlassStream"
         private const val KEY_SCANNER_LAUNCHED = "scanner_launched"
         const val EXTRA_URL = "com.glasshole.streamplayer.EXTRA_URL"
+        const val EXTRA_START_MS = "com.glasshole.streamplayer.EXTRA_START_MS"
         const val ACTION_PLAY_URL = "com.glasshole.streamplayer.ACTION_PLAY_URL"
     }
 
@@ -29,11 +30,12 @@ class MainActivity : AppCompatActivity() {
         scannerLaunched = savedInstanceState?.getBoolean(KEY_SCANNER_LAUNCHED, false) ?: false
 
         val externalUrl = intent?.getStringExtra(EXTRA_URL)
+        val startMs = intent?.getLongExtra(EXTRA_START_MS, 0L) ?: 0L
         if (!externalUrl.isNullOrBlank()) {
             // Phone-share path: hand the URL to the player and finish so we
             // don't sit on the back stack as a "YouTube found, loading..."
             // ghost screen the user has to swipe past on close.
-            handleScannedUrl(externalUrl, finishAfter = true)
+            handleScannedUrl(externalUrl, finishAfter = true, startMs = startMs)
             return
         }
 
@@ -45,8 +47,9 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         val externalUrl = intent?.getStringExtra(EXTRA_URL)
+        val startMs = intent?.getLongExtra(EXTRA_START_MS, 0L) ?: 0L
         if (!externalUrl.isNullOrBlank()) {
-            handleScannedUrl(externalUrl, finishAfter = true)
+            handleScannedUrl(externalUrl, finishAfter = true, startMs = startMs)
         }
     }
 
@@ -82,19 +85,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun handleScannedUrl(url: String, finishAfter: Boolean) {
-        Log.d(TAG, "Scanned URL: $url")
+    private fun handleScannedUrl(url: String, finishAfter: Boolean, startMs: Long = 0L) {
+        Log.d(TAG, "Scanned URL: $url (startMs=$startMs)")
 
         val platform = StreamResolver.identify(url)
         val name = StreamResolver.displayName(url)
         statusText.text = "$name found! Loading..."
 
         val intent = when (platform) {
+            // WebView loads the URL directly — YouTube itself honours the
+            // `?t=` timestamp so we don't need to forward startMs here.
             StreamPlatform.WEBVIEW_FALLBACK -> Intent(this, WebViewPlayerActivity::class.java).apply {
                 putExtra(WebViewPlayerActivity.EXTRA_URL, url)
             }
             else -> Intent(this, PlayerActivity::class.java).apply {
                 putExtra(PlayerActivity.EXTRA_URL, url)
+                if (startMs > 0L) putExtra(PlayerActivity.EXTRA_START_MS, startMs)
             }
         }
         startActivity(intent)

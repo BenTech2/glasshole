@@ -27,6 +27,10 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var brightnessLabel: TextView
     private lateinit var brightnessAutoSwitch: MaterialSwitch
 
+    private lateinit var backgroundFadeSeek: SeekBar
+    private lateinit var backgroundFadeLabel: TextView
+    private lateinit var uploadBackgroundButton: Button
+
     private lateinit var volumeSeek: SeekBar
     private lateinit var volumeLabel: TextView
 
@@ -66,6 +70,13 @@ class DeviceActivity : AppCompatActivity() {
     private val notifTimeoutSteps = intArrayOf(3, 5, 8, 12, 15, 20, 30, 60)
     private val defaultNotifTimeoutMs = 12_000L
 
+    /** Picker for the wallpaper-upload button — registers in onCreate
+     *  per AndroidX requirements (before STARTED). */
+    private val pickWallpaperLauncher =
+        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) handlePickedWallpaper(uri)
+        }
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +85,9 @@ class DeviceActivity : AppCompatActivity() {
         brightnessSeek = findViewById(R.id.brightnessSeek)
         brightnessLabel = findViewById(R.id.brightnessLabel)
         brightnessAutoSwitch = findViewById(R.id.brightnessAutoSwitch)
+        backgroundFadeSeek = findViewById(R.id.backgroundFadeSeek)
+        backgroundFadeLabel = findViewById(R.id.backgroundFadeLabel)
+        uploadBackgroundButton = findViewById(R.id.uploadBackgroundButton)
         volumeSeek = findViewById(R.id.volumeSeek)
         volumeLabel = findViewById(R.id.volumeLabel)
         timeoutSeek = findViewById(R.id.timeoutSeek)
@@ -146,6 +160,39 @@ class DeviceActivity : AppCompatActivity() {
             brightnessSeek.isEnabled = !isChecked
         }
 
+        uploadBackgroundButton.setOnClickListener {
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected")
+                return@setOnClickListener
+            }
+            pickWallpaperLauncher.launch("image/*")
+        }
+
+        // Background fade — drives the alpha (0..255) of the black
+        // overlay on top of HomeActivity's wallpaper, so UI text
+        // stays readable over an arbitrary user image. Routes to the
+        // glass base plugin (not device plugin) since it's a base-app
+        // UI feature, not a system Settings.System value.
+        backgroundFadeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                backgroundFadeLabel.text = "Background fade: $progress / 255"
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                val value = sb?.progress ?: 0
+                getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+                    .edit().putInt("background_fade", value).apply()
+                val bridge = BridgeService.instance
+                if (bridge == null || !bridge.isConnected) {
+                    toast("Glass not connected — will apply on next connect")
+                    return
+                }
+                val json = JSONObject().apply { put("value", value) }.toString()
+                bridge.sendPluginMessage("base", "SET_BACKGROUND_FADE", json)
+            }
+        })
+
         volumeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 val max = DevicePlugin.instance?.latestState?.volumeMax ?: 15
@@ -202,6 +249,10 @@ class DeviceActivity : AppCompatActivity() {
         // not through the device plugin. Cache UI state locally so the
         // switch shows correctly before the glass reports back.
         val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+
+        val cachedFade = prefs.getInt("background_fade", 0).coerceIn(0, 255)
+        backgroundFadeSeek.progress = cachedFade
+        backgroundFadeLabel.text = "Background fade: $cachedFade / 255"
 
         tiltWakeSwitch.isChecked = prefs.getBoolean("tilt_wake_enabled", false)
         tiltWakeSwitch.setOnCheckedChangeListener { _, isChecked ->
@@ -459,5 +510,91 @@ class DeviceActivity : AppCompatActivity() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Read the picked image, downscale + JPEG-encode it so we don't
+     * push a 10 MB phone-camera photo over the wire, then hand it
+     * to BridgeService.uploadWallpaper. Runs the IO + decode on a
+     * worker thread and bounces the result toast back to the main
+     * thread.
+     */
+    private fun handlePickedWallpaper(uri: android.net.Uri) {
+        uploadBackgroundButton.isEnabled = false
+        uploadBackgroundButton.text = "Uploading…"
+        toast("Preparing wallpaper…")
+        Thread {
+            val ok = try {
+                val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw java.io.IOException("Couldn't open image")
+                // Downscale to keep the upload small. EE1's screen is
+                // 640×360 — 1920px on the long edge is plenty of
+                // headroom and lands the JPEG under ~500KB for most
+                // photos.
+                val scaled = downscaleToJpeg(raw, maxEdgePx = 1920, quality = 80)
+                val filename = pickedFilename(uri) ?: "wallpaper.jpg"
+                val bridge = BridgeService.instance
+                if (bridge == null) {
+                    runOnUiThread { toast("Glass not connected") }
+                    false
+                } else {
+                    val latch = java.util.concurrent.CountDownLatch(1)
+                    var success = false
+                    var message = ""
+                    bridge.uploadWallpaper(scaled, filename) { okIn, msg ->
+                        success = okIn; message = msg; latch.countDown()
+                    }
+                    // 90s — wraps the glass-side 60s idle timeout +
+                    // POST + write headroom. Server self-tears down
+                    // on its own timeout regardless.
+                    latch.await(90, java.util.concurrent.TimeUnit.SECONDS)
+                    runOnUiThread {
+                        toast(if (message.isNotEmpty()) message else if (success) "Done" else "Timed out")
+                    }
+                    success
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast("Upload error: ${e.message}") }
+                false
+            }
+            runOnUiThread {
+                uploadBackgroundButton.isEnabled = true
+                uploadBackgroundButton.text = "Upload wallpaper"
+            }
+            android.util.Log.i("DeviceActivity", "Wallpaper upload result: $ok")
+        }.apply { isDaemon = true; name = "WallpaperPick"; start() }
+    }
+
+    private fun downscaleToJpeg(bytes: ByteArray, maxEdgePx: Int, quality: Int): ByteArray {
+        val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val srcMax = maxOf(opts.outWidth, opts.outHeight)
+        var sample = 1
+        while (srcMax / sample > maxEdgePx * 2) sample *= 2
+        opts.inJustDecodeBounds = false
+        opts.inSampleSize = sample
+        val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            ?: return bytes // weird format — let glass try the raw bytes
+        val finalBmp = if (maxOf(decoded.width, decoded.height) > maxEdgePx) {
+            val scale = maxEdgePx.toFloat() / maxOf(decoded.width, decoded.height)
+            val w = (decoded.width * scale).toInt()
+            val h = (decoded.height * scale).toInt()
+            android.graphics.Bitmap.createScaledBitmap(decoded, w, h, true).also {
+                if (it !== decoded) decoded.recycle()
+            }
+        } else decoded
+        val out = java.io.ByteArrayOutputStream()
+        finalBmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, out)
+        finalBmp.recycle()
+        return out.toByteArray()
+    }
+
+    private fun pickedFilename(uri: android.net.Uri): String? {
+        return try {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                }
+        } catch (_: Exception) { null }
     }
 }

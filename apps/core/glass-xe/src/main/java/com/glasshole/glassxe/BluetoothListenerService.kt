@@ -70,6 +70,12 @@ class BluetoothListenerService : Service() {
     private var serverSocket: BluetoothServerSocket? = null
     private var clientSocket: BluetoothSocket? = null
     private var outputStream: OutputStream? = null
+    // Serializes every write to outputStream. Without this, the BT
+    // reader thread (PONG), the main thread (PluginMessageReceiver →
+    // sendPluginMessage), AIDL plugin callbacks, and worker threads can
+    // all hit the socket simultaneously and interleave bytes mid-frame —
+    // the phone parses garbage and tears the link.
+    private val writeLock = Any()
     @Volatile private var running = false
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -296,16 +302,31 @@ class BluetoothListenerService : Service() {
         try { cameraLiveSession.stop() } catch (_: Exception) {}
     }
 
+    // --- Outbound writer ---
+
+    /**
+     * Sends one already-newline-terminated frame to the phone, holding
+     * [writeLock] for the duration of the write+flush so concurrent
+     * callers can't interleave bytes on the wire.
+     */
+    private fun writeRaw(line: String): Boolean {
+        return synchronized(writeLock) {
+            val os = outputStream ?: return@synchronized false
+            try {
+                os.write(line.toByteArray(Charsets.UTF_8))
+                os.flush()
+                true
+            } catch (e: IOException) {
+                Log.e(TAG, "BT write failed: ${e.message}")
+                false
+            }
+        }
+    }
+
     // --- Live stream debug feature ---
 
     private fun sendLine(prefix: String, value: String) {
-        val os = outputStream ?: return
-        try {
-            os.write("$prefix:$value\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-        } catch (e: IOException) {
-            Log.w(TAG, "sendLine $prefix failed: ${e.message}")
-        }
+        writeRaw("$prefix:$value\n")
     }
 
     private fun handleLiveCamStart() {
@@ -343,62 +364,32 @@ class BluetoothListenerService : Service() {
     // --- Send methods ---
 
     fun sendReply(message: String): Boolean {
-        val os = outputStream ?: return false
-        return try {
-            val escaped = message.replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("REPLY:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Send reply failed: ${e.message}")
-            false
-        }
+        val escaped = message.replace("\\", "\\\\").replace("\n", "\\n")
+        return writeRaw("REPLY:$escaped\n")
     }
 
     fun sendPluginMessage(pluginId: String, type: String, payload: String): Boolean {
-        val os = outputStream ?: return false
-        return try {
-            val escaped = payload.replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("PLUGIN:$pluginId:$type:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Send plugin message failed: ${e.message}")
-            false
-        }
+        val escaped = payload.replace("\\", "\\\\").replace("\n", "\\n")
+        return writeRaw("PLUGIN:$pluginId:$type:$escaped\n")
     }
 
     fun sendNotifAction(notifKey: String, actionId: String, replyText: String? = null): Boolean {
-        val os = outputStream ?: return false
-        return try {
-            val obj = JSONObject().apply {
-                put("key", notifKey)
-                put("id", actionId)
-                if (replyText != null) put("text", replyText)
-            }
-            val escaped = obj.toString().replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("NOTIF_ACTION:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            Log.i(TAG, "NOTIF_ACTION sent: $actionId")
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Send notif action failed: ${e.message}")
-            false
+        val obj = JSONObject().apply {
+            put("key", notifKey)
+            put("id", actionId)
+            if (replyText != null) put("text", replyText)
         }
+        val escaped = obj.toString().replace("\\", "\\\\").replace("\n", "\\n")
+        val ok = writeRaw("NOTIF_ACTION:$escaped\n")
+        if (ok) Log.i(TAG, "NOTIF_ACTION sent: $actionId")
+        return ok
     }
 
     fun sendNotifDismiss(notifKey: String): Boolean {
-        val os = outputStream ?: return false
-        return try {
-            val escaped = notifKey.replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("NOTIF_DISMISS:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            Log.i(TAG, "NOTIF_DISMISS sent: $notifKey")
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Send notif dismiss failed: ${e.message}")
-            false
-        }
+        val escaped = notifKey.replace("\\", "\\\\").replace("\n", "\\n")
+        val ok = writeRaw("NOTIF_DISMISS:$escaped\n")
+        if (ok) Log.i(TAG, "NOTIF_DISMISS sent: $notifKey")
+        return ok
     }
 
     fun playStreamLocally(url: String) {
@@ -487,6 +478,16 @@ class BluetoothListenerService : Service() {
                 applyStayAwakeWhenCharging(enabled)
                 sendBaseStateToPhone()
             }
+            "SET_BACKGROUND_FADE" -> {
+                val value = try {
+                    JSONObject(payload).optInt("value", 0).coerceIn(0, 255)
+                } catch (_: Exception) { 0 }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putInt(BaseSettings.KEY_BACKGROUND_FADE, value).apply()
+                Log.i(TAG, "Background fade=$value")
+                sendBaseStateToPhone()
+            }
+            "BG_UPLOAD_REQ" -> handleBgUploadReq(payload)
             "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
@@ -496,12 +497,24 @@ class BluetoothListenerService : Service() {
 
     private fun maybeWakeForNavUpdate() {
         val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
-        if (!prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false)) return
+        if (!prefs.getBoolean(BaseSettings.KEY_NAV_WAKE_ON_UPDATE, false)) {
+            Log.d(TAG, "Nav wake: skipped (toggle off)")
+            return
+        }
+        Log.i(TAG, "Nav wake: firing wakelock")
         @Suppress("DEPRECATION")
         try {
             val pm = getSystemService(POWER_SERVICE) as PowerManager
+            // FULL_WAKE_LOCK is deprecated but more reliable than
+            // SCREEN_BRIGHT on KitKat-era Glass firmwares — some OEM
+            // builds silently no-op the lighter lock. ON_AFTER_RELEASE
+            // keeps the display lit briefly after the 3 s timeout so
+            // HomeActivity has time to take over with FLAG_KEEP_SCREEN_ON
+            // (when the user also has that toggle on).
             val wl = pm.newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                PowerManager.FULL_WAKE_LOCK or
+                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
                 "GlassHole:NavWake"
             )
             wl.acquire(3_000L)
@@ -556,8 +569,114 @@ class BluetoothListenerService : Service() {
             put("invertNav", prefs.getBoolean(BaseSettings.KEY_INVERT_NAV, false))
             put("stayAwakeWhenCharging", prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false))
             put("stayAwakeWhenChargingGranted", canWriteSecureSettings())
+            put("backgroundFade", prefs.getInt(BaseSettings.KEY_BACKGROUND_FADE, 0))
         }.toString()
         sendPluginMessage("base", "STATE", json)
+    }
+
+    /** Active wallpaper upload server. Built on-demand on the first
+     *  BG_UPLOAD_REQ and stopped after the single upload completes
+     *  (or its idle timeout fires); see WallpaperUploadServer for
+     *  the protocol. Held here so a subsequent BG_UPLOAD_REQ during
+     *  an in-flight upload can return the existing URL rather than
+     *  spinning up a second server. */
+    private var wallpaperUploadServer: WallpaperUploadServer? = null
+
+    private fun handleBgUploadReq(payload: String) {
+        // Sanity-check the requested size up-front so we can fail
+        // fast over BT instead of having the phone discover the
+        // 413 after streaming the body.
+        val size = try { JSONObject(payload).optLong("size", -1L) } catch (_: Exception) { -1L }
+        if (size <= 0L) {
+            sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                put("reason", "bad_size")
+            }.toString())
+            return
+        }
+        if (size > WallpaperUploadServer.MAX_SIZE_BYTES) {
+            sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                put("reason", "too_large")
+                put("max", WallpaperUploadServer.MAX_SIZE_BYTES)
+            }.toString())
+            return
+        }
+
+        // Spin up (or re-use) the upload server. Reusing on retry
+        // keeps the same URL valid for phone-side retries inside
+        // the idle window.
+        val existing = wallpaperUploadServer
+        val server = existing ?: WallpaperUploadServer(
+            this,
+            onComplete = { filename, bytes -> writeUploadedWallpaper(filename, bytes) },
+            onError = { reason ->
+                sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                    put("reason", reason)
+                }.toString())
+                wallpaperUploadServer = null
+            }
+        ).also { wallpaperUploadServer = it }
+
+        val url = server.start()
+        if (url == null) {
+            Log.w(TAG, "BG_UPLOAD_REQ: no Wi-Fi LAN to advertise")
+            sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                put("reason", "no_wifi")
+            }.toString())
+            wallpaperUploadServer = null
+            return
+        }
+        sendPluginMessage("base", "BG_UPLOAD_OPEN", JSONObject().apply {
+            put("url", url)
+        }.toString())
+    }
+
+    private fun writeUploadedWallpaper(filename: String, bytes: ByteArray) {
+        // Sanitize filename — keep only what looks like a basename so
+        // a malicious phone can't path-traverse into / etc. Also pin
+        // to .jpg if the phone sent something weird; HomeActivity
+        // accepts jpg/jpeg/png.
+        val safeName = filename
+            .substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifEmpty { "wallpaper.jpg" }
+            .let {
+                val ext = it.substringAfterLast('.', "").lowercase()
+                if (ext in setOf("jpg", "jpeg", "png")) it else "$it.jpg"
+            }
+        val dir = java.io.File("/sdcard/GlassHole/backgrounds")
+        try {
+            if (!dir.exists()) dir.mkdirs()
+            val target = java.io.File(dir, safeName)
+            target.outputStream().use { it.write(bytes) }
+            Log.i(TAG, "Wallpaper written: ${target.absolutePath} (${bytes.size} bytes)")
+            // Only keep the latest wallpaper — older uploads waste space
+            // on the glass. Delete anything in the dir that isn't the
+            // file we just wrote.
+            dir.listFiles()?.forEach { f ->
+                if (f.isFile && f.absolutePath != target.absolutePath) {
+                    if (f.delete()) Log.i(TAG, "Pruned old wallpaper: ${f.name}")
+                    else Log.w(TAG, "Failed to delete old wallpaper: ${f.name}")
+                }
+            }
+            // Local broadcast so a foregrounded HomeActivity can pick
+            // up the new wallpaper without the user backing out and
+            // re-opening Home.
+            sendBroadcast(
+                Intent("com.glasshole.glass.WALLPAPER_CHANGED").setPackage(packageName)
+            )
+            sendPluginMessage("base", "BG_UPLOAD_DONE", JSONObject().apply {
+                put("filename", safeName)
+                put("size", bytes.size)
+            }.toString())
+        } catch (e: Exception) {
+            Log.e(TAG, "Wallpaper write failed: ${e.message}")
+            sendPluginMessage("base", "BG_UPLOAD_ERR", JSONObject().apply {
+                put("reason", "write_failed")
+                put("detail", e.message ?: "")
+            }.toString())
+        } finally {
+            wallpaperUploadServer = null
+        }
     }
 
     private fun canWriteSecureSettings(): Boolean =
@@ -663,7 +782,6 @@ class BluetoothListenerService : Service() {
     }
 
     private fun sendInfo() {
-        val os = outputStream ?: return
         try {
             // API 19 has no BatteryManager.getIntProperty; use sticky broadcast.
             val batteryIntent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -681,8 +799,7 @@ class BluetoothListenerService : Service() {
                 @Suppress("DEPRECATION")
                 put("serial", Build.SERIAL)
             }
-            os.write("INFO:$json\n".toByteArray(Charsets.UTF_8))
-            os.flush()
+            writeRaw("INFO:$json\n")
             // Don't piggyback PLUGIN_LIST onto every INFO response — phone
             // heartbeats every 10s and the directory is ~8KB. Sent once on
             // connect (handleConnection) instead.
@@ -697,12 +814,15 @@ class BluetoothListenerService : Service() {
      * heartbeat so we don't burn ~3KB of bandwidth every 10s.
      */
     private fun sendDeviceInfo() {
-        val os = outputStream ?: return
+        // Catch Throwable, not just Exception — gather methods reference
+        // Build/VERSION fields that may be missing on older glass
+        // editions (XE is API 19), and an unhandled Error would
+        // propagate up to the BT thread's run() and tear the connection
+        // down (which is what happened on EE1 with SECURITY_PATCH).
         try {
             val json = gatherDeviceInfo().toString()
-            os.write("DEVICE_INFO:$json\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-        } catch (e: Exception) {
+            writeRaw("DEVICE_INFO:$json\n")
+        } catch (e: Throwable) {
             Log.e(TAG, "Send device info failed: ${e.message}")
         }
     }
@@ -713,12 +833,10 @@ class BluetoothListenerService : Service() {
      * (~200 bytes) so polling every 5s costs nothing.
      */
     private fun sendBatteryInfo() {
-        val os = outputStream ?: return
         try {
             val json = gatherBatteryInfo().toString()
-            os.write("BATTERY_INFO:$json\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-        } catch (e: Exception) {
+            writeRaw("BATTERY_INFO:$json\n")
+        } catch (e: Throwable) {
             Log.e(TAG, "Send battery info failed: ${e.message}")
         }
     }
@@ -765,7 +883,12 @@ class BluetoothListenerService : Service() {
         put("fingerprint", Build.FINGERPRINT)
         put("display_id", Build.DISPLAY)
         put("incremental", Build.VERSION.INCREMENTAL)
-        try { put("security_patch", Build.VERSION.SECURITY_PATCH) } catch (_: Exception) {}
+        // SECURITY_PATCH was added in API 23. On XE (API 19) the field
+        // doesn't exist and referencing it throws NoSuchFieldError (an
+        // Error, not an Exception) — guard the SDK + catch Throwable.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try { put("security_patch", Build.VERSION.SECURITY_PATCH) } catch (_: Throwable) {}
+        }
         try {
             val kernel = java.io.File("/proc/version").readText().trim()
             put("kernel", kernel)
@@ -918,14 +1041,13 @@ class BluetoothListenerService : Service() {
     }
 
     private fun sendPluginList() {
-        val os = outputStream ?: return
         try {
             val entries = com.glasshole.glass.sdk.PluginDirectoryScanner.scan(this)
             val json = com.glasshole.glass.sdk.PluginDirectoryScanner.toJson(entries)
             val escaped = json.replace("\\", "\\\\").replace("\n", "\\n")
-            os.write("PLUGIN_LIST:$escaped\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            Log.i(TAG, "PLUGIN_LIST sent (${entries.size} plugins)")
+            if (writeRaw("PLUGIN_LIST:$escaped\n")) {
+                Log.i(TAG, "PLUGIN_LIST sent (${entries.size} plugins)")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Send plugin list failed: ${e.message}")
         }
@@ -1026,10 +1148,7 @@ class BluetoothListenerService : Service() {
                         showNotification(message)
                     }
                     line == "PING" -> {
-                        try {
-                            outputStream?.write("PONG\n".toByteArray(Charsets.UTF_8))
-                            outputStream?.flush()
-                        } catch (_: IOException) {}
+                        writeRaw("PONG\n")
                     }
                     line == "INFO_REQ" -> {
                         sendInfo()
@@ -1383,10 +1502,7 @@ class BluetoothListenerService : Service() {
     }
 
     private fun sendInstallAck(status: String) {
-        try {
-            outputStream?.write("INSTALL_ACK:$status\n".toByteArray(Charsets.UTF_8))
-            outputStream?.flush()
-        } catch (_: IOException) {}
+        writeRaw("INSTALL_ACK:$status\n")
     }
 
     // --- Package list / uninstall ---
@@ -1415,12 +1531,8 @@ class BluetoothListenerService : Service() {
                 put("glasshole", pkg.startsWith("com.glasshole."))
             })
         }
-        try {
-            outputStream?.write("LIST_PACKAGES:$arr\n".toByteArray(Charsets.UTF_8))
-            outputStream?.flush()
+        if (writeRaw("LIST_PACKAGES:$arr\n")) {
             Log.i(TAG, "Sent package list (${arr.length()} entries)")
-        } catch (e: IOException) {
-            Log.e(TAG, "Send package list failed: ${e.message}")
         }
     }
 
@@ -1492,9 +1604,6 @@ class BluetoothListenerService : Service() {
     }
 
     private fun sendUninstallAck(pkg: String, status: String) {
-        try {
-            outputStream?.write("UNINSTALL_ACK:$pkg:$status\n".toByteArray(Charsets.UTF_8))
-            outputStream?.flush()
-        } catch (_: IOException) {}
+        writeRaw("UNINSTALL_ACK:$pkg:$status\n")
     }
 }

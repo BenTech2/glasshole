@@ -42,6 +42,12 @@ class PlayerActivity : AppCompatActivity() {
     // and each spawn an ExoPlayer, leaving multiple songs playing at once.
     private var loadGeneration: Long = 0
 
+    // Initial seek position (ms) carried in from a phone-share with a
+    // `?t=` timestamp. Only applied to the FIRST track in a queue — once
+    // a playlist starts advancing past cursor 0 the shared timestamp is
+    // no longer meaningful.
+    private var startMs: Long = 0L
+
     // Touchpad gesture tracking — EE1 emits MotionEvents for swipes.
     private var downX = 0f
     private var downY = 0f
@@ -52,6 +58,7 @@ class PlayerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_URL = "stream_url"
+        const val EXTRA_START_MS = "stream_start_ms"
         private const val TAG = "GlassStreamPlayer"
         private val artClient = OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -90,6 +97,7 @@ class PlayerActivity : AppCompatActivity() {
             finish()
             return
         }
+        startMs = intent.getLongExtra(EXTRA_START_MS, 0L)
 
         val name = StreamResolver.displayName(url)
         binding.loadingText.text = "Connecting to $name..."
@@ -232,6 +240,14 @@ class PlayerActivity : AppCompatActivity() {
                     }
                 }
             })
+
+            // Apply phone-share `?t=` timestamp only on the first track of
+            // a queue. ExoPlayer queues seekTo() calls issued before
+            // prepare() and replays them once the source is ready.
+            if (cursor == 0 && startMs > 0L) {
+                Log.i(TAG, "Seeking to startMs=$startMs before prepare")
+                seekTo(startMs)
+            }
 
             prepare()
         }

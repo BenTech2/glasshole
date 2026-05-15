@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark chip behind the app/setting label in the cover-flow drawers.
+     Mostly-opaque on purpose: a lighter translucent fill (#99 etc.) on
+     KitKat-era hardware acceleration leaves edge ghosting as the chip
+     re-centers on width changes. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#E6000000" />
+    <corners android:radius="8dp" />
+</shape>

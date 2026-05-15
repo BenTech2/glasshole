@@ -56,11 +56,46 @@ class StreamPlugin : PhonePlugin {
     }
 
     fun sendUrl(url: String): Boolean {
-        val payload = JSONObject().apply { put("url", url) }.toString()
-        Log.i(TAG, "Forwarding URL to glass: $url")
+        // YouTube's share sheet attaches a `t=` query param when the user
+        // shares "from current time" — extract and pass through to glass
+        // as a separate startMs so the player can seekTo() it on load.
+        val startMs = extractYouTubeStartMs(url) ?: 0L
+        val payload = JSONObject().apply {
+            put("url", url)
+            if (startMs > 0L) put("startMs", startMs)
+        }.toString()
+        Log.i(TAG, "Forwarding URL to glass: $url (startMs=$startMs)")
         val ok = sender(PluginMessage("PLAY_URL", payload))
-        AppLog.log("Stream", "PLAY_URL → glass: ${if (ok) "sent" else "DROPPED"} — $url")
+        val suffix = if (startMs > 0L) " (start=${startMs}ms)" else ""
+        AppLog.log("Stream", "PLAY_URL → glass: ${if (ok) "sent" else "DROPPED"} — $url$suffix")
         return ok
+    }
+
+    /** Returns the `t=` parameter of a YouTube share URL converted to
+     *  milliseconds, or null if the URL isn't YouTube or has no `t`.
+     *  Accepts plain seconds (`120`, `120s`) and compound h/m/s
+     *  (`1h2m30s`, `2m0s`). */
+    private fun extractYouTubeStartMs(url: String): Long? {
+        if (!url.contains("youtube.com") && !url.contains("youtu.be")) return null
+        val t = try {
+            android.net.Uri.parse(url).getQueryParameter("t")
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        val seconds = parseTimestampSeconds(t) ?: return null
+        return if (seconds > 0) seconds * 1000L else null
+    }
+
+    private fun parseTimestampSeconds(s: String): Long? {
+        // Plain integer (with optional `s` suffix): "120" / "120s".
+        s.trimEnd('s').toLongOrNull()?.let { return it }
+        // Compound "1h2m30s" / "2m0s" / "30s".
+        val m = Regex("^(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s?)?$").matchEntire(s) ?: return null
+        val h = m.groupValues[1].toLongOrNull() ?: 0L
+        val mn = m.groupValues[2].toLongOrNull() ?: 0L
+        val sec = m.groupValues[3].toLongOrNull() ?: 0L
+        val total = h * 3600L + mn * 60L + sec
+        return if (total > 0L) total else null
     }
 
     fun play(): Boolean = sender(PluginMessage("PLAY", ""))

@@ -163,6 +163,13 @@ class BridgeService : Service() {
     var onLiveScreenUrl: ((String) -> Unit)? = null
     var onLiveScreenErr: ((String) -> Unit)? = null
 
+    /** Catches incoming `PLUGIN:base:*` messages from glass — used
+     *  by the wallpaper-upload flow (BG_UPLOAD_OPEN / DONE / ERR)
+     *  and any future base-plugin round-trip. Receiver runs on the
+     *  BT reader thread; bounce to the main thread yourself if
+     *  you're touching UI. */
+    var onBaseMessage: ((type: String, payload: String) -> Unit)? = null
+
     val isConnected: Boolean get() = btConnected
 
     /**
@@ -433,6 +440,115 @@ class BridgeService : Service() {
         }
     }
 
+    /**
+     * Upload a wallpaper image to glass over the LAN. Coordinates the
+     * three-step round-trip:
+     *
+     *   1. BT: phone sends `base:BG_UPLOAD_REQ {filename, size}`.
+     *   2. BT: glass replies `base:BG_UPLOAD_OPEN {url}` (or
+     *      `BG_UPLOAD_ERR {reason}` on no-Wi-Fi / oversize).
+     *   3. HTTP POST: phone streams [bytes] to the URL.
+     *   4. BT: glass writes the file and replies `BG_UPLOAD_DONE` (or
+     *      `BG_UPLOAD_ERR` on disk failure).
+     *
+     * Bytes ride Wi-Fi rather than BT specifically to avoid piling
+     * more traffic on glass's flaky RFCOMM stack — same architecture
+     * as the camera live-stream feature in reverse.
+     *
+     * [onResult] runs on a worker thread.
+     */
+    fun uploadWallpaper(
+        bytes: ByteArray,
+        filename: String,
+        onResult: (success: Boolean, message: String) -> Unit
+    ) {
+        if (!btConnected) {
+            onResult(false, "Glass not connected")
+            return
+        }
+
+        val prevHandler = onBaseMessage
+        // Use a handler that the user can replace by setting
+        // onBaseMessage to something else mid-flight; restore prev
+        // on completion / failure.
+        onBaseMessage = handler@{ type, payload ->
+            when (type) {
+                "BG_UPLOAD_OPEN" -> {
+                    val url = try {
+                        org.json.JSONObject(payload).optString("url", "")
+                    } catch (_: Exception) { "" }
+                    Log.i(TAG, "BG_UPLOAD_OPEN url=$url bytes=${bytes.size}")
+                    if (url.isEmpty()) {
+                        onBaseMessage = prevHandler
+                        onResult(false, "Glass returned no URL")
+                        return@handler
+                    }
+                    Thread {
+                        try {
+                            postWallpaperBytes(url, filename, bytes)
+                            // Successful HTTP — now wait for the BT
+                            // DONE / ERR reply that confirms the disk
+                            // write went through.
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Wallpaper POST failed: ${e.javaClass.simpleName}: ${e.message}", e)
+                            onBaseMessage = prevHandler
+                            onResult(false, "POST failed: ${e.javaClass.simpleName}: ${e.message}")
+                        }
+                    }.apply { isDaemon = true; name = "BgUpload-post"; start() }
+                }
+                "BG_UPLOAD_DONE" -> {
+                    onBaseMessage = prevHandler
+                    val fn = try {
+                        org.json.JSONObject(payload).optString("filename", filename)
+                    } catch (_: Exception) { filename }
+                    onResult(true, "Wallpaper saved: $fn")
+                }
+                "BG_UPLOAD_ERR" -> {
+                    onBaseMessage = prevHandler
+                    val reason = try {
+                        org.json.JSONObject(payload).optString("reason", "unknown")
+                    } catch (_: Exception) { "unknown" }
+                    onResult(false, "Glass rejected: $reason")
+                }
+                else -> prevHandler?.invoke(type, payload)
+            }
+        }
+
+        val req = org.json.JSONObject().apply {
+            put("filename", filename)
+            put("size", bytes.size)
+        }.toString()
+        val sent = sendPluginMessage("base", "BG_UPLOAD_REQ", req)
+        if (!sent) {
+            onBaseMessage = prevHandler
+            onResult(false, "Failed to send upload request")
+        }
+    }
+
+    private fun postWallpaperBytes(url: String, filename: String, bytes: ByteArray) {
+        // Append the filename as a query param so the server can
+        // pick the on-disk name without parsing a multipart body.
+        val sep = if (url.contains('?')) '&' else '?'
+        val encoded = java.net.URLEncoder.encode(filename, "UTF-8")
+        val finalUrl = "$url${sep}filename=$encoded"
+        Log.i(TAG, "POSTing $bytes.size bytes to $finalUrl")
+        val conn = (java.net.URL(finalUrl).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            setFixedLengthStreamingMode(bytes.size)
+            setRequestProperty("Content-Type", "application/octet-stream")
+            connectTimeout = 10_000
+            readTimeout = 60_000
+        }
+        conn.outputStream.use { it.write(bytes) }
+        val code = conn.responseCode
+        Log.i(TAG, "POST response code=$code")
+        try { conn.inputStream.close() } catch (_: Exception) {}
+        if (code != 200) {
+            throw java.io.IOException("HTTP $code")
+        }
+    }
+
     private fun ensureConnectChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java)
@@ -471,6 +587,20 @@ class BridgeService : Service() {
 
     @SuppressLint("MissingPermission")
     fun connectBluetooth(device: BluetoothDevice) {
+        // No-op if we're already connected to this exact device. The
+        // auto-reconnect path in MainActivity.onCreate fires on every
+        // fresh activity instance — including a tap on the foreground-
+        // service notification — so without this guard, opening the app
+        // via the notification would tear down a perfectly healthy BT
+        // link just to re-establish it.
+        if (btConnected && targetDevice?.address == device.address) {
+            log("Already connected to ${device.name} — keeping link")
+            // Re-emit state so a freshly-bound activity's UI reflects
+            // reality without waiting for an actual change event.
+            onConnectionChanged?.invoke(true)
+            return
+        }
+
         // Stop any reconnect loop targeting a previous device before starting a new one
         if (targetDevice != null && targetDevice != device) {
             log("Switching target from ${targetDevice?.name} to ${device.name}")
@@ -691,6 +821,20 @@ class BridgeService : Service() {
                         return
                     }
                 }
+                // Catch base-plugin messages early so the wallpaper
+                // upload flow (and any other lightweight base round-
+                // trip we add later) can subscribe without going
+                // through the AIDL plugin router. workerManager +
+                // pluginRouter still see the message but have no
+                // "base" handler registered, so they're no-ops here.
+                if (msg.pluginId == "base") {
+                    try {
+                        onBaseMessage?.invoke(msg.type, msg.payload)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "onBaseMessage failed: ${e.message}")
+                    }
+                }
+
                 // Dynamic workers get every non-directory PLUGIN message.
                 // Hardcoded phone-side plugins (ChatPlugin etc. during the
                 // migration) still receive via the legacy router — both

@@ -1,9 +1,7 @@
 package com.glasshole.glassee2.home
 
 import android.view.View
-import android.widget.TextView
 import androidx.viewpager2.widget.ViewPager2
-import com.glasshole.glassee2.R
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -81,12 +79,6 @@ class CoverFlowTransformer : ViewPager2.PageTransformer {
         // of any tilted neighbor — otherwise overlapping side pages can
         // poke in front due to Z-fighting.
         page.translationZ = -absClamped - 1f
-
-        // App labels of tilted neighbors would pile up under the center
-        // item's label. Fade them out quickly so only the focused page's
-        // label is visible.
-        page.findViewById<TextView>(R.id.appLabel)?.alpha =
-            max(0f, 1f - LABEL_FADE * absPos)
     }
 
     companion object {
@@ -100,7 +92,5 @@ class CoverFlowTransformer : ViewPager2.PageTransformer {
         /** How much bigger than natural size the center page renders. 1.2 =
          *  20% larger, tapering back to 1.0 at the ±1 neighbor slot. */
         private const val CENTER_EMPHASIS = 1.22f
-        /** How fast the app-name label fades with distance from center. */
-        private const val LABEL_FADE = 2.5f
     }
 }

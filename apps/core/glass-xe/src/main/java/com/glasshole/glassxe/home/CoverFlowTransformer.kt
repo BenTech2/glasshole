@@ -1,9 +1,7 @@
 package com.glasshole.glassxe.home
 
 import android.view.View
-import android.widget.TextView
 import androidx.viewpager2.widget.ViewPager2
-import com.glasshole.glassxe.R
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -60,9 +58,6 @@ class CoverFlowTransformer : ViewPager2.PageTransformer {
         if (android.os.Build.VERSION.SDK_INT >= 21) {
             page.translationZ = -absClamped - 1f
         }
-
-        page.findViewById<TextView>(R.id.appLabel)?.alpha =
-            max(0f, 1f - LABEL_FADE * absPos)
     }
 
     companion object {
@@ -76,7 +71,5 @@ class CoverFlowTransformer : ViewPager2.PageTransformer {
         /** How much bigger than natural size the center page renders. 1.2 =
          *  20% larger, tapering back to 1.0 at the ±1 neighbor slot. */
         private const val CENTER_EMPHASIS = 1.22f
-        /** How fast the app-name label fades with distance from center. */
-        private const val LABEL_FADE = 2.5f
     }
 }

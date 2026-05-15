@@ -304,6 +304,12 @@ class MediaPlugin : PhonePlugin {
             // we render last song's title alongside next song's artist —
             // looks like the wrong song. Gate on title alone and wait for the
             // follow-up onMetadataChanged tick that brings the real title.
+            //
+            // Don't widen this to looksBlank() — some apps emit a zero-width
+            // placeholder on track change as the *only* metadata update for
+            // the new song; skipping those leaves the glass stuck on the
+            // previous title with no follow-up. The glass-side normalization
+            // catches the edge cases ("(unknown)" placeholder).
             if (title.isEmpty()) {
                 Log.d(TAG, "Skipping push: empty title for $appName")
                 return@execute
