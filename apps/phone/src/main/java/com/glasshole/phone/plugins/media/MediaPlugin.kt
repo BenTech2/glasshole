@@ -43,6 +43,17 @@ class MediaPlugin : PhonePlugin {
     companion object {
         private const val TAG = "MediaPlugin"
         private const val ART_MAX_EDGE_PX = 200
+        /**
+         * Coalesce window for onMetadataChanged → push() pumps. When the
+         * user swipe-preves multiple tracks quickly, MediaController
+         * fires a metadata change per intermediate track and each push
+         * pays for an art-bitmap encode + a BT NOW_PLAYING send. Only
+         * the final landing track is worth sending — buffer the
+         * trailing edge so we skip the work for every track passed
+         * through. Doesn't touch play/pause/state-change pushes; those
+         * still fire immediately.
+         */
+        private const val METADATA_DEBOUNCE_MS = 350L
     }
 
     override val pluginId: String = "media"
@@ -59,6 +70,10 @@ class MediaPlugin : PhonePlugin {
     private var listenerComponent: ComponentName? = null
     private var activeController: MediaController? = null
     private var lastArtKey: String = ""
+    /** Posted from onMetadataChanged; pulls the current MediaController
+     *  snapshot via push(). Always invoked on the main thread because
+     *  push() reads MediaController state which is main-thread-bound. */
+    private val metadataPushRunnable = Runnable { push() }
     // Per-session callbacks. We register on EVERY active session so that any
     // session's state change can trigger re-selection — the OS-level
     // sessionsListener fires only on add/remove, not state flips, and
@@ -83,7 +98,9 @@ class MediaPlugin : PhonePlugin {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
             if (controller === activeController) {
                 lastArtKey = ""
-                push()
+                // Coalesce a burst (skip-storm) into a single push.
+                main.removeCallbacks(metadataPushRunnable)
+                main.postDelayed(metadataPushRunnable, METADATA_DEBOUNCE_MS)
             }
         }
         override fun onSessionDestroyed() {

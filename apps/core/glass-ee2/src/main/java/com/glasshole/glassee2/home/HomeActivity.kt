@@ -44,6 +44,17 @@ class HomeActivity : Activity() {
         private const val TAG = "HomeActivity"
         private const val TICK_INTERVAL_MS = 1_000L
         /**
+         * Coalesce window for NOW_PLAYING updates. When the user swipe-
+         * preves multiple times quickly, the phone emits one metadata
+         * update per intermediate track; if we render each one, the
+         * overlay (and the media card behind it) flashes the title +
+         * cover art of every track passed through. Buffer the latest
+         * payload and only commit it after this much quiet so the user
+         * sees just the settled track. Doesn't affect a single skip —
+         * the runnable still fires this fast.
+         */
+        private const val MEDIA_RENDER_DEBOUNCE_MS = 300L
+        /**
          * Inactivity before we dim the display to nearly off. OLED black
          * emits no light so at brightness 0.01 the screen is effectively
          * asleep while the activity stays foreground — which is what we
@@ -295,6 +306,20 @@ class HomeActivity : Activity() {
         runOnUiThread { cardAdapter.refreshNotificationCard() }
     }
 
+    /** Buffer of the latest unrendered NOW_PLAYING payload while the
+     *  debounce window is open. Stored as the raw JSON so we don't
+     *  spend a BitmapFactory.decodeByteArray on every intermediate
+     *  track during a swipe-storm — only the surviving payload gets
+     *  parsed when applyMediaRunnable fires. */
+    private var pendingMediaPayload: String? = null
+    private val applyMediaRunnable = Runnable {
+        val payload = pendingMediaPayload ?: return@Runnable
+        pendingMediaPayload = null
+        val newState = MediaState.fromJson(payload, cardAdapter.mediaState)
+        cardAdapter.setMediaState(newState)
+        if (mediaOverlayVisible) refreshMediaOverlayText()
+    }
+
     private val pluginMessageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val pluginId = intent.getStringExtra(GlassPluginConstants.EXTRA_PLUGIN_ID) ?: return
@@ -302,9 +327,9 @@ class HomeActivity : Activity() {
             val payload = intent.getStringExtra(GlassPluginConstants.EXTRA_PAYLOAD) ?: ""
             when (pluginId) {
                 "media" -> if (type == "NOW_PLAYING") {
-                    val newState = MediaState.fromJson(payload, cardAdapter.mediaState)
-                    cardAdapter.setMediaState(newState)
-                    if (mediaOverlayVisible) refreshMediaOverlayText()
+                    pendingMediaPayload = payload
+                    tickHandler.removeCallbacks(applyMediaRunnable)
+                    tickHandler.postDelayed(applyMediaRunnable, MEDIA_RENDER_DEBOUNCE_MS)
                 }
                 "nav" -> when (type) {
                     "NAV_UPDATE" -> {
@@ -554,6 +579,7 @@ class HomeActivity : Activity() {
         super.onStop()
         tickHandler.removeCallbacks(tickRunnable)
         tickHandler.removeCallbacks(dimRunnable)
+        tickHandler.removeCallbacks(applyMediaRunnable)
         try { unregisterReceiver(pluginMessageReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
         NotificationStore.removeListener(notifStoreListener)
