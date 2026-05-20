@@ -758,6 +758,12 @@ class BluetoothListenerService : Service() {
                 put("model", Build.MODEL)
                 put("android", Build.VERSION.RELEASE)
                 put("serial", Build.SERIAL)
+                // Echo the glass-side build so the phone's connection card
+                // can show what's actually running on the headset. Flavor
+                // distinguishes a launcher install (replaces stock Glass
+                // home) from a standalone install (sits alongside it).
+                put("app_version", BuildConfig.VERSION_NAME)
+                put("flavor", BuildConfig.FLAVOR)
             }
             writeRaw("INFO:$json\n")
             // Don't piggyback PLUGIN_LIST onto every INFO response — phone

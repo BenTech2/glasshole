@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var batteryText: TextView
     private lateinit var glassModelText: TextView
     private lateinit var pluginCountText: TextView
+    private lateinit var glassholeVersionText: TextView
     private lateinit var deviceSpinner: Spinner
     private lateinit var connectButton: Button
     private lateinit var notifAccessButton: Button
@@ -289,6 +290,7 @@ class MainActivity : AppCompatActivity() {
         batteryText = findViewById(R.id.batteryText)
         glassModelText = findViewById(R.id.glassModelText)
         pluginCountText = findViewById(R.id.pluginCountText)
+        glassholeVersionText = findViewById(R.id.glassholeVersionText)
         deviceSpinner = findViewById(R.id.deviceSpinner)
         connectButton = findViewById(R.id.connectButton)
         notifAccessButton = findViewById(R.id.notifAccessButton)
@@ -351,6 +353,20 @@ class MainActivity : AppCompatActivity() {
             "${info.model} (Android ${info.androidVersion})"
         } else {
             "Unknown Glass"
+        }
+
+        // Pre-1.0.3 glass builds didn't include app_version/flavor in the
+        // heartbeat — hide the row when both are missing so we don't show
+        // "GlassHole: ()". Capitalize the flavor for display only; the
+        // underlying BuildConfig.FLAVOR is always lowercase.
+        if (info.appVersion.isNotEmpty()) {
+            val flavorSuffix = info.flavor.takeIf { it.isNotEmpty() }
+                ?.replaceFirstChar { it.uppercase() }
+                ?.let { " ($it)" } ?: ""
+            glassholeVersionText.text = "GlassHole: ${info.appVersion}$flavorSuffix"
+            glassholeVersionText.visibility = android.view.View.VISIBLE
+        } else {
+            glassholeVersionText.visibility = android.view.View.GONE
         }
     }
 
