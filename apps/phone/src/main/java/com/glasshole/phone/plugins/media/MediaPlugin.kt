@@ -54,6 +54,18 @@ class MediaPlugin : PhonePlugin {
          * still fire immediately.
          */
         private const val METADATA_DEBOUNCE_MS = 350L
+
+        /**
+         * After the debounced metadata push, schedule one more push
+         * this far out. Spotify / YouTube Music / Pocket Casts all emit
+         * onMetadataChanged first and don't refresh `playbackState`
+         * with a fresh position anchor until ~0.5–1.5 s later. Without
+         * this follow-up the glass progress bar would render anchored
+         * at whatever stale (often zero) position the controller still
+         * reported at debounce-fire time, even though the track is
+         * actually a second or two in by the time the user sees it.
+         */
+        private const val METADATA_SETTLE_FOLLOWUP_MS = 1500L
     }
 
     override val pluginId: String = "media"
@@ -73,7 +85,32 @@ class MediaPlugin : PhonePlugin {
     /** Posted from onMetadataChanged; pulls the current MediaController
      *  snapshot via push(). Always invoked on the main thread because
      *  push() reads MediaController state which is main-thread-bound. */
-    private val metadataPushRunnable = Runnable { push() }
+    private val metadataPushRunnable = Runnable {
+        push()
+        // Re-pull the snapshot once the source app has had time to
+        // refresh playbackState.position past zero (see the const
+        // comment for METADATA_SETTLE_FOLLOWUP_MS).
+        main.removeCallbacks(settlingPushRunnable)
+        main.postDelayed(settlingPushRunnable, METADATA_SETTLE_FOLLOWUP_MS)
+    }
+    private val settlingPushRunnable = Runnable {
+        // Force the art back into the payload. Without this, the glass-side
+        // last-rendered trackKey may differ from this push's trackKey
+        // (because intermediate pushes during a storm got dropped) and
+        // MediaState.fromJson would clear the bitmap when it sees a new
+        // trackKey with no art_b64.
+        lastArtKey = ""
+        push()
+    }
+
+    /** Cancel any pending push + settling-push and reschedule a single
+     *  debounced push. Used by both metadata and playback-state
+     *  callbacks so a skip-storm coalesces into one wire send. */
+    private fun schedulePushDebounced() {
+        main.removeCallbacks(metadataPushRunnable)
+        main.removeCallbacks(settlingPushRunnable)
+        main.postDelayed(metadataPushRunnable, METADATA_DEBOUNCE_MS)
+    }
     // Per-session callbacks. We register on EVERY active session so that any
     // session's state change can trigger re-selection — the OS-level
     // sessionsListener fires only on add/remove, not state flips, and
@@ -91,16 +128,25 @@ class MediaPlugin : PhonePlugin {
 
     private fun makeCallback(controller: MediaController) = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
-            // Any session's state change can mean the user paused one app and
-            // started another — re-pick from the full list.
-            reevaluateActiveSessions()
+            if (controller === activeController) {
+                // State-churn on the same playing controller — typically the
+                // burst of "track changed, position reset, etc." emitted by
+                // a skip-storm. Coalesce through the same debounce as
+                // metadata so one push wins per storm. The follow-up
+                // settling push fires on its own clock too.
+                schedulePushDebounced()
+            } else {
+                // Could be a different app starting playback. Re-select
+                // immediately so we switch sessions if needed; bindToActive
+                // calls push() on its own when it lands on a new sticky
+                // session.
+                reevaluateActiveSessions()
+            }
         }
         override fun onMetadataChanged(metadata: MediaMetadata?) {
             if (controller === activeController) {
                 lastArtKey = ""
-                // Coalesce a burst (skip-storm) into a single push.
-                main.removeCallbacks(metadataPushRunnable)
-                main.postDelayed(metadataPushRunnable, METADATA_DEBOUNCE_MS)
+                schedulePushDebounced()
             }
         }
         override fun onSessionDestroyed() {
@@ -159,6 +205,8 @@ class MediaPlugin : PhonePlugin {
             try { c.unregisterCallback(cb) } catch (_: Exception) {}
         }
         sessionCallbacks.clear()
+        main.removeCallbacks(metadataPushRunnable)
+        main.removeCallbacks(settlingPushRunnable)
         activeController = null
         lastArtKey = ""
         worker.shutdown()
