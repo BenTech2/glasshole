@@ -88,6 +88,13 @@ object BaseSettings {
      *  255 = wallpaper fully hidden (solid black). Driven by the
      *  phone-side fade slider in DeviceActivity. */
     const val KEY_BACKGROUND_FADE = "background_fade"
+    /** When true, show the same Home wallpaper behind the Settings
+     *  cover-flow drawer (with the same fade). Default off — the drawer
+     *  is text-heavy and not everyone wants the contrast variability. */
+    const val KEY_WALLPAPER_ON_SETTINGS = "wallpaper_on_settings"
+    /** When true, show the same Home wallpaper behind the App cover-flow
+     *  drawer. Same reasoning as above. */
+    const val KEY_WALLPAPER_ON_APP_DRAWER = "wallpaper_on_app_drawer"
 
     fun isNavInverted(context: android.content.Context): Boolean =
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)

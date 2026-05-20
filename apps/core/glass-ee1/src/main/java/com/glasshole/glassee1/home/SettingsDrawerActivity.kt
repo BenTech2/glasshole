@@ -65,6 +65,7 @@ class SettingsDrawerActivity : Activity() {
 
     private lateinit var pager: ViewPager2
     private lateinit var overlayLabel: TextView
+    private lateinit var drawerBackground: DrawerBackground
     /** SETTINGS_ENTRIES filtered to only those whose intent the device can
      *  actually handle — Glass EE1's stock Settings is a narrower subset
      *  than EE2 so pre-filtering at runtime via PackageManager removes
@@ -107,6 +108,12 @@ class SettingsDrawerActivity : Activity() {
 
         pager = findViewById(R.id.settingsPager)
         overlayLabel = findViewById(R.id.overlayLabel)
+        drawerBackground = DrawerBackground(
+            activity = this,
+            backgroundImage = findViewById(R.id.backgroundImage),
+            backgroundFade = findViewById(R.id.backgroundFade),
+            enabledPrefKey = com.glasshole.glassee1.BaseSettings.KEY_WALLPAPER_ON_SETTINGS,
+        )
         pager.offscreenPageLimit = 4
         pager.isUserInputEnabled = false
         pager.adapter = SettingsAdapter(entries)
@@ -142,6 +149,16 @@ class SettingsDrawerActivity : Activity() {
         // ghosting around the chip as it re-centers on each text swap.
         overlayLabel.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         (overlayLabel.parent as? View)?.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        drawerBackground.attach()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        drawerBackground.detach()
     }
 
     /** Fade the overlay label out, swap its text, fade back in.

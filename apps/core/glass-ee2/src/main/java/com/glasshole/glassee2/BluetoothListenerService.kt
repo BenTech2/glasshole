@@ -397,6 +397,24 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Background fade=$value")
                 sendBaseStateToPhone()
             }
+            "SET_WALLPAPER_ON_SETTINGS" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putBoolean(BaseSettings.KEY_WALLPAPER_ON_SETTINGS, enabled).apply()
+                Log.i(TAG, "Wallpaper on Settings drawer=$enabled")
+                sendBaseStateToPhone()
+            }
+            "SET_WALLPAPER_ON_APP_DRAWER" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putBoolean(BaseSettings.KEY_WALLPAPER_ON_APP_DRAWER, enabled).apply()
+                Log.i(TAG, "Wallpaper on App drawer=$enabled")
+                sendBaseStateToPhone()
+            }
             "BG_UPLOAD_REQ" -> handleBgUploadReq(payload)
             "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
@@ -479,6 +497,8 @@ class BluetoothListenerService : Service() {
             put("stayAwakeWhenCharging", prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false))
             put("stayAwakeWhenChargingGranted", canWriteSecureSettings())
             put("backgroundFade", prefs.getInt(BaseSettings.KEY_BACKGROUND_FADE, 0))
+            put("wallpaperOnSettings", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_SETTINGS, false))
+            put("wallpaperOnAppDrawer", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_APP_DRAWER, false))
         }.toString()
         sendPluginMessage("base", "STATE", json)
     }

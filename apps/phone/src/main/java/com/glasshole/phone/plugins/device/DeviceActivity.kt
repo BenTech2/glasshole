@@ -48,6 +48,8 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var wakeToTimeCardSwitch: MaterialSwitch
     private lateinit var invertNavSwitch: MaterialSwitch
     private lateinit var stayAwakeWhenChargingSwitch: MaterialSwitch
+    private lateinit var wallpaperOnSettingsSwitch: MaterialSwitch
+    private lateinit var wallpaperOnAppDrawerSwitch: MaterialSwitch
     private lateinit var stayAwakeWhenChargingSubtitle: TextView
 
     private lateinit var wakeButton: Button
@@ -102,6 +104,8 @@ class DeviceActivity : AppCompatActivity() {
         wakeToTimeCardSwitch = findViewById(R.id.wakeToTimeCardSwitch)
         invertNavSwitch = findViewById(R.id.invertNavSwitch)
         stayAwakeWhenChargingSwitch = findViewById(R.id.stayAwakeWhenChargingSwitch)
+        wallpaperOnSettingsSwitch = findViewById(R.id.wallpaperOnSettingsSwitch)
+        wallpaperOnAppDrawerSwitch = findViewById(R.id.wallpaperOnAppDrawerSwitch)
         stayAwakeWhenChargingSubtitle = findViewById(R.id.stayAwakeWhenChargingSubtitle)
         wakeButton = findViewById(R.id.wakeButton)
         syncTimeButton = findViewById(R.id.syncTimeButton)
@@ -349,6 +353,34 @@ class DeviceActivity : AppCompatActivity() {
             val json = JSONObject().apply { put("enabled", isChecked) }.toString()
             val sent = bridge.sendPluginMessage("base", "SET_STAY_AWAKE_WHEN_CHARGING", json)
             toast(if (sent) "Stay awake while charging ${if (isChecked) "enabled" else "disabled"}"
+                  else "Send failed")
+        }
+
+        wallpaperOnSettingsSwitch.isChecked = prefs.getBoolean("wallpaper_on_settings", false)
+        wallpaperOnSettingsSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("wallpaper_on_settings", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_WALLPAPER_ON_SETTINGS", json)
+            toast(if (sent) "Wallpaper on Settings drawer ${if (isChecked) "on" else "off"}"
+                  else "Send failed")
+        }
+
+        wallpaperOnAppDrawerSwitch.isChecked = prefs.getBoolean("wallpaper_on_app_drawer", false)
+        wallpaperOnAppDrawerSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("wallpaper_on_app_drawer", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_WALLPAPER_ON_APP_DRAWER", json)
+            toast(if (sent) "Wallpaper on App drawer ${if (isChecked) "on" else "off"}"
                   else "Send failed")
         }
 
