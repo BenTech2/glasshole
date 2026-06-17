@@ -8,6 +8,18 @@
         android:title="Upload from phone"
         app:showAsAction="ifRoom" />
 
+    <!-- Picker filter toggle. When unchecked (default) the upload
+         picker accepts only images + videos so accidental other-file
+         picks are filtered out. Check it to widen the picker to all
+         file types — useful for pushing APKs / audio / archives
+         through the gallery channel as a recovery affordance. -->
+    <item
+        android:id="@+id/galleryMenuUploadAnyType"
+        android:title="Upload: allow any file type"
+        android:checkable="true"
+        android:checked="false"
+        app:showAsAction="never" />
+
     <item
         android:id="@+id/galleryMenuRefresh"
         android:icon="@drawable/ic_refresh"
