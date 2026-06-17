@@ -219,24 +219,12 @@ class ApkManagerActivity : AppCompatActivity() {
             setTitle("Installing $filename")
             setMessage("Reading APK...")
             setCancelable(false)
-            setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
-            max = 100
+            // Indeterminate while the Wi-Fi POST runs — progress
+            // callbacks would need a parallel HTTP-progress hook on
+            // the phone side; the only payload the user typically
+            // waits for now is a few MB, which doesn't need a bar.
+            setProgressStyle(ProgressDialog.STYLE_SPINNER)
             show()
-        }
-
-        bridge.onInstallProgress = { sent, total ->
-            runOnUiThread {
-                val pct = if (total > 0) ((sent * 100) / total).toInt() else 0
-                progress.progress = pct
-                progress.setMessage("$pct%  (${sent / 1024} KB / ${total / 1024} KB)")
-            }
-        }
-        bridge.onInstallResult = { status ->
-            runOnUiThread {
-                progress.dismiss()
-                statusText.text = "Install: $status"
-                Handler(Looper.getMainLooper()).postDelayed({ refreshPackages() }, 2500)
-            }
         }
 
         Thread {
@@ -249,11 +237,25 @@ class ApkManagerActivity : AppCompatActivity() {
                     buf.toByteArray()
                 } ?: throw Exception("Could not read APK")
 
-                runOnUiThread { progress.setMessage("Sending ${bytes.size / 1024} KB...") }
-                val ok = bridge.sendApk(filename, bytes)
-                if (!ok) runOnUiThread {
-                    progress.dismiss()
-                    toast("Send failed")
+                runOnUiThread { progress.setMessage("Pushing ${bytes.size / 1024} KB over Wi-Fi…") }
+                // New Wi-Fi LAN path. BT only carries four short
+                // control envelopes — bytes ride the same one-shot
+                // HTTP server the wallpaper / notif-sound flows use,
+                // sidestepping the chunked-BT crashes that bit us on
+                // EE2. The old chunked sendApk path stays in
+                // BridgeService for now in case we need a fallback.
+                bridge.installApkOverWifi(bytes, filename) { ok, message ->
+                    runOnUiThread {
+                        progress.dismiss()
+                        if (ok) {
+                            statusText.text = "Install: $message"
+                            Handler(Looper.getMainLooper())
+                                .postDelayed({ refreshPackages() }, 2500)
+                        } else {
+                            statusText.text = "Install failed: $message"
+                            toast(message)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 runOnUiThread {

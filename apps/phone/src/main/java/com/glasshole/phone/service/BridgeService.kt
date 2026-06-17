@@ -678,6 +678,79 @@ class BridgeService : Service() {
         return sendPluginMessage("base", "SET_NOTIF_APP_SOUND", json)
     }
 
+    /**
+     * Push an APK over the Wi-Fi LAN to the glass and trigger
+     * triggerInstall there. Same shape as uploadWallpaper /
+     * uploadNotifSound: BT carries the four short
+     * APK_INSTALL_REQ/_OPEN/_DONE/_ERR envelopes, Wi-Fi carries the
+     * bytes. Replaces the chunked-BT path which has been crashing
+     * the glass-side BT stack mid-stream on EE2.
+     *
+     * Progress callbacks fire during the POST so the existing
+     * ApkManagerActivity progress dialog stays useful. Final
+     * onResult is called once the glass replies with DONE or ERR.
+     */
+    fun installApkOverWifi(
+        bytes: ByteArray,
+        filename: String,
+        onResult: (success: Boolean, message: String) -> Unit,
+    ) {
+        if (!btConnected) { onResult(false, "Glass not connected"); return }
+        val prevHandler = onBaseMessage
+        onBaseMessage = handler@{ type, payload ->
+            when (type) {
+                "APK_INSTALL_OPEN" -> {
+                    val url = try {
+                        org.json.JSONObject(payload).optString("url", "")
+                    } catch (_: Exception) { "" }
+                    Log.i(TAG, "APK_INSTALL_OPEN url=$url bytes=${bytes.size}")
+                    if (url.isEmpty()) {
+                        onBaseMessage = prevHandler
+                        onResult(false, "Glass returned no URL"); return@handler
+                    }
+                    Thread {
+                        try {
+                            postWallpaperBytes(url, filename, bytes)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "APK POST failed", e)
+                            onBaseMessage = prevHandler
+                            onResult(false, "POST failed: ${e.javaClass.simpleName}: ${e.message}")
+                        }
+                    }.apply { isDaemon = true; name = "ApkInstall-post"; start() }
+                }
+                "APK_INSTALL_DONE" -> {
+                    onBaseMessage = prevHandler
+                    val status = try {
+                        org.json.JSONObject(payload).optString("status", "ok")
+                    } catch (_: Exception) { "ok" }
+                    // Phone-side success matches the same "glass got the
+                    // bytes" semantics the old chunked path used —
+                    // triggerInstall may still pop a system installer
+                    // prompt on glass that the user has to tap. Pass the
+                    // status string through so the caller can surface it.
+                    onResult(true, status)
+                }
+                "APK_INSTALL_ERR" -> {
+                    onBaseMessage = prevHandler
+                    val reason = try {
+                        org.json.JSONObject(payload).optString("reason", "unknown")
+                    } catch (_: Exception) { "unknown" }
+                    onResult(false, "Glass rejected: $reason")
+                }
+                else -> prevHandler?.invoke(type, payload)
+            }
+        }
+
+        val req = org.json.JSONObject().apply {
+            put("filename", filename)
+            put("size", bytes.size)
+        }.toString()
+        if (!sendPluginMessage("base", "APK_INSTALL_REQ", req)) {
+            onBaseMessage = prevHandler
+            onResult(false, "Failed to send install request")
+        }
+    }
+
     fun queryWifiIp(onResult: (ip: String, ssid: String, error: String?) -> Unit) {
         if (!btConnected) {
             onResult("", "", "Glass not connected")

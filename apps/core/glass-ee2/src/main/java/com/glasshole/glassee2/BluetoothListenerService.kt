@@ -463,6 +463,7 @@ class BluetoothListenerService : Service() {
                 } catch (_: Exception) {}
             }
             "BG_UPLOAD_REQ" -> handleBgUploadReq(payload)
+            "APK_INSTALL_REQ" -> handleApkInstallReq(payload)
             "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
@@ -671,6 +672,85 @@ class BluetoothListenerService : Service() {
         names.sorted().forEach { arr.put(it) }
         sendPluginMessage("base", "NOTIF_SOUND_LIST",
             JSONObject().apply { put("files", arr) }.toString())
+    }
+
+    /** Wi-Fi APK install upload server. Same one-shot pattern as the
+     *  wallpaper / notif-sound flows, but with a much larger size cap
+     *  so the APK Manager doesn't have to fall back to chunked-BT
+     *  (which has been crashing the glass-side BT stack mid-transfer
+     *  on EE2). On completion we save the APK under
+     *  /sdcard/Download/glasshole-install/, fire triggerInstall(), and
+     *  report the result over BT via APK_INSTALL_DONE. */
+    private var apkInstallUploadServer: WallpaperUploadServer? = null
+
+    private fun handleApkInstallReq(payload: String) {
+        val size = try { JSONObject(payload).optLong("size", -1L) } catch (_: Exception) { -1L }
+        if (size <= 0L) {
+            sendPluginMessage("base", "APK_INSTALL_ERR",
+                JSONObject().apply { put("reason", "bad_size") }.toString())
+            return
+        }
+        if (size > WallpaperUploadServer.APK_INSTALL_MAX_SIZE_BYTES) {
+            sendPluginMessage("base", "APK_INSTALL_ERR",
+                JSONObject().apply {
+                    put("reason", "too_large")
+                    put("max", WallpaperUploadServer.APK_INSTALL_MAX_SIZE_BYTES)
+                }.toString())
+            return
+        }
+
+        val existing = apkInstallUploadServer
+        val server = existing ?: WallpaperUploadServer(
+            context = this,
+            onComplete = { filename, bytes -> writeUploadedApk(filename, bytes) },
+            onError = { reason ->
+                sendPluginMessage("base", "APK_INSTALL_ERR",
+                    JSONObject().apply { put("reason", reason) }.toString())
+                apkInstallUploadServer = null
+            },
+            maxSizeBytesOverride = WallpaperUploadServer.APK_INSTALL_MAX_SIZE_BYTES,
+        ).also { apkInstallUploadServer = it }
+
+        val url = server.start()
+        if (url == null) {
+            sendPluginMessage("base", "APK_INSTALL_ERR",
+                JSONObject().apply { put("reason", "no_wifi") }.toString())
+            apkInstallUploadServer = null
+            return
+        }
+        sendPluginMessage("base", "APK_INSTALL_OPEN",
+            JSONObject().apply { put("url", url) }.toString())
+    }
+
+    private fun writeUploadedApk(filename: String, bytes: ByteArray) {
+        val safeName = filename
+            .substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifEmpty { "install.apk" }
+            .let { if (it.lowercase().endsWith(".apk")) it else "$it.apk" }
+        val dir = java.io.File("/sdcard/Download/glasshole-install")
+        try {
+            if (!dir.exists()) dir.mkdirs()
+            val target = java.io.File(dir, safeName)
+            target.outputStream().use { it.write(bytes) }
+            Log.i(TAG, "APK written: ${target.absolutePath} (${bytes.size} bytes)")
+            val status = triggerInstall(target)
+            sendPluginMessage("base", "APK_INSTALL_DONE",
+                JSONObject().apply {
+                    put("filename", safeName)
+                    put("size", bytes.size)
+                    put("status", status)
+                }.toString())
+        } catch (e: Exception) {
+            Log.e(TAG, "APK write/install failed: ${e.message}")
+            sendPluginMessage("base", "APK_INSTALL_ERR",
+                JSONObject().apply {
+                    put("reason", "write_failed")
+                    put("detail", e.message ?: "")
+                }.toString())
+        } finally {
+            apkInstallUploadServer = null
+        }
     }
 
     private fun handleBgUploadReq(payload: String) {
