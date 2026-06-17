@@ -468,6 +468,26 @@ class BluetoothListenerService : Service() {
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
             "GET_WIFI_IP" -> sendWifiIpToPhone()
+            "GET_WIFI_STATE" -> sendWifiStateToPhone()
+            "SET_WIFI_ENABLED" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                try {
+                    val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+                        as android.net.wifi.WifiManager
+                    @Suppress("DEPRECATION")
+                    wifi.isWifiEnabled = enabled
+                    Log.i(TAG, "Wi-Fi setEnabled=$enabled")
+                } catch (e: Exception) {
+                    Log.w(TAG, "setWifiEnabled failed: ${e.message}")
+                }
+                // Echo the result back so the phone toggle reflects
+                // reality on retry rather than the user's request.
+                sendWifiStateToPhone()
+            }
+            "WIFI_SCAN_REQ" -> handleWifiScanReq()
+            "WIFI_CONNECT_REQ" -> handleWifiConnectReq(payload)
             else -> Log.d(TAG, "Unknown base message: $type")
         }
     }
@@ -494,6 +514,179 @@ class BluetoothListenerService : Service() {
             put("ssid", ssid)
         }.toString()
         sendPluginMessage("base", "WIFI_IP", json)
+    }
+
+    /** Phone-facing snapshot: radio on/off, current connected SSID,
+     *  and a derived "connected" boolean. Echoed back after every
+     *  SET_WIFI_ENABLED / WIFI_CONNECT_REQ so the phone UI reflects
+     *  reality on retry. */
+    private fun sendWifiStateToPhone() {
+        val (enabled, ssid, ip) = try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+                as android.net.wifi.WifiManager
+            @Suppress("DEPRECATION")
+            val rawIp = wifi.connectionInfo?.ipAddress ?: 0
+            val ipStr = if (rawIp == 0) ""
+                else android.text.format.Formatter.formatIpAddress(rawIp)
+            @Suppress("DEPRECATION")
+            val s = wifi.connectionInfo?.ssid.orEmpty().trim('"')
+                .takeIf { it.isNotEmpty() && it != "<unknown ssid>" } ?: ""
+            @Suppress("DEPRECATION")
+            Triple(wifi.isWifiEnabled, s, ipStr)
+        } catch (_: Exception) {
+            Triple(false, "", "")
+        }
+        val json = JSONObject().apply {
+            put("enabled", enabled)
+            put("ssid", ssid)
+            put("ip", ip)
+            put("connected", ssid.isNotEmpty() && ip.isNotEmpty())
+        }.toString()
+        sendPluginMessage("base", "WIFI_STATE", json)
+    }
+
+    private fun handleWifiScanReq() {
+        // Best-effort scan + reply. Kicks off a new scan and then
+        // reads getScanResults synchronously — on API 27 the result
+        // list is the most recent cache, which is usually within a
+        // few seconds for a phone-initiated scan. We don't subscribe
+        // to ACTION_SCAN_RESULTS because the round-trip would
+        // complicate the BT swap-handler pattern on the phone.
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+            as android.net.wifi.WifiManager
+        try { @Suppress("DEPRECATION") wifi.startScan() } catch (_: Exception) {}
+        // 800ms gives the radio a chance to populate the cache when
+        // it was empty (e.g. immediately after wifi enable).
+        Thread {
+            try { Thread.sleep(800L) } catch (_: InterruptedException) {}
+            val results = try { wifi.scanResults ?: emptyList() } catch (_: Exception) { emptyList() }
+            val arr = org.json.JSONArray()
+            // Dedup by SSID, keep the strongest signal (RSSI is closer
+            // to 0 = stronger; -100 = weakest).
+            results
+                .filter { !it.SSID.isNullOrEmpty() }
+                .groupBy { it.SSID }
+                .values
+                .map { it.maxBy { r -> r.level } }
+                .sortedByDescending { it.level }
+                .forEach { r ->
+                    arr.put(JSONObject().apply {
+                        put("ssid", r.SSID)
+                        put("rssi", r.level)
+                        put("security", securityLabelFor(r.capabilities))
+                    })
+                }
+            sendPluginMessage("base", "WIFI_SCAN_RESULT",
+                JSONObject().apply { put("networks", arr) }.toString())
+        }.apply { isDaemon = true; name = "WifiScan-reply" }.start()
+    }
+
+    /** Reduce the capabilities string from a ScanResult to a short
+     *  tag the phone UI can show as a badge. Order matters: WPA3 ⊂
+     *  WPA, EAP ⊂ WPA — check the more specific case first. */
+    private fun securityLabelFor(cap: String?): String {
+        val c = cap.orEmpty().uppercase()
+        return when {
+            "WPA3" in c -> "WPA3"
+            "EAP" in c -> "EAP"
+            "WPA2" in c -> "WPA2"
+            "WPA" in c -> "WPA"
+            "WEP" in c -> "WEP"
+            else -> "OPEN"
+        }
+    }
+
+    private fun handleWifiConnectReq(payload: String) {
+        val (ssid, password, security) = try {
+            val o = JSONObject(payload)
+            Triple(
+                o.optString("ssid", ""),
+                o.optString("password", ""),
+                o.optString("security", "WPA2").uppercase()
+            )
+        } catch (_: Exception) { Triple("", "", "WPA2") }
+        if (ssid.isEmpty()) {
+            sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                JSONObject().apply {
+                    put("ok", false); put("reason", "missing_ssid")
+                }.toString())
+            return
+        }
+        try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+                as android.net.wifi.WifiManager
+            if (!wifi.isWifiEnabled) {
+                @Suppress("DEPRECATION") wifi.isWifiEnabled = true
+            }
+            val cfg = android.net.wifi.WifiConfiguration().apply {
+                SSID = "\"$ssid\""
+                when (security) {
+                    "OPEN" -> allowedKeyManagement.set(
+                        android.net.wifi.WifiConfiguration.KeyMgmt.NONE
+                    )
+                    "WEP" -> {
+                        // WEP 40/104 — quoted ASCII or unquoted hex; we
+                        // accept the user-typed value as-is and let
+                        // WifiManager reject mismatched lengths.
+                        allowedKeyManagement.set(
+                            android.net.wifi.WifiConfiguration.KeyMgmt.NONE
+                        )
+                        wepKeys[0] = "\"$password\""
+                        wepTxKeyIndex = 0
+                    }
+                    else -> {
+                        // WPA / WPA2 / WPA3 all use WPA_PSK on API 27.
+                        allowedKeyManagement.set(
+                            android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK
+                        )
+                        preSharedKey = "\"$password\""
+                    }
+                }
+            }
+            @Suppress("DEPRECATION")
+            val netId = wifi.addNetwork(cfg)
+            if (netId == -1) {
+                // addNetwork returns -1 when the same SSID is already
+                // configured under a different security or when the
+                // config is malformed. Look up the existing config and
+                // enable it instead.
+                @Suppress("DEPRECATION")
+                val existing = wifi.configuredNetworks
+                    ?.firstOrNull { it.SSID == "\"$ssid\"" }
+                if (existing != null) {
+                    @Suppress("DEPRECATION")
+                    wifi.enableNetwork(existing.networkId, true)
+                    sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                        JSONObject().apply {
+                            put("ok", true); put("reason", "existing")
+                        }.toString())
+                } else {
+                    sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                        JSONObject().apply {
+                            put("ok", false); put("reason", "addNetwork_failed")
+                        }.toString())
+                }
+            } else {
+                @Suppress("DEPRECATION") wifi.disconnect()
+                @Suppress("DEPRECATION") wifi.enableNetwork(netId, true)
+                @Suppress("DEPRECATION") wifi.reconnect()
+                sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                    JSONObject().apply {
+                        put("ok", true); put("reason", "added")
+                    }.toString())
+            }
+            // Echo state ~2s later so the phone reflects the post-
+            // connect SSID without the user having to refresh.
+            android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed({ sendWifiStateToPhone() }, 2_000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "Wi-Fi connect failed: ${e.message}")
+            sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                JSONObject().apply {
+                    put("ok", false)
+                    put("reason", "exception:${e.javaClass.simpleName}:${e.message}")
+                }.toString())
+        }
     }
 
     private fun maybeWakeForNavUpdate() {

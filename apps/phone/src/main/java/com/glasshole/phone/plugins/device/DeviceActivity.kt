@@ -59,6 +59,9 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var syncTimeButton: Button
     private lateinit var refreshButton: Button
     private lateinit var showWifiIpButton: Button
+    private lateinit var glassWifiStatusText: TextView
+    private lateinit var glassWifiSwitch: MaterialSwitch
+    private lateinit var glassWifiScanButton: Button
 
     private lateinit var cameraLedSwitch: MaterialSwitch
     private lateinit var cameraLedStatusText: TextView
@@ -118,6 +121,9 @@ class DeviceActivity : AppCompatActivity() {
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
         showWifiIpButton = findViewById(R.id.showWifiIpButton)
+        glassWifiStatusText = findViewById(R.id.glassWifiStatusText)
+        glassWifiSwitch = findViewById(R.id.glassWifiSwitch)
+        glassWifiScanButton = findViewById(R.id.glassWifiScanButton)
 
         cameraLedSwitch = findViewById(R.id.cameraLedSwitch)
         cameraLedStatusText = findViewById(R.id.cameraLedStatusText)
@@ -175,6 +181,29 @@ class DeviceActivity : AppCompatActivity() {
                     showWifiIpDialog(ip, ssid)
                 }
             }
+        }
+
+        glassWifiSwitch.setOnCheckedChangeListener { _, isChecked ->
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            // Echo back fresh state once glass reports back. Swallow
+            // local toggle changes during the round-trip so a bounce
+            // doesn't double-fire.
+            if (!bridge.setGlassWifiEnabled(isChecked)) {
+                toast("Send failed")
+            }
+        }
+
+        glassWifiScanButton.setOnClickListener {
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected")
+                return@setOnClickListener
+            }
+            startActivity(android.content.Intent(this, GlassWifiPickerActivity::class.java))
         }
 
         brightnessSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -617,6 +646,60 @@ class DeviceActivity : AppCompatActivity() {
      *  the matching `adb connect ip:5555` recovery command. Useful when
      *  the glass USB port is broken and you've already enabled adb
      *  tcpip mode from a previously-authorized machine. */
+    override fun onResume() {
+        super.onResume()
+        // Refresh the glass Wi-Fi panel each time the user comes back
+        // (e.g. after the picker connects to a new network).
+        refreshGlassWifiStatus()
+    }
+
+    /** Asks the glass for the current Wi-Fi snapshot and pushes it
+     *  into the status text + switch. Skips silently when the glass
+     *  isn't reachable so this can be called any time without
+     *  surfacing a "not connected" toast. */
+    private fun refreshGlassWifiStatus() {
+        val bridge = BridgeService.instance ?: return
+        if (!bridge.isConnected) {
+            glassWifiStatusText.text = "Glass not connected"
+            return
+        }
+        glassWifiStatusText.text = "Asking glass…"
+        bridge.queryGlassWifiState { state, err ->
+            runOnUiThread {
+                if (err != null || state == null) {
+                    glassWifiStatusText.text = "Status: ${err ?: "?"}"
+                    return@runOnUiThread
+                }
+                glassWifiStatusText.text = buildString {
+                    append("Radio: ").append(if (state.enabled) "on" else "off")
+                    if (state.connected) {
+                        append("  •  ").append(state.ssid)
+                        if (state.ip.isNotEmpty()) append("  •  ").append(state.ip)
+                    } else if (state.enabled) {
+                        append("  •  not connected")
+                    }
+                }
+                // Update the switch without echoing back to the BT
+                // handler — that would re-fire SET_WIFI_ENABLED in a
+                // loop on every state refresh.
+                glassWifiSwitch.setOnCheckedChangeListener(null)
+                glassWifiSwitch.isChecked = state.enabled
+                rebindGlassWifiSwitch()
+            }
+        }
+    }
+
+    private fun rebindGlassWifiSwitch() {
+        glassWifiSwitch.setOnCheckedChangeListener { _, isChecked ->
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            if (!bridge.setGlassWifiEnabled(isChecked)) toast("Send failed")
+        }
+    }
+
     private fun showWifiIpDialog(ip: String, ssid: String) {
         if (ip.isEmpty()) {
             android.app.AlertDialog.Builder(this)

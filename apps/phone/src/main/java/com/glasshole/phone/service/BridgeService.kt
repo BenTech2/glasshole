@@ -751,6 +751,140 @@ class BridgeService : Service() {
         }
     }
 
+    /** Snapshot of the glass's Wi-Fi radio state. */
+    data class GlassWifiState(
+        val enabled: Boolean,
+        val connected: Boolean,
+        val ssid: String,
+        val ip: String,
+    )
+
+    /** Single scan-result entry returned by [scanGlassWifi]. */
+    data class GlassWifiNetwork(
+        val ssid: String,
+        val rssi: Int,
+        val security: String,
+    )
+
+    fun queryGlassWifiState(onResult: (state: GlassWifiState?, error: String?) -> Unit) {
+        runOneShotBaseRoundTrip(
+            request = "GET_WIFI_STATE", payload = "",
+            replyType = "WIFI_STATE", timeoutMs = 5_000L,
+            parse = { json ->
+                GlassWifiState(
+                    enabled = json.optBoolean("enabled", false),
+                    connected = json.optBoolean("connected", false),
+                    ssid = json.optString("ssid", ""),
+                    ip = json.optString("ip", ""),
+                )
+            },
+            onResult = onResult,
+        )
+    }
+
+    /** Toggles the glass-side Wi-Fi radio. Glass echoes a fresh
+     *  WIFI_STATE after the call; this fire-and-forget only confirms
+     *  the BT send succeeded — callers should requery the state if
+     *  they need the post-toggle truth. */
+    fun setGlassWifiEnabled(enabled: Boolean): Boolean {
+        val json = org.json.JSONObject().put("enabled", enabled).toString()
+        return sendPluginMessage("base", "SET_WIFI_ENABLED", json)
+    }
+
+    /** Trigger a fresh scan on the glass and wait for the result.
+     *  Allow ~3 s — the glass-side handler delays 800 ms before
+     *  reading the cache to give the radio a chance to populate. */
+    fun scanGlassWifi(onResult: (networks: List<GlassWifiNetwork>, error: String?) -> Unit) {
+        runOneShotBaseRoundTrip(
+            request = "WIFI_SCAN_REQ", payload = "",
+            replyType = "WIFI_SCAN_RESULT", timeoutMs = 6_000L,
+            parse = { json ->
+                val out = mutableListOf<GlassWifiNetwork>()
+                val arr = json.optJSONArray("networks")
+                if (arr != null) for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    out.add(GlassWifiNetwork(
+                        ssid = o.optString("ssid", ""),
+                        rssi = o.optInt("rssi", -100),
+                        security = o.optString("security", "OPEN"),
+                    ))
+                }
+                out
+            },
+            onResult = { list, err -> onResult(list ?: emptyList(), err) },
+        )
+    }
+
+    /** Add + enable a WifiConfiguration on the glass. [security] is
+     *  one of "OPEN", "WEP", "WPA", "WPA2", "WPA3" — matches the
+     *  badge returned by scanGlassWifi. */
+    fun connectGlassWifi(
+        ssid: String, password: String, security: String,
+        onResult: (ok: Boolean, message: String) -> Unit,
+    ) {
+        val req = org.json.JSONObject().apply {
+            put("ssid", ssid)
+            put("password", password)
+            put("security", security)
+        }.toString()
+        runOneShotBaseRoundTrip(
+            request = "WIFI_CONNECT_REQ", payload = req,
+            replyType = "WIFI_CONNECT_RESULT", timeoutMs = 8_000L,
+            parse = { json ->
+                Pair(
+                    json.optBoolean("ok", false),
+                    json.optString("reason", "")
+                )
+            },
+            onResult = { pair, err ->
+                if (err != null) onResult(false, err)
+                else onResult(pair?.first == true, pair?.second.orEmpty())
+            },
+        )
+    }
+
+    /** Generic single-message round trip on the base channel.
+     *  Captures the next reply of [replyType], parses it with
+     *  [parse], restores the previous handler. Used by the Wi-Fi
+     *  helpers above so each one isn't ~50 lines of swap/restore
+     *  boilerplate. */
+    private fun <T> runOneShotBaseRoundTrip(
+        request: String, payload: String,
+        replyType: String, timeoutMs: Long,
+        parse: (org.json.JSONObject) -> T,
+        onResult: (T?, String?) -> Unit,
+    ) {
+        if (!btConnected) { onResult(null, "Glass not connected"); return }
+        val prevHandler = onBaseMessage
+        var fired = false
+        val timeoutHandler = Handler(Looper.getMainLooper())
+        val timeout = Runnable {
+            if (!fired) { fired = true; onBaseMessage = prevHandler
+                onResult(null, "Timed out waiting for glass") }
+        }
+        onBaseMessage = handler@{ type, body ->
+            if (type == replyType) {
+                if (fired) return@handler
+                fired = true
+                timeoutHandler.removeCallbacks(timeout)
+                onBaseMessage = prevHandler
+                val parsed = try {
+                    parse(org.json.JSONObject(body))
+                } catch (e: Exception) { null }
+                if (parsed == null) onResult(null, "Bad reply payload")
+                else onResult(parsed, null)
+            } else prevHandler?.invoke(type, body)
+        }
+        timeoutHandler.postDelayed(timeout, timeoutMs)
+        if (!sendPluginMessage("base", request, payload)) {
+            timeoutHandler.removeCallbacks(timeout)
+            if (!fired) {
+                fired = true; onBaseMessage = prevHandler
+                onResult(null, "Send failed")
+            }
+        }
+    }
+
     fun queryWifiIp(onResult: (ip: String, ssid: String, error: String?) -> Unit) {
         if (!btConnected) {
             onResult("", "", "Glass not connected")
