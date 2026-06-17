@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Dev tools"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/wifiStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace" />
+
+        <TextView
+            android:id="@+id/adbStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:layout_marginTop="6dp"
+            android:fontFamily="monospace" />
+
+        <Button
+            android:id="@+id/toggleAdbButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Toggle ADB"
+            android:layout_marginTop="14dp" />
+
+        <Button
+            android:id="@+id/openDevOptionsButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Open Developer options"
+            android:layout_marginTop="6dp" />
+
+        <Button
+            android:id="@+id/tryWirelessAdbButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Try wireless ADB (best-effort)"
+            android:layout_marginTop="6dp" />
+
+        <TextView
+            android:id="@+id/resultText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="#FFD27A"
+            android:textSize="14sp"
+            android:layout_marginTop="12dp"
+            android:fontFamily="monospace" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#333333"
+            android:layout_marginTop="18dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Root tools"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginTop="14dp" />
+
+        <TextView
+            android:id="@+id/rootStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Root: checking…"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:layout_marginTop="4dp" />
+
+        <Button
+            android:id="@+id/grantSecureSettingsButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant WRITE_SECURE_SETTINGS to this plugin"
+            android:enabled="false"
+            android:layout_marginTop="10dp" />
+
+        <Button
+            android:id="@+id/enableWirelessAdbButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Enable wireless ADB on port 5555"
+            android:enabled="false"
+            android:layout_marginTop="6dp" />
+
+        <EditText
+            android:id="@+id/customRootCommandInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="su command (e.g. pm grant ... ...)"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#777777"
+            android:background="#222222"
+            android:padding="10dp"
+            android:fontFamily="monospace"
+            android:singleLine="true"
+            android:imeOptions="actionDone"
+            android:enabled="false"
+            android:layout_marginTop="6dp" />
+
+        <Button
+            android:id="@+id/runCustomRootButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Run as root"
+            android:enabled="false"
+            android:layout_marginTop="6dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#333333"
+            android:layout_marginTop="18dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SSH server"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginTop="14dp" />
+
+        <TextView
+            android:id="@+id/sshStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/sshConnectText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="#7AB8FF"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:layout_marginTop="6dp" />
+
+        <TextView
+            android:id="@+id/sshPasswordText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="#FFD27A"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:layout_marginTop="2dp" />
+
+        <Button
+            android:id="@+id/sshToggleButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Start SSH server"
+            android:layout_marginTop="10dp" />
+
+        <Button
+            android:id="@+id/sshRegenPasswordButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Regenerate password"
+            android:layout_marginTop="6dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Lets you SSH into the glass from a laptop on the same Wi-Fi. Limited to the app's UID — handy for file recovery (SCP, cat, am start). Needs Android 8.0+; the buttons stay disabled on EE1/XE."
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:layout_marginTop="8dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#333333"
+            android:layout_marginTop="18dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Wireless ADB needs system / root privilege on Android 8.1 — the button will probably report 'permission denied' but is worth trying when USB is broken. Swipe down to exit."
+            android:textColor="#AAAAAA"
+            android:textSize="12sp"
+            android:layout_marginTop="14dp" />
+
+    </LinearLayout>
+</ScrollView>

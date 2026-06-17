@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Used by the "Toggle ADB" button. WRITE_SECURE_SETTINGS is a
+         signature-level permission so it must be adb-granted at install
+         time:
+             adb shell pm grant com.glasshole.plugin.devtools.glass \
+                 android.permission.WRITE_SECURE_SETTINGS
+         The plugin still launches without it — the ADB toggle just
+         reports "permission missing" instead of flipping. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Needed by the embedded SSH server. The server only binds to
+         the Wi-Fi interface IP we advertise to the user — nothing leaks
+         past the local subnet. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="Dev tools"
+        android:theme="@android:style/Theme.DeviceDefault">
+
+        <meta-data
+            android:name="com.google.android.glass.TouchEnabledApplication"
+            android:value="true" />
+
+        <service
+            android:name=".DevToolsGlassPluginService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
+            </intent-filter>
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="devtools" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="Dev tools" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="Wi-Fi IP, ADB toggle, and a best-effort wireless-debug switch when USB is broken" />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA"
+                android:resource="@raw/plugin_schema" />
+        </service>
+
+        <activity
+            android:name=".DevToolsActivity"
+            android:label="Dev tools"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.google.android.glass.category.DIRECTORY" />
+            </intent-filter>
+        </activity>
+
+        <!-- Triggered from the SSH shell to fire the standard
+             PackageInstaller UI for an APK at a given path. Exported
+             so `am start -n` from a `shell`-spawned process can reach
+             it; no sensitive functionality (the user still has to tap
+             "Install" on the headset). -->
+        <activity
+            android:name=".InstallApkActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.glasshole.plugin.devtools.glass.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+
+</manifest>
