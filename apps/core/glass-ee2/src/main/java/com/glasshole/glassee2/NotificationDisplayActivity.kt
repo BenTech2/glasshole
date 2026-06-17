@@ -77,23 +77,25 @@ class NotificationDisplayActivity : Activity() {
             .takeIf { it > 0L } ?: DEFAULT_DISMISS_MS
         setContentView(buildCardView(parsed))
 
-        // Beep is gated by two phone-driven prefs:
+        // Sound playback is gated by:
         //   KEY_NOTIF_SOUND_ENABLED — master on/off
-        //   KEY_NOTIF_SOUND_VOLUME  — 0..100 passed straight to the
-        //                             ToneGenerator ctor's volume param
-        // A volume of 0 short-circuits the same path the disabled toggle
-        // takes (no point spinning a tone we wouldn't hear) so we don't
-        // burn the ~100ms ToneGenerator init for silence.
+        //   KEY_NOTIF_SOUND_VOLUME  — 0..100, applied to whichever
+        //                             sound source plays
+        //   notif_app_sounds[pkg]   — optional per-app override picked
+        //                             from the phone (built-in tone or
+        //                             uploaded file). Empty string or
+        //                             missing key falls back to the
+        //                             global beep.
         val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
         val soundEnabled = prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true)
         val soundVolume = prefs.getInt(BaseSettings.KEY_NOTIF_SOUND_VOLUME, 100)
             .coerceIn(0, 100)
         if (soundEnabled && soundVolume > 0) {
-            try {
-                val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, soundVolume)
-                tone.startTone(ToneGenerator.TONE_PROP_BEEP, 300)
-                handler.postDelayed({ tone.release() }, 500)
-            } catch (_: Exception) {}
+            val perAppSounds = getSharedPreferences("notif_app_sounds", MODE_PRIVATE)
+            val soundId = if (parsed.pkg.isNotEmpty()) {
+                perAppSounds.getString(parsed.pkg, "") ?: ""
+            } else ""
+            NotifSoundPlayer.play(soundId, soundVolume)
         }
 
         resetAutoDismiss()
@@ -182,6 +184,7 @@ class NotificationDisplayActivity : Activity() {
 
     private data class ParsedNotif(
         val app: String,
+        val pkg: String,
         val title: String,
         val text: String,
         val iconBase64: String,
@@ -193,6 +196,7 @@ class NotificationDisplayActivity : Activity() {
 
     private fun parseIntent(): ParsedNotif {
         val app = intent.getStringExtra("app") ?: ""
+        val pkg = intent.getStringExtra("pkg") ?: ""
         val title = intent.getStringExtra("title") ?: ""
         val text = intent.getStringExtra("text") ?: ""
         val icon = intent.getStringExtra("icon") ?: ""
@@ -205,18 +209,18 @@ class NotificationDisplayActivity : Activity() {
             // Legacy "$app: $title - $text"
             val raw = intent.getStringExtra("message") ?: "(empty)"
             val colon = raw.indexOf(":")
-            if (colon <= 0) return ParsedNotif("", "", raw.trim(), "", "", "", "", emptyList())
+            if (colon <= 0) return ParsedNotif("", "", "", raw.trim(), "", "", "", "", emptyList())
             val pkgName = raw.substring(0, colon).trim()
             val rest = raw.substring(colon + 1).trim()
             val dash = rest.indexOf(" - ")
             return if (dash > 0) {
-                ParsedNotif(pkgName, rest.substring(0, dash).trim(), rest.substring(dash + 3).trim(), "", "", "", "", emptyList())
+                ParsedNotif(pkgName, "", rest.substring(0, dash).trim(), rest.substring(dash + 3).trim(), "", "", "", "", emptyList())
             } else {
-                ParsedNotif(pkgName, "", rest, "", "", "", "", emptyList())
+                ParsedNotif(pkgName, "", "", rest, "", "", "", "", emptyList())
             }
         }
 
-        return ParsedNotif(app, title, text, icon, titleIcon, picture, key, NotifAction.parseArray(actionsJson))
+        return ParsedNotif(app, pkg, title, text, icon, titleIcon, picture, key, NotifAction.parseArray(actionsJson))
     }
 
     private fun buildCardView(p: ParsedNotif): View {

@@ -433,6 +433,35 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Notification volume=$value")
                 sendBaseStateToPhone()
             }
+            "SET_NOTIF_APP_SOUND" -> {
+                try {
+                    val obj = JSONObject(payload)
+                    val pkg = obj.optString("pkg", "")
+                    val soundId = obj.optString("soundId", "")
+                    if (pkg.isNotEmpty()) {
+                        val prefs = getSharedPreferences("notif_app_sounds", MODE_PRIVATE)
+                        if (soundId.isEmpty()) prefs.edit().remove(pkg).apply()
+                        else prefs.edit().putString(pkg, soundId).apply()
+                        Log.i(TAG, "Per-app sound: $pkg -> ${if (soundId.isEmpty()) "(default)" else soundId}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "SET_NOTIF_APP_SOUND parse: ${e.message}")
+                }
+            }
+            "NOTIF_SOUND_UPLOAD_REQ" -> handleNotifSoundUploadReq(payload)
+            "NOTIF_SOUND_LIST_REQ" -> sendNotifSoundList()
+            "NOTIF_SOUND_DELETE" -> {
+                try {
+                    val name = JSONObject(payload).optString("filename", "")
+                    if (name.isNotEmpty()) {
+                        val safe = name.substringAfterLast('/').substringAfterLast('\\')
+                        val f = java.io.File(NotifSoundPlayer.SOUND_DIR, safe)
+                        val ok = f.exists() && f.delete()
+                        Log.i(TAG, "NOTIF_SOUND_DELETE $safe -> $ok")
+                        sendNotifSoundList()
+                    }
+                } catch (_: Exception) {}
+            }
             "BG_UPLOAD_REQ" -> handleBgUploadReq(payload)
             "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
@@ -555,6 +584,94 @@ class BluetoothListenerService : Service() {
      *  an in-flight upload can return the existing URL rather than
      *  spinning up a second server. */
     private var wallpaperUploadServer: WallpaperUploadServer? = null
+
+    /** Same one-shot HTTP server the wallpaper flow uses, repurposed
+     *  per notification-sound upload. Held in the same shape so a
+     *  concurrent BG_UPLOAD and NOTIF_SOUND_UPLOAD don't fight over a
+     *  single socket. */
+    private var notifSoundUploadServer: WallpaperUploadServer? = null
+
+    private fun handleNotifSoundUploadReq(payload: String) {
+        val size = try { JSONObject(payload).optLong("size", -1L) } catch (_: Exception) { -1L }
+        if (size <= 0L) {
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                JSONObject().apply { put("reason", "bad_size") }.toString())
+            return
+        }
+        if (size > WallpaperUploadServer.MAX_SIZE_BYTES) {
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                JSONObject().apply {
+                    put("reason", "too_large")
+                    put("max", WallpaperUploadServer.MAX_SIZE_BYTES)
+                }.toString())
+            return
+        }
+
+        val existing = notifSoundUploadServer
+        val server = existing ?: WallpaperUploadServer(
+            this,
+            onComplete = { filename, bytes -> writeUploadedNotifSound(filename, bytes) },
+            onError = { reason ->
+                sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                    JSONObject().apply { put("reason", reason) }.toString())
+                notifSoundUploadServer = null
+            }
+        ).also { notifSoundUploadServer = it }
+
+        val url = server.start()
+        if (url == null) {
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                JSONObject().apply { put("reason", "no_wifi") }.toString())
+            notifSoundUploadServer = null
+            return
+        }
+        sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_OPEN",
+            JSONObject().apply { put("url", url) }.toString())
+    }
+
+    private fun writeUploadedNotifSound(filename: String, bytes: ByteArray) {
+        val safeName = filename
+            .substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifEmpty { "notif.mp3" }
+            .let {
+                // Accept any audio-ish extension MediaPlayer can decode;
+                // default to .mp3 when the phone sent something weird.
+                val ext = it.substringAfterLast('.', "").lowercase()
+                if (ext in setOf("mp3", "ogg", "wav", "m4a", "aac", "flac")) it else "$it.mp3"
+            }
+        val dir = java.io.File(NotifSoundPlayer.SOUND_DIR)
+        try {
+            if (!dir.exists()) dir.mkdirs()
+            val target = java.io.File(dir, safeName)
+            target.outputStream().use { it.write(bytes) }
+            Log.i(TAG, "Notif sound written: ${target.absolutePath} (${bytes.size} bytes)")
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_DONE",
+                JSONObject().apply {
+                    put("filename", safeName)
+                    put("size", bytes.size)
+                }.toString())
+            sendNotifSoundList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Notif sound write failed: ${e.message}")
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                JSONObject().apply {
+                    put("reason", "write_failed")
+                    put("detail", e.message ?: "")
+                }.toString())
+        } finally {
+            notifSoundUploadServer = null
+        }
+    }
+
+    private fun sendNotifSoundList() {
+        val dir = java.io.File(NotifSoundPlayer.SOUND_DIR)
+        val names = dir.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()
+        val arr = org.json.JSONArray()
+        names.sorted().forEach { arr.put(it) }
+        sendPluginMessage("base", "NOTIF_SOUND_LIST",
+            JSONObject().apply { put("files", arr) }.toString())
+    }
 
     private fun handleBgUploadReq(payload: String) {
         // Sanity-check the requested size up-front so we can fail

@@ -560,6 +560,124 @@ class BridgeService : Service() {
      * timeout is generous — the round-trip is tiny but BT RFCOMM can
      * stall briefly after a recent disconnect.
      */
+    /**
+     * Upload an audio file to the glass for per-app notification
+     * sounds. Mirrors uploadWallpaper's swap-and-restore handler
+     * pattern — request a one-shot HTTP URL over BT, POST the bytes
+     * over Wi-Fi, wait for the DONE/ERR ack.
+     */
+    fun uploadNotifSound(
+        bytes: ByteArray,
+        filename: String,
+        onResult: (success: Boolean, message: String) -> Unit
+    ) {
+        if (!btConnected) {
+            onResult(false, "Glass not connected"); return
+        }
+        val prevHandler = onBaseMessage
+        onBaseMessage = handler@{ type, payload ->
+            when (type) {
+                "NOTIF_SOUND_UPLOAD_OPEN" -> {
+                    val url = try {
+                        org.json.JSONObject(payload).optString("url", "")
+                    } catch (_: Exception) { "" }
+                    Log.i(TAG, "NOTIF_SOUND_UPLOAD_OPEN url=$url bytes=${bytes.size}")
+                    if (url.isEmpty()) {
+                        onBaseMessage = prevHandler
+                        onResult(false, "Glass returned no URL"); return@handler
+                    }
+                    Thread {
+                        try {
+                            postWallpaperBytes(url, filename, bytes)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Notif sound POST failed", e)
+                            onBaseMessage = prevHandler
+                            onResult(false, "POST failed: ${e.javaClass.simpleName}: ${e.message}")
+                        }
+                    }.apply { isDaemon = true; name = "NotifSoundUpload-post"; start() }
+                }
+                "NOTIF_SOUND_UPLOAD_DONE" -> {
+                    onBaseMessage = prevHandler
+                    val fn = try {
+                        org.json.JSONObject(payload).optString("filename", filename)
+                    } catch (_: Exception) { filename }
+                    onResult(true, fn)
+                }
+                "NOTIF_SOUND_UPLOAD_ERR" -> {
+                    onBaseMessage = prevHandler
+                    val reason = try {
+                        org.json.JSONObject(payload).optString("reason", "unknown")
+                    } catch (_: Exception) { "unknown" }
+                    onResult(false, "Glass rejected: $reason")
+                }
+                else -> prevHandler?.invoke(type, payload)
+            }
+        }
+
+        val req = org.json.JSONObject().apply {
+            put("filename", filename)
+            put("size", bytes.size)
+        }.toString()
+        if (!sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_REQ", req)) {
+            onBaseMessage = prevHandler
+            onResult(false, "Failed to send upload request")
+        }
+    }
+
+    /** Ask the glass for the current list of uploaded notif-sound files.
+     *  Reply lands on the same swap-and-restore channel as everything
+     *  else. */
+    fun queryNotifSoundList(onResult: (files: List<String>, error: String?) -> Unit) {
+        if (!btConnected) { onResult(emptyList(), "Glass not connected"); return }
+        val prevHandler = onBaseMessage
+        var fired = false
+        val timeoutHandler = Handler(Looper.getMainLooper())
+        val timeout = Runnable {
+            if (!fired) { fired = true; onBaseMessage = prevHandler
+                onResult(emptyList(), "Timed out waiting for glass") }
+        }
+        onBaseMessage = handler@{ type, payload ->
+            if (type == "NOTIF_SOUND_LIST") {
+                if (fired) return@handler
+                fired = true
+                timeoutHandler.removeCallbacks(timeout)
+                onBaseMessage = prevHandler
+                val files = mutableListOf<String>()
+                try {
+                    val arr = org.json.JSONObject(payload).optJSONArray("files")
+                    if (arr != null) for (i in 0 until arr.length()) files.add(arr.getString(i))
+                } catch (_: Exception) {}
+                onResult(files, null)
+            } else prevHandler?.invoke(type, payload)
+        }
+        timeoutHandler.postDelayed(timeout, 5_000L)
+        if (!sendPluginMessage("base", "NOTIF_SOUND_LIST_REQ", "")) {
+            timeoutHandler.removeCallbacks(timeout)
+            if (!fired) {
+                fired = true; onBaseMessage = prevHandler
+                onResult(emptyList(), "Send failed")
+            }
+        }
+    }
+
+    /** Tell the glass to delete an uploaded notif-sound file. Fire-
+     *  and-forget; the glass replies with a fresh NOTIF_SOUND_LIST
+     *  the next time we ask. */
+    fun deleteNotifSound(filename: String) {
+        sendPluginMessage("base", "NOTIF_SOUND_DELETE",
+            org.json.JSONObject().apply { put("filename", filename) }.toString())
+    }
+
+    /** Send the per-app sound choice (or clear it when soundId is
+     *  empty). Glass-side prefs key is the app's package name. */
+    fun setNotifAppSound(pkg: String, soundId: String): Boolean {
+        val json = org.json.JSONObject().apply {
+            put("pkg", pkg)
+            put("soundId", soundId)
+        }.toString()
+        return sendPluginMessage("base", "SET_NOTIF_APP_SOUND", json)
+    }
+
     fun queryWifiIp(onResult: (ip: String, ssid: String, error: String?) -> Unit) {
         if (!btConnected) {
             onResult("", "", "Glass not connected")
