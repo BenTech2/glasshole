@@ -67,6 +67,20 @@
             android:layout_marginTop="2dp" />
     </LinearLayout>
 
+    <!-- Remote launch on the glass — sends LAUNCH_PACKAGE over BT,
+         glass tries packageManager.getLaunchIntentForPackage for this
+         pkg and starts it. Shown on every row; not every package has
+         a launcher activity (system services, headless plugins) but
+         the glass-side handler logs and no-ops in that case. -->
+    <ImageButton
+        android:id="@+id/launchBtn"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:src="@android:drawable/ic_media_play"
+        android:contentDescription="Launch on glass"
+        app:tint="?attr/colorPrimary" />
+
     <ImageButton
         android:id="@+id/uninstallBtn"
         android:layout_width="40dp"

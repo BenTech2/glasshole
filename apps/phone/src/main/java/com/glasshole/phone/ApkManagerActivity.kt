@@ -304,6 +304,7 @@ class ApkManagerActivity : AppCompatActivity() {
             val pkg = view.findViewById<TextView>(R.id.pkg)
             val familyBadge = view.findViewById<TextView>(R.id.familyBadge)
             val kindBadge = view.findViewById<TextView>(R.id.kindBadge)
+            val launchBtn = view.findViewById<ImageButton>(R.id.launchBtn)
             val uninstall = view.findViewById<ImageButton>(R.id.uninstallBtn)
 
             label.text = row.label
@@ -324,6 +325,17 @@ class ApkManagerActivity : AppCompatActivity() {
                 AppKind.OTHER -> kindBadge.visibility = View.GONE
             }
             uninstall.setOnClickListener { confirmUninstall(row) }
+
+            launchBtn.setOnClickListener {
+                val bridge = bridgeService
+                if (bridge == null || !bridge.isConnected) {
+                    toast("Glass not connected")
+                    return@setOnClickListener
+                }
+                val payload = org.json.JSONObject().put("pkg", row.pkg).toString()
+                val sent = bridge.sendPluginMessage("base", "LAUNCH_PACKAGE", payload)
+                toast(if (sent) "Launching ${row.label} on glass" else "Send failed")
+            }
 
             return view
         }
