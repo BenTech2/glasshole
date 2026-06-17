@@ -50,11 +50,15 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var stayAwakeWhenChargingSwitch: MaterialSwitch
     private lateinit var wallpaperOnSettingsSwitch: MaterialSwitch
     private lateinit var wallpaperOnAppDrawerSwitch: MaterialSwitch
+    private lateinit var notifSoundEnabledSwitch: MaterialSwitch
+    private lateinit var notifSoundVolumeSeek: SeekBar
+    private lateinit var notifSoundVolumeLabel: TextView
     private lateinit var stayAwakeWhenChargingSubtitle: TextView
 
     private lateinit var wakeButton: Button
     private lateinit var syncTimeButton: Button
     private lateinit var refreshButton: Button
+    private lateinit var showWifiIpButton: Button
 
     private lateinit var cameraLedSwitch: MaterialSwitch
     private lateinit var cameraLedStatusText: TextView
@@ -106,10 +110,14 @@ class DeviceActivity : AppCompatActivity() {
         stayAwakeWhenChargingSwitch = findViewById(R.id.stayAwakeWhenChargingSwitch)
         wallpaperOnSettingsSwitch = findViewById(R.id.wallpaperOnSettingsSwitch)
         wallpaperOnAppDrawerSwitch = findViewById(R.id.wallpaperOnAppDrawerSwitch)
+        notifSoundEnabledSwitch = findViewById(R.id.notifSoundEnabledSwitch)
+        notifSoundVolumeSeek = findViewById(R.id.notifSoundVolumeSeek)
+        notifSoundVolumeLabel = findViewById(R.id.notifSoundVolumeLabel)
         stayAwakeWhenChargingSubtitle = findViewById(R.id.stayAwakeWhenChargingSubtitle)
         wakeButton = findViewById(R.id.wakeButton)
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
+        showWifiIpButton = findViewById(R.id.showWifiIpButton)
 
         cameraLedSwitch = findViewById(R.id.cameraLedSwitch)
         cameraLedStatusText = findViewById(R.id.cameraLedStatusText)
@@ -146,6 +154,27 @@ class DeviceActivity : AppCompatActivity() {
         refreshButton.setOnClickListener {
             val sent = DevicePlugin.instance?.requestState() ?: false
             if (!sent) toast("Glass not connected")
+        }
+
+        showWifiIpButton.setOnClickListener {
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected")
+                return@setOnClickListener
+            }
+            showWifiIpButton.isEnabled = false
+            showWifiIpButton.text = "Asking glass…"
+            bridge.queryWifiIp { ip, ssid, error ->
+                runOnUiThread {
+                    showWifiIpButton.isEnabled = true
+                    showWifiIpButton.text = "Show glass Wi-Fi IP"
+                    if (error != null) {
+                        toast(error)
+                        return@runOnUiThread
+                    }
+                    showWifiIpDialog(ip, ssid)
+                }
+            }
         }
 
         brightnessSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -384,6 +413,46 @@ class DeviceActivity : AppCompatActivity() {
                   else "Send failed")
         }
 
+        // Notification sound — master switch + 0..100 volume. The slider
+        // stays usable when the switch is off so the user can pre-pick a
+        // volume to apply once they flip it back on; we just dim it as a
+        // visual hint that it isn't currently audible.
+        val cachedNotifSoundEnabled = prefs.getBoolean("notif_sound_enabled", true)
+        val cachedNotifSoundVolume = prefs.getInt("notif_sound_volume", 100).coerceIn(0, 100)
+        notifSoundEnabledSwitch.isChecked = cachedNotifSoundEnabled
+        notifSoundVolumeSeek.progress = cachedNotifSoundVolume
+        notifSoundVolumeLabel.text = "Beep volume: $cachedNotifSoundVolume / 100"
+        notifSoundVolumeSeek.alpha = if (cachedNotifSoundEnabled) 1f else 0.5f
+
+        notifSoundEnabledSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("notif_sound_enabled", isChecked).apply()
+            notifSoundVolumeSeek.alpha = if (isChecked) 1f else 0.5f
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_NOTIF_SOUND_ENABLED", json)
+            toast(if (sent) "Notification beep ${if (isChecked) "on" else "off"}"
+                  else "Send failed")
+        }
+
+        notifSoundVolumeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                notifSoundVolumeLabel.text = "Beep volume: $progress / 100"
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val value = seekBar?.progress ?: return
+                prefs.edit().putInt("notif_sound_volume", value).apply()
+                val bridge = BridgeService.instance
+                if (bridge == null || !bridge.isConnected) return
+                val json = JSONObject().apply { put("value", value) }.toString()
+                bridge.sendPluginMessage("base", "SET_NOTIF_SOUND_VOLUME", json)
+            }
+        })
+
         // Connection-success notifications — local-only (BridgeService reads
         // the same pref on every connect). No round-trip to glass needed to
         // change the setting itself; the actual notifications are fired on
@@ -542,6 +611,38 @@ class DeviceActivity : AppCompatActivity() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    /** Display the glass's Wi-Fi IP + SSID with a copy-to-clipboard for
+     *  the matching `adb connect ip:5555` recovery command. Useful when
+     *  the glass USB port is broken and you've already enabled adb
+     *  tcpip mode from a previously-authorized machine. */
+    private fun showWifiIpDialog(ip: String, ssid: String) {
+        if (ip.isEmpty()) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Glass Wi-Fi")
+                .setMessage("Glass isn't on Wi-Fi right now. Connect it to a network and try again.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+        val connectCmd = "adb connect $ip:5555"
+        val ssidLine = if (ssid.isNotEmpty()) "SSID: $ssid\n" else ""
+        val message = "${ssidLine}IP: $ip\n\n" +
+            "If you've already enabled `adb tcpip 5555` on the glass " +
+            "(e.g. from a previously-authorized machine), copy the " +
+            "command below and run it on your dev machine.\n\n" +
+            connectCmd
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Glass Wi-Fi")
+            .setMessage(message)
+            .setPositiveButton("Copy adb connect") { _, _ ->
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("adb connect", connectCmd))
+                toast("Copied")
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     /**

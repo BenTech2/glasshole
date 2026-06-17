@@ -90,6 +90,14 @@ object BaseSettings {
     /** When true, show the same Home wallpaper behind the App cover-flow
      *  drawer. Same reasoning as above. */
     const val KEY_WALLPAPER_ON_APP_DRAWER = "wallpaper_on_app_drawer"
+    /** When true, ring the ToneGenerator beep behind the notification
+     *  popup. Off lets the visual card alone do the alerting. */
+    const val KEY_NOTIF_SOUND_ENABLED = "notif_sound_enabled"
+    /** Beep loudness in the 0..100 range ToneGenerator's constructor
+     *  takes directly. 0 is equivalent to disabling sound; we still
+     *  honour the enabled toggle as a separate "remember my volume"
+     *  affordance. */
+    const val KEY_NOTIF_SOUND_VOLUME = "notif_sound_volume"
 
     /** Convenience accessor for the invert flag — every nav surface
      *  reads this once per gesture; the cost of a SharedPreferences

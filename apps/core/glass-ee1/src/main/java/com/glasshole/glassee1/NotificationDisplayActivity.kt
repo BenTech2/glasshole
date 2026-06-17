@@ -82,11 +82,19 @@ class NotificationDisplayActivity : Activity() {
             .takeIf { it > 0L } ?: DEFAULT_DISMISS_MS
         setContentView(buildCardView(parsed))
 
-        try {
-            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 300)
-            handler.postDelayed({ tone.release() }, 500)
-        } catch (_: Exception) {}
+        // Beep is gated by two phone-driven prefs — see the EE2 copy for
+        // the full design note.
+        val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        val soundEnabled = prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true)
+        val soundVolume = prefs.getInt(BaseSettings.KEY_NOTIF_SOUND_VOLUME, 100)
+            .coerceIn(0, 100)
+        if (soundEnabled && soundVolume > 0) {
+            try {
+                val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, soundVolume)
+                tone.startTone(ToneGenerator.TONE_PROP_BEEP, 300)
+                handler.postDelayed({ tone.release() }, 500)
+            } catch (_: Exception) {}
+        }
 
         resetAutoDismiss()
     }

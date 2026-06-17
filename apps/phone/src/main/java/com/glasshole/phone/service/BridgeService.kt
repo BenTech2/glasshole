@@ -549,6 +549,61 @@ class BridgeService : Service() {
         }
     }
 
+    /**
+     * Ask the glass for its current Wi-Fi IP + SSID. Sends GET_WIFI_IP
+     * over the base channel, swaps onBaseMessage to catch the WIFI_IP
+     * reply (restoring the prior handler whether we succeed, fail, or
+     * time out), and invokes [onResult] on the BT reader thread with
+     * the parsed values (ip and ssid may be empty when Wi-Fi is off).
+     *
+     * Mirrors the swap-and-restore pattern in uploadWallpaper. The 5 s
+     * timeout is generous — the round-trip is tiny but BT RFCOMM can
+     * stall briefly after a recent disconnect.
+     */
+    fun queryWifiIp(onResult: (ip: String, ssid: String, error: String?) -> Unit) {
+        if (!btConnected) {
+            onResult("", "", "Glass not connected")
+            return
+        }
+        val prevHandler = onBaseMessage
+        var fired = false
+        val timeout = Runnable {
+            if (!fired) {
+                fired = true
+                onBaseMessage = prevHandler
+                onResult("", "", "Timed out waiting for glass")
+            }
+        }
+        val timeoutHandler = Handler(Looper.getMainLooper())
+        onBaseMessage = handler@{ type, payload ->
+            when (type) {
+                "WIFI_IP" -> {
+                    if (fired) return@handler
+                    fired = true
+                    timeoutHandler.removeCallbacks(timeout)
+                    onBaseMessage = prevHandler
+                    val ip = try {
+                        org.json.JSONObject(payload).optString("ip", "")
+                    } catch (_: Exception) { "" }
+                    val ssid = try {
+                        org.json.JSONObject(payload).optString("ssid", "")
+                    } catch (_: Exception) { "" }
+                    onResult(ip, ssid, null)
+                }
+                else -> prevHandler?.invoke(type, payload)
+            }
+        }
+        timeoutHandler.postDelayed(timeout, 5_000L)
+        if (!sendPluginMessage("base", "GET_WIFI_IP", "")) {
+            timeoutHandler.removeCallbacks(timeout)
+            if (!fired) {
+                fired = true
+                onBaseMessage = prevHandler
+                onResult("", "", "Send failed")
+            }
+        }
+    }
+
     private fun ensureConnectChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java)

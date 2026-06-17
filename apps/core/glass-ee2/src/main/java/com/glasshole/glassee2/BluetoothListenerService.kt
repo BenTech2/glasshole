@@ -415,12 +415,55 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Wallpaper on App drawer=$enabled")
                 sendBaseStateToPhone()
             }
+            "SET_NOTIF_SOUND_ENABLED" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", true)
+                } catch (_: Exception) { true }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, enabled).apply()
+                Log.i(TAG, "Notification sound=$enabled")
+                sendBaseStateToPhone()
+            }
+            "SET_NOTIF_SOUND_VOLUME" -> {
+                val value = try {
+                    JSONObject(payload).optInt("value", 100).coerceIn(0, 100)
+                } catch (_: Exception) { 100 }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putInt(BaseSettings.KEY_NOTIF_SOUND_VOLUME, value).apply()
+                Log.i(TAG, "Notification volume=$value")
+                sendBaseStateToPhone()
+            }
             "BG_UPLOAD_REQ" -> handleBgUploadReq(payload)
             "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
+            "GET_WIFI_IP" -> sendWifiIpToPhone()
             else -> Log.d(TAG, "Unknown base message: $type")
         }
+    }
+
+    /** Reply with the current wlan0 IP + SSID so the phone can show
+     *  the user an `adb connect ip:5555` recovery affordance when USB
+     *  isn't working. Both fields may be empty when Wi-Fi is off. */
+    private fun sendWifiIpToPhone() {
+        val ip: String = try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+                as android.net.wifi.WifiManager
+            @Suppress("DEPRECATION")
+            val raw = wifi.connectionInfo?.ipAddress ?: 0
+            if (raw == 0) "" else android.text.format.Formatter.formatIpAddress(raw)
+        } catch (_: Exception) { "" }
+        val ssid: String = try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+                as android.net.wifi.WifiManager
+            @Suppress("DEPRECATION")
+            wifi.connectionInfo?.ssid.orEmpty().trim('"')
+        } catch (_: Exception) { "" }
+        val json = JSONObject().apply {
+            put("ip", ip)
+            put("ssid", ssid)
+        }.toString()
+        sendPluginMessage("base", "WIFI_IP", json)
     }
 
     private fun maybeWakeForNavUpdate() {
@@ -499,6 +542,8 @@ class BluetoothListenerService : Service() {
             put("backgroundFade", prefs.getInt(BaseSettings.KEY_BACKGROUND_FADE, 0))
             put("wallpaperOnSettings", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_SETTINGS, false))
             put("wallpaperOnAppDrawer", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_APP_DRAWER, false))
+            put("notifSoundEnabled", prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true))
+            put("notifSoundVolume", prefs.getInt(BaseSettings.KEY_NOTIF_SOUND_VOLUME, 100))
         }.toString()
         sendPluginMessage("base", "STATE", json)
     }
