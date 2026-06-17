@@ -50,6 +50,15 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var liveScreenButton: Button
     @Volatile private var liveRequestPending: Boolean = false
 
+    // LAN file share — Debug-screen recovery server for downloading
+    // APKs to the glass over Wi-Fi when USB / BT APK transfer isn't
+    // working. See FileShareServer for the protocol.
+    private lateinit var fileShareDirText: TextView
+    private lateinit var fileShareUrlText: TextView
+    private lateinit var fileShareToggleButton: Button
+    private lateinit var fileShareCopyButton: Button
+    private var fileShareServer: com.glasshole.phone.debug.FileShareServer? = null
+
     private lateinit var captureSwitch: MaterialSwitch
     private lateinit var captureLimitSpinner: Spinner
     private lateinit var captureCountText: TextView
@@ -109,6 +118,12 @@ class DebugActivity : AppCompatActivity() {
 
         liveCameraButton = findViewById(R.id.debugLiveCameraButton)
         liveScreenButton = findViewById(R.id.debugLiveScreenButton)
+
+        fileShareDirText = findViewById(R.id.debugFileShareDirText)
+        fileShareUrlText = findViewById(R.id.debugFileShareUrlText)
+        fileShareToggleButton = findViewById(R.id.debugFileShareToggleButton)
+        fileShareCopyButton = findViewById(R.id.debugFileShareCopyButton)
+        setupFileShare()
 
         captureSwitch = findViewById(R.id.debugCaptureSwitch)
         captureLimitSpinner = findViewById(R.id.debugCaptureLimitSpinner)
@@ -200,6 +215,9 @@ class DebugActivity : AppCompatActivity() {
             unbindService(bridgeConnection)
             bridgeBound = false
         }
+        // Don't leave a listening socket dangling if the user just
+        // backs out of the Debug screen.
+        stopFileShare()
         super.onDestroy()
     }
 
@@ -734,6 +752,57 @@ class DebugActivity : AppCompatActivity() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    // --- LAN file share -------------------------------------------------
+
+    /** Roots the share at an app-private external-files subdirectory
+     *  (`Android/data/com.glasshole.phone/files/http-share/`). No
+     *  storage permission needed; adb can still push into it. */
+    private fun fileShareRoot(): java.io.File {
+        val root = java.io.File(getExternalFilesDir(null), "http-share")
+        if (!root.exists()) root.mkdirs()
+        return root
+    }
+
+    private fun setupFileShare() {
+        val root = fileShareRoot()
+        fileShareDirText.text = "Sharing: ${root.absolutePath}"
+        fileShareUrlText.text = "Not running."
+
+        fileShareToggleButton.setOnClickListener {
+            val running = fileShareServer?.url != null
+            if (running) stopFileShare() else startFileShare()
+        }
+
+        fileShareCopyButton.setOnClickListener {
+            val url = fileShareServer?.url ?: return@setOnClickListener
+            val cm = getSystemService(android.content.ClipboardManager::class.java)
+            cm?.setPrimaryClip(android.content.ClipData.newPlainText("file share url", url))
+            toast("Copied")
+        }
+    }
+
+    private fun startFileShare() {
+        val server = com.glasshole.phone.debug.FileShareServer(this, fileShareRoot())
+        val url = server.start()
+        if (url == null) {
+            toast("Couldn't start — is the phone on Wi-Fi?")
+            return
+        }
+        fileShareServer = server
+        fileShareUrlText.text = url
+        fileShareToggleButton.text = "Stop file server"
+        fileShareCopyButton.isEnabled = true
+        toast("File server running")
+    }
+
+    private fun stopFileShare() {
+        fileShareServer?.stop()
+        fileShareServer = null
+        fileShareUrlText.text = "Not running."
+        fileShareToggleButton.text = "Start file server"
+        fileShareCopyButton.isEnabled = false
     }
 
     // --- Notification capture / replay (debug) ---
