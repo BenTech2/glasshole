@@ -409,7 +409,11 @@ class GalleryActivity : AppCompatActivity() {
             return
         }
         try {
-            pickMediaLauncher.launch(arrayOf("image/*", "video/*"))
+            // Temporarily widened to */* so APKs can ride the gallery
+            // upload pipeline as a recovery channel when USB / BT APK
+            // Manager / browser-download paths are broken. Revert to
+            // ["image/*", "video/*"] once normal install routes work.
+            pickMediaLauncher.launch(arrayOf("*/*"))
         } catch (e: Exception) {
             Toast.makeText(this, "No file picker available: ${e.message}", Toast.LENGTH_LONG).show()
         }
