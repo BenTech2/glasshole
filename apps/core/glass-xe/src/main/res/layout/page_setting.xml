@@ -11,13 +11,12 @@
     android:clipChildren="false"
     android:clipToPadding="false">
 
-    <!-- 110dp tile, sized to match page_app on Glass XE's 360px display. -->
     <com.glasshole.glassxe.home.ReflectionImageView
         android:id="@+id/settingIcon"
-        android:layout_width="110dp"
-        android:layout_height="110dp"
+        android:layout_width="160dp"
+        android:layout_height="160dp"
         android:background="@drawable/settings_tile_bg"
-        android:padding="26dp"
+        android:padding="40dp"
         android:scaleType="fitCenter"
         android:contentDescription="Setting icon" />
 

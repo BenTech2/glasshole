@@ -11,16 +11,12 @@
     android:clipChildren="false"
     android:clipToPadding="false">
 
-    <!-- 110dp icon tile sized for Glass XE's 360px-tall display: ×1.5
-         density gives 165px, plus the cover-flow center emphasis (×1.22)
-         leaves the active page at ~200px so the label still fits below
-         and neighbors stay visible. -->
     <com.glasshole.glassxe.home.ReflectionImageView
         android:id="@+id/appIcon"
-        android:layout_width="110dp"
-        android:layout_height="110dp"
+        android:layout_width="160dp"
+        android:layout_height="160dp"
         android:background="@drawable/app_icon_tile"
-        android:padding="10dp"
+        android:padding="14dp"
         android:scaleType="fitCenter"
         android:contentDescription="App icon" />
 

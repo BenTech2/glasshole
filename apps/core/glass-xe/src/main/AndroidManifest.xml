@@ -42,6 +42,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
+        android:name=".GlassXeApp"
         android:allowBackup="true"
         android:icon="@android:drawable/ic_dialog_info"
         android:label="GlassHole"
