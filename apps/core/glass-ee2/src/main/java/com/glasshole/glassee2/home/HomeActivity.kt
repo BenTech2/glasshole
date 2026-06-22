@@ -183,8 +183,24 @@ class HomeActivity : Activity() {
             when (key) {
                 com.glasshole.glassee2.BaseSettings.KEY_NAV_KEEP_SCREEN_ON -> updateKeepScreenOn()
                 com.glasshole.glassee2.BaseSettings.KEY_BACKGROUND_FADE -> applyBackgroundFade()
+                com.glasshole.glassee2.BaseSettings.KEY_WALLPAPER_SCALE_MODE -> applyWallpaperScale()
             }
         }
+
+    /** Translate the "fit" / "zoom" / "stretch" pref into a concrete
+     *  ImageView.ScaleType and push it to the wallpaper view. Called
+     *  on activity start, on pref change, and after the bitmap is
+     *  loaded so a fresh upload also picks up the right scaling. */
+    private fun applyWallpaperScale() {
+        val mode = getSharedPreferences(
+            com.glasshole.glassee2.BaseSettings.PREFS, MODE_PRIVATE
+        ).getString(com.glasshole.glassee2.BaseSettings.KEY_WALLPAPER_SCALE_MODE, "fit")
+        backgroundImage.scaleType = when (mode) {
+            "zoom" -> android.widget.ImageView.ScaleType.CENTER_CROP
+            "stretch" -> android.widget.ImageView.ScaleType.FIT_XY
+            else -> android.widget.ImageView.ScaleType.FIT_CENTER
+        }
+    }
 
     /** Read the fade slider value (0..255) from prefs and apply it to
      *  the black overlay covering the wallpaper. 0 = no fade,
@@ -550,6 +566,7 @@ class HomeActivity : Activity() {
             .registerOnSharedPreferenceChangeListener(prefsChangeListener)
         updateKeepScreenOn()
         applyBackgroundFade()
+        applyWallpaperScale()
         loadBackgroundAsync()
     }
 

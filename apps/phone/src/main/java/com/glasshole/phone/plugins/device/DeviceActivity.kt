@@ -2,6 +2,7 @@ package com.glasshole.phone.plugins.device
 
 import android.content.Context
 import android.os.Bundle
+import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.SeekBar
@@ -30,6 +31,7 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var backgroundFadeSeek: SeekBar
     private lateinit var backgroundFadeLabel: TextView
     private lateinit var uploadBackgroundButton: Button
+    private lateinit var wallpaperScaleSpinner: Spinner
 
     private lateinit var volumeSeek: SeekBar
     private lateinit var volumeLabel: TextView
@@ -97,6 +99,7 @@ class DeviceActivity : AppCompatActivity() {
         backgroundFadeSeek = findViewById(R.id.backgroundFadeSeek)
         backgroundFadeLabel = findViewById(R.id.backgroundFadeLabel)
         uploadBackgroundButton = findViewById(R.id.uploadBackgroundButton)
+        wallpaperScaleSpinner = findViewById(R.id.wallpaperScaleSpinner)
         volumeSeek = findViewById(R.id.volumeSeek)
         volumeLabel = findViewById(R.id.volumeLabel)
         timeoutSeek = findViewById(R.id.timeoutSeek)
@@ -315,6 +318,35 @@ class DeviceActivity : AppCompatActivity() {
         val cachedFade = prefs.getInt("background_fade", 0).coerceIn(0, 255)
         backgroundFadeSeek.progress = cachedFade
         backgroundFadeLabel.text = "Background fade: $cachedFade / 255"
+
+        // Wallpaper scale spinner — IDs ("fit"/"zoom"/"stretch") match
+        // the glass-side BaseSettings.KEY_WALLPAPER_SCALE_MODE values,
+        // shown to the user with friendlier labels.
+        val scaleIds = listOf("fit", "zoom", "stretch")
+        val scaleLabels = listOf("Center", "Zoom", "Fill screen")
+        wallpaperScaleSpinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, scaleLabels
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        val cachedScale = prefs.getString("wallpaper_scale_mode", "fit") ?: "fit"
+        wallpaperScaleSpinner.setSelection(
+            scaleIds.indexOf(cachedScale).coerceAtLeast(0), false
+        )
+        wallpaperScaleSpinner.onItemSelectedListener =
+            object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?, view: View?,
+                    position: Int, id: Long
+                ) {
+                    val mode = scaleIds.getOrNull(position) ?: "fit"
+                    if (mode == prefs.getString("wallpaper_scale_mode", "fit")) return
+                    prefs.edit().putString("wallpaper_scale_mode", mode).apply()
+                    val bridge = BridgeService.instance ?: return
+                    if (!bridge.isConnected) return
+                    val json = JSONObject().apply { put("mode", mode) }.toString()
+                    bridge.sendPluginMessage("base", "SET_WALLPAPER_SCALE_MODE", json)
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
 
         tiltWakeSwitch.isChecked = prefs.getBoolean("tilt_wake_enabled", false)
         tiltWakeSwitch.setOnCheckedChangeListener { _, isChecked ->

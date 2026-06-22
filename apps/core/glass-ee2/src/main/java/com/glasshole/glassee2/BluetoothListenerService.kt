@@ -397,6 +397,16 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Background fade=$value")
                 sendBaseStateToPhone()
             }
+            "SET_WALLPAPER_SCALE_MODE" -> {
+                val mode = try {
+                    JSONObject(payload).optString("mode", "fit")
+                } catch (_: Exception) { "fit" }
+                val safe = if (mode in setOf("fit", "zoom", "stretch")) mode else "fit"
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putString(BaseSettings.KEY_WALLPAPER_SCALE_MODE, safe).apply()
+                Log.i(TAG, "Wallpaper scale mode=$safe")
+                sendBaseStateToPhone()
+            }
             "SET_WALLPAPER_ON_SETTINGS" -> {
                 val enabled = try {
                     JSONObject(payload).optBoolean("enabled", false)
@@ -763,6 +773,7 @@ class BluetoothListenerService : Service() {
             put("stayAwakeWhenCharging", prefs.getBoolean(BaseSettings.KEY_STAY_AWAKE_WHEN_CHARGING, false))
             put("stayAwakeWhenChargingGranted", canWriteSecureSettings())
             put("backgroundFade", prefs.getInt(BaseSettings.KEY_BACKGROUND_FADE, 0))
+            put("wallpaperScaleMode", prefs.getString(BaseSettings.KEY_WALLPAPER_SCALE_MODE, "fit"))
             put("wallpaperOnSettings", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_SETTINGS, false))
             put("wallpaperOnAppDrawer", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_APP_DRAWER, false))
             put("notifSoundEnabled", prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true))

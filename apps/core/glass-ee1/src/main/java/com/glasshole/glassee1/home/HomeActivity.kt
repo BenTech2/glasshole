@@ -174,12 +174,26 @@ class HomeActivity : Activity() {
             when (key) {
                 com.glasshole.glassee1.BaseSettings.KEY_NAV_KEEP_SCREEN_ON -> updateKeepScreenOn()
                 com.glasshole.glassee1.BaseSettings.KEY_BACKGROUND_FADE -> applyBackgroundFade()
+                com.glasshole.glassee1.BaseSettings.KEY_WALLPAPER_SCALE_MODE -> applyWallpaperScale()
             }
         }
 
     /** Read the fade slider value (0..255) from prefs and apply it to
      *  the black overlay covering the wallpaper. 0 = no fade,
      *  255 = solid black (wallpaper effectively hidden). */
+    /** Translate the wallpaper scale mode pref into a concrete
+     *  ImageView.ScaleType. See EE2 copy for the design note. */
+    private fun applyWallpaperScale() {
+        val mode = getSharedPreferences(
+            com.glasshole.glassee1.BaseSettings.PREFS, MODE_PRIVATE
+        ).getString(com.glasshole.glassee1.BaseSettings.KEY_WALLPAPER_SCALE_MODE, "fit")
+        backgroundImage.scaleType = when (mode) {
+            "zoom" -> android.widget.ImageView.ScaleType.CENTER_CROP
+            "stretch" -> android.widget.ImageView.ScaleType.FIT_XY
+            else -> android.widget.ImageView.ScaleType.FIT_CENTER
+        }
+    }
+
     private fun applyBackgroundFade() {
         val alpha = getSharedPreferences(
             com.glasshole.glassee1.BaseSettings.PREFS, MODE_PRIVATE
@@ -537,6 +551,7 @@ class HomeActivity : Activity() {
             .registerOnSharedPreferenceChangeListener(prefsChangeListener)
         updateKeepScreenOn()
         applyBackgroundFade()
+        applyWallpaperScale()
         loadBackgroundAsync()
     }
 

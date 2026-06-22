@@ -68,8 +68,17 @@ class DrawerBackground(
             backgroundFade.visibility = View.GONE
             return
         }
+        backgroundImage.scaleType = scaleTypeFor(
+            prefs.getString(BaseSettings.KEY_WALLPAPER_SCALE_MODE, "fit")
+        )
         applyFade(prefs.getInt(BaseSettings.KEY_BACKGROUND_FADE, 0))
         loadAsync()
+    }
+
+    private fun scaleTypeFor(mode: String?): android.widget.ImageView.ScaleType = when (mode) {
+        "zoom" -> android.widget.ImageView.ScaleType.CENTER_CROP
+        "stretch" -> android.widget.ImageView.ScaleType.FIT_XY
+        else -> android.widget.ImageView.ScaleType.FIT_CENTER
     }
 
     private fun applyFade(rawAlpha: Int) {

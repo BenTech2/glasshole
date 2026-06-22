@@ -118,6 +118,23 @@
                     style="?attr/materialButtonOutlinedStyle"
                     android:text="Upload wallpaper" />
 
+                <!-- Wallpaper scale: Center (fit) / Zoom (centerCrop) /
+                     Fill screen (fitXY). Drives ImageView.scaleType on
+                     glass. -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Wallpaper fit"
+                    android:textAppearance="?attr/textAppearanceBodyLarge"
+                    android:textColor="?attr/colorOnSurface"
+                    android:layout_marginTop="14dp" />
+
+                <Spinner
+                    android:id="@+id/wallpaperScaleSpinner"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" />
+
                 <!-- Show wallpaper on Settings drawer -->
                 <LinearLayout
                     android:layout_width="match_parent"

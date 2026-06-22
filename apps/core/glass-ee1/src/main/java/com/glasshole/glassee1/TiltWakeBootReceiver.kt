@@ -89,6 +89,11 @@ object BaseSettings {
      *  (background fully visible); 255 = solid black (background
      *  effectively hidden). */
     const val KEY_BACKGROUND_FADE = "background_fade"
+    /** How the wallpaper ImageView scales the source: "fit" (default —
+     *  whole image visible, letterboxed), "zoom" (centerCrop — fills
+     *  screen by cropping), "stretch" (fitXY — fills screen, distorts
+     *  aspect). User-driven via the phone-side wallpaper section. */
+    const val KEY_WALLPAPER_SCALE_MODE = "wallpaper_scale_mode"
     /** When true, show the same Home wallpaper behind the Settings
      *  cover-flow drawer (with the same fade). Default off — the drawer
      *  is text-heavy and not everyone wants the contrast variability. */
