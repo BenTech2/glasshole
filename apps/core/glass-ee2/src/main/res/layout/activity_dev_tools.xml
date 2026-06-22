@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dev Tools screen, launched from the Settings drawer's Dev Tools tile.
+     Visual style mirrors the original Glass XE settings detail views:
+     dark background, light title row at top, tappable list rows below.
+
+     First-and-only row right now is wireless debugging. Add new rows
+     here as more dev affordances get baked in. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:fadeScrollbars="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="22dp"
+            android:paddingEnd="22dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Dev Tools"
+                android:textColor="#FFFFFF"
+                android:textSize="26sp"
+                android:fontFamily="sans-serif-light"
+                android:includeFontPadding="false" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="10dp"
+                android:background="#33FFFFFF" />
+
+            <!-- Row 1: Wireless debugging.
+                 .devToolsRow LinearLayout = clickable row.
+                 Title = bigger label. Status = small line under that. -->
+            <LinearLayout
+                android:id="@+id/wirelessAdbRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Wireless debugging"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:fontFamily="sans-serif" />
+
+                <TextView
+                    android:id="@+id/wirelessAdbStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Checking…"
+                    android:textColor="#B3FFFFFF"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+</FrameLayout>

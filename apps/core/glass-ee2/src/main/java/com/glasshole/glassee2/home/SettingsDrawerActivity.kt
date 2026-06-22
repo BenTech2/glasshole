@@ -38,16 +38,22 @@ class SettingsDrawerActivity : Activity() {
         /** Each half of the overlay-label fade transition (out, then in). */
         private const val FADE_MS = 110L
 
+        /** A tile either fires a system [action] (most settings) OR
+         *  launches an in-launcher [internalActivity] (Dev Tools and any
+         *  future custom panels baked into GlassHole). Exactly one of the
+         *  two is populated. */
         private data class Entry(
             val label: String,
             val iconRes: Int,
             val action: String,
-            val useAppPackage: Boolean = false
+            val useAppPackage: Boolean = false,
+            val internalActivity: Class<out Activity>? = null,
         )
 
         // Ordered so the user reaches the most common controls first
         // (Wi-Fi, Bluetooth, brightness, volume) without having to swipe
-        // deep into the carousel.
+        // deep into the carousel. Dev Tools sits after "All Settings"
+        // because it's a deliberate destination, not a frequent flow.
         private val SETTINGS_ENTRIES: List<Entry> = listOf(
             Entry("Wi-Fi", R.drawable.ic_settings_wifi, Settings.ACTION_WIFI_SETTINGS),
             Entry("Bluetooth", R.drawable.ic_settings_bluetooth, Settings.ACTION_BLUETOOTH_SETTINGS),
@@ -58,7 +64,13 @@ class SettingsDrawerActivity : Activity() {
             Entry("Storage", R.drawable.ic_settings_storage, Settings.ACTION_INTERNAL_STORAGE_SETTINGS),
             Entry("Accessibility", R.drawable.ic_settings_accessibility, Settings.ACTION_ACCESSIBILITY_SETTINGS),
             Entry("About", R.drawable.ic_settings_info, Settings.ACTION_DEVICE_INFO_SETTINGS),
-            Entry("All Settings", R.drawable.ic_settings_gear, Settings.ACTION_SETTINGS)
+            Entry("All Settings", R.drawable.ic_settings_gear, Settings.ACTION_SETTINGS),
+            Entry(
+                label = "Dev Tools",
+                iconRes = R.drawable.ic_settings_devtools,
+                action = "",
+                internalActivity = com.glasshole.glassee2.devtools.DevToolsActivity::class.java,
+            ),
         )
     }
 
@@ -100,8 +112,11 @@ class SettingsDrawerActivity : Activity() {
 
         entries = SETTINGS_ENTRIES.filter {
             // Always keep ACTION_SETTINGS — it's the root entry and is
-            // guaranteed to exist on any Glass build.
-            it.action == Settings.ACTION_SETTINGS || resolvesActivity(it.action)
+            // guaranteed to exist on any Glass build. Internal-activity
+            // tiles are always kept (we control their target).
+            it.internalActivity != null
+                || it.action == Settings.ACTION_SETTINGS
+                || resolvesActivity(it.action)
         }
 
         pager = findViewById(R.id.settingsPager)
@@ -219,6 +234,17 @@ class SettingsDrawerActivity : Activity() {
 
     private fun launchCurrent() {
         val entry = entries.getOrNull(pendingPosition) ?: return
+        if (entry.internalActivity != null) {
+            // In-launcher panel (Dev Tools, etc). No fallback needed —
+            // these are activities we own.
+            try {
+                startActivity(Intent(this, entry.internalActivity)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+                Toast.makeText(this, "${entry.label} failed to open", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         val intent = Intent(entry.action).apply {
             if (entry.useAppPackage) {
                 data = Uri.parse("package:$packageName")

@@ -91,6 +91,11 @@
             android:exported="false"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
 
+        <activity
+            android:name=".devtools.DevToolsActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
         <!-- Own task affinity so dismissing the notification returns to
              whatever task was foreground when it arrived (e.g. the stream
              player) instead of popping to Home and orphaning the previous
