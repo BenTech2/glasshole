@@ -82,10 +82,12 @@ player_module() {
 
 # Core plugins (photo-sync gallery, device controls). Shared across variants.
 PLUGINS_CORE_COMMON="plugin-device-glass plugin-gallery-glass"
-# User-facing plugins shared across variants.
-PLUGINS_COMMON="plugin-notes-glass plugin-calc-glass plugin-openclaw-glass plugin-chat-glass plugin-compass-glass plugin-scouter-glass plugin-ssh-glass plugin-devtools-glass"
-# EE2-only plugins (minSdk 27).
-PLUGINS_EE2_EXTRA="plugin-camera2-glass plugin-gallery2-glass plugin-broadcast-glass plugin-opencv-glass"
+# User-facing plugins shared across variants. plugin-gallery2-glass
+# (the on-glass photo/video cover-flow) has minSdk 19, so it lives
+# here even though earlier releases mis-bundled it as EE2-only.
+PLUGINS_COMMON="plugin-notes-glass plugin-calc-glass plugin-openclaw-glass plugin-chat-glass plugin-compass-glass plugin-scouter-glass plugin-ssh-glass plugin-devtools-glass plugin-gallery2-glass"
+# Genuine EE2-only plugins (Camera2 + minSdk 27).
+PLUGINS_EE2_EXTRA="plugin-camera2-glass plugin-broadcast-glass plugin-opencv-glass"
 # EE1 + XE get the Camera1 broadcast variant (minSdk 19).
 PLUGINS_EE1_XE_EXTRA="plugin-broadcast-legacy-glass"
 

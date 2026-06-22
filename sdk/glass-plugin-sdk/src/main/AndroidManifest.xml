@@ -1,3 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Auto-merges into every plugin APK that depends on this library.
+         The provider's onCreate calls GlassDensityFix.applyIfNeeded
+         BEFORE Application.onCreate, so plugin UIs render at 160 dpi
+         on XE (matching EE1/EE2) instead of XE's reported 240 dpi.
+
+         The ${applicationId} placeholder gives each plugin a unique
+         authority so two plugins on the same headset can't clash. -->
+    <application>
+        <provider
+            android:name="com.glasshole.glass.sdk.GlassDensityFixProvider"
+            android:authorities="${applicationId}.glassDensityFix"
+            android:exported="false" />
+    </application>
+
 </manifest>
