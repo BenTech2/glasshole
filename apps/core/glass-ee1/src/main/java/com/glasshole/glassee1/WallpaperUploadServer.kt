@@ -28,14 +28,22 @@ import kotlin.math.min
 class WallpaperUploadServer(
     private val context: Context,
     private val onComplete: (filename: String, bytes: ByteArray) -> Unit,
-    private val onError: (reason: String) -> Unit
+    private val onError: (reason: String) -> Unit,
+    /** Per-instance size cap so the APK-install flow can accept much
+     *  bigger payloads without bumping the wallpaper / notif-sound
+     *  defaults. Pass null to use [DEFAULT_MAX_SIZE_BYTES]. */
+    private val maxSizeBytesOverride: Long? = null,
 ) {
 
     companion object {
         private const val TAG = "WallpaperUpload"
-        /** 5 MB — comfortably bigger than any reasonable phone-resized
-         *  wallpaper but well below Glass's free-space cliff. */
-        const val MAX_SIZE_BYTES = 5L * 1024 * 1024
+        /** 5 MB default — wallpapers + notif-sound clips. APK installs
+         *  override to a larger cap. */
+        const val DEFAULT_MAX_SIZE_BYTES = 5L * 1024 * 1024
+        /** Back-compat alias for callers outside the APK-install path. */
+        const val MAX_SIZE_BYTES = DEFAULT_MAX_SIZE_BYTES
+        /** APK uploads — same cap EE2 uses. */
+        const val APK_INSTALL_MAX_SIZE_BYTES = 100L * 1024 * 1024
         /** How long the server stays up waiting for the phone. After
          *  this it tears itself down so we're not leaking a listening
          *  socket if the phone never POSTs. */
@@ -158,7 +166,8 @@ class WallpaperUploadServer(
                 if (contentLength <= 0L) {
                     writeStatus(out, 411, "Length Required"); return
                 }
-                if (contentLength > MAX_SIZE_BYTES) {
+                val maxSize = maxSizeBytesOverride ?: DEFAULT_MAX_SIZE_BYTES
+                if (contentLength > maxSize) {
                     writeStatus(out, 413, "Payload Too Large"); return
                 }
 

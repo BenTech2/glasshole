@@ -539,11 +539,59 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Notification volume=$value")
                 sendBaseStateToPhone()
             }
+            "SET_NOTIF_APP_SOUND" -> {
+                try {
+                    val obj = JSONObject(payload)
+                    val pkg = obj.optString("pkg", "")
+                    val soundId = obj.optString("soundId", "")
+                    if (pkg.isNotEmpty()) {
+                        val prefs = getSharedPreferences("notif_app_sounds", MODE_PRIVATE)
+                        if (soundId.isEmpty()) prefs.edit().remove(pkg).apply()
+                        else prefs.edit().putString(pkg, soundId).apply()
+                        Log.i(TAG, "Per-app sound: $pkg -> ${if (soundId.isEmpty()) "(default)" else soundId}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "SET_NOTIF_APP_SOUND parse: ${e.message}")
+                }
+            }
+            "NOTIF_SOUND_UPLOAD_REQ" -> handleNotifSoundUploadReq(payload)
+            "NOTIF_SOUND_LIST_REQ" -> sendNotifSoundList()
+            "NOTIF_SOUND_DELETE" -> {
+                try {
+                    val name = JSONObject(payload).optString("filename", "")
+                    if (name.isNotEmpty()) {
+                        val safe = name.substringAfterLast('/').substringAfterLast('\\')
+                        val f = java.io.File(NotifSoundPlayer.SOUND_DIR, safe)
+                        val ok = f.exists() && f.delete()
+                        Log.i(TAG, "NOTIF_SOUND_DELETE $safe -> $ok")
+                        sendNotifSoundList()
+                    }
+                } catch (_: Exception) {}
+            }
             "BG_UPLOAD_REQ" -> handleBgUploadReq(payload)
+            "APK_INSTALL_REQ" -> handleApkInstallReq(payload)
             "LAUNCH_PACKAGE" -> handleLaunchPackage(payload)
             "GET_STATE" -> sendBaseStateToPhone()
             "SHOW_CONNECT_NOTIF" -> showConnectToast()
             "GET_WIFI_IP" -> sendWifiIpToPhone()
+            "GET_WIFI_STATE" -> sendWifiStateToPhone()
+            "SET_WIFI_ENABLED" -> {
+                val enabled = try {
+                    JSONObject(payload).optBoolean("enabled", false)
+                } catch (_: Exception) { false }
+                try {
+                    val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+                        as android.net.wifi.WifiManager
+                    @Suppress("DEPRECATION")
+                    wifi.isWifiEnabled = enabled
+                    Log.i(TAG, "Wi-Fi setEnabled=$enabled")
+                } catch (e: Exception) {
+                    Log.w(TAG, "setWifiEnabled failed: ${e.message}")
+                }
+                sendWifiStateToPhone()
+            }
+            "WIFI_SCAN_REQ" -> handleWifiScanReq()
+            "WIFI_CONNECT_REQ" -> handleWifiConnectReq(payload)
             else -> Log.d(TAG, "Unknown base message: $type")
         }
     }
@@ -668,6 +716,311 @@ class BluetoothListenerService : Service() {
      *  an in-flight upload can return the existing URL rather than
      *  spinning up a second server. */
     private var wallpaperUploadServer: WallpaperUploadServer? = null
+
+    // --- Per-app notification sound upload (mirror of EE2) ----------
+
+    private var notifSoundUploadServer: WallpaperUploadServer? = null
+
+    private fun handleNotifSoundUploadReq(payload: String) {
+        val size = try { JSONObject(payload).optLong("size", -1L) } catch (_: Exception) { -1L }
+        if (size <= 0L) {
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                JSONObject().apply { put("reason", "bad_size") }.toString())
+            return
+        }
+        if (size > WallpaperUploadServer.MAX_SIZE_BYTES) {
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                JSONObject().apply {
+                    put("reason", "too_large")
+                    put("max", WallpaperUploadServer.MAX_SIZE_BYTES)
+                }.toString())
+            return
+        }
+        val existing = notifSoundUploadServer
+        val server = existing ?: WallpaperUploadServer(
+            this,
+            onComplete = { filename, bytes -> writeUploadedNotifSound(filename, bytes) },
+            onError = { reason ->
+                sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                    JSONObject().apply { put("reason", reason) }.toString())
+                notifSoundUploadServer = null
+            }
+        ).also { notifSoundUploadServer = it }
+
+        val url = server.start()
+        if (url == null) {
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                JSONObject().apply { put("reason", "no_wifi") }.toString())
+            notifSoundUploadServer = null
+            return
+        }
+        sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_OPEN",
+            JSONObject().apply { put("url", url) }.toString())
+    }
+
+    private fun writeUploadedNotifSound(filename: String, bytes: ByteArray) {
+        val safeName = filename
+            .substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifEmpty { "notif.mp3" }
+            .let {
+                val ext = it.substringAfterLast('.', "").lowercase()
+                if (ext in setOf("mp3", "ogg", "wav", "m4a", "aac", "flac")) it else "$it.mp3"
+            }
+        val dir = java.io.File(NotifSoundPlayer.SOUND_DIR)
+        try {
+            if (!dir.exists()) dir.mkdirs()
+            val target = java.io.File(dir, safeName)
+            target.outputStream().use { it.write(bytes) }
+            Log.i(TAG, "Notif sound written: ${target.absolutePath} (${bytes.size} bytes)")
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_DONE",
+                JSONObject().apply {
+                    put("filename", safeName)
+                    put("size", bytes.size)
+                }.toString())
+            sendNotifSoundList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Notif sound write failed: ${e.message}")
+            sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_ERR",
+                JSONObject().apply {
+                    put("reason", "write_failed")
+                    put("detail", e.message ?: "")
+                }.toString())
+        } finally {
+            notifSoundUploadServer = null
+        }
+    }
+
+    private fun sendNotifSoundList() {
+        val dir = java.io.File(NotifSoundPlayer.SOUND_DIR)
+        val names = dir.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()
+        val arr = org.json.JSONArray()
+        names.sorted().forEach { arr.put(it) }
+        sendPluginMessage("base", "NOTIF_SOUND_LIST",
+            JSONObject().apply { put("files", arr) }.toString())
+    }
+
+    // --- APK install over Wi-Fi (mirror of EE2) ---------------------
+
+    private var apkInstallUploadServer: WallpaperUploadServer? = null
+
+    private fun handleApkInstallReq(payload: String) {
+        val size = try { JSONObject(payload).optLong("size", -1L) } catch (_: Exception) { -1L }
+        if (size <= 0L) {
+            sendPluginMessage("base", "APK_INSTALL_ERR",
+                JSONObject().apply { put("reason", "bad_size") }.toString())
+            return
+        }
+        if (size > WallpaperUploadServer.APK_INSTALL_MAX_SIZE_BYTES) {
+            sendPluginMessage("base", "APK_INSTALL_ERR",
+                JSONObject().apply {
+                    put("reason", "too_large")
+                    put("max", WallpaperUploadServer.APK_INSTALL_MAX_SIZE_BYTES)
+                }.toString())
+            return
+        }
+
+        val existing = apkInstallUploadServer
+        val server = existing ?: WallpaperUploadServer(
+            context = this,
+            onComplete = { filename, bytes -> writeUploadedApk(filename, bytes) },
+            onError = { reason ->
+                sendPluginMessage("base", "APK_INSTALL_ERR",
+                    JSONObject().apply { put("reason", reason) }.toString())
+                apkInstallUploadServer = null
+            },
+            maxSizeBytesOverride = WallpaperUploadServer.APK_INSTALL_MAX_SIZE_BYTES,
+        ).also { apkInstallUploadServer = it }
+
+        val url = server.start()
+        if (url == null) {
+            sendPluginMessage("base", "APK_INSTALL_ERR",
+                JSONObject().apply { put("reason", "no_wifi") }.toString())
+            apkInstallUploadServer = null
+            return
+        }
+        sendPluginMessage("base", "APK_INSTALL_OPEN",
+            JSONObject().apply { put("url", url) }.toString())
+    }
+
+    private fun writeUploadedApk(filename: String, bytes: ByteArray) {
+        val safeName = filename
+            .substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifEmpty { "install.apk" }
+            .let { if (it.lowercase().endsWith(".apk")) it else "$it.apk" }
+        val dir = java.io.File("/sdcard/Download/glasshole-install")
+        try {
+            if (!dir.exists()) dir.mkdirs()
+            val target = java.io.File(dir, safeName)
+            target.outputStream().use { it.write(bytes) }
+            Log.i(TAG, "APK written: ${target.absolutePath} (${bytes.size} bytes)")
+            val status = triggerInstall(target)
+            sendPluginMessage("base", "APK_INSTALL_DONE",
+                JSONObject().apply {
+                    put("filename", safeName)
+                    put("size", bytes.size)
+                    put("status", status)
+                }.toString())
+        } catch (e: Exception) {
+            Log.e(TAG, "APK write/install failed: ${e.message}")
+            sendPluginMessage("base", "APK_INSTALL_ERR",
+                JSONObject().apply {
+                    put("reason", "write_failed")
+                    put("detail", e.message ?: "")
+                }.toString())
+        } finally {
+            apkInstallUploadServer = null
+        }
+    }
+
+    // --- Wi-Fi control / scan / connect (mirror of EE2) -------------
+
+    private fun sendWifiStateToPhone() {
+        val (enabled, ssid, ip) = try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+                as android.net.wifi.WifiManager
+            @Suppress("DEPRECATION")
+            val rawIp = wifi.connectionInfo?.ipAddress ?: 0
+            val ipStr = if (rawIp == 0) ""
+                else android.text.format.Formatter.formatIpAddress(rawIp)
+            @Suppress("DEPRECATION")
+            val s = wifi.connectionInfo?.ssid.orEmpty().trim('"')
+                .takeIf { it.isNotEmpty() && it != "<unknown ssid>" } ?: ""
+            @Suppress("DEPRECATION")
+            Triple(wifi.isWifiEnabled, s, ipStr)
+        } catch (_: Exception) {
+            Triple(false, "", "")
+        }
+        val json = JSONObject().apply {
+            put("enabled", enabled)
+            put("ssid", ssid)
+            put("ip", ip)
+            put("connected", ssid.isNotEmpty() && ip.isNotEmpty())
+        }.toString()
+        sendPluginMessage("base", "WIFI_STATE", json)
+    }
+
+    private fun handleWifiScanReq() {
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+            as android.net.wifi.WifiManager
+        try { @Suppress("DEPRECATION") wifi.startScan() } catch (_: Exception) {}
+        Thread {
+            try { Thread.sleep(800L) } catch (_: InterruptedException) {}
+            val results = try { wifi.scanResults ?: emptyList() } catch (_: Exception) { emptyList() }
+            val arr = org.json.JSONArray()
+            results
+                .filter { !it.SSID.isNullOrEmpty() }
+                .groupBy { it.SSID }
+                .values
+                .map { it.maxBy { r -> r.level } }
+                .sortedByDescending { it.level }
+                .forEach { r ->
+                    arr.put(JSONObject().apply {
+                        put("ssid", r.SSID)
+                        put("rssi", r.level)
+                        put("security", securityLabelFor(r.capabilities))
+                    })
+                }
+            sendPluginMessage("base", "WIFI_SCAN_RESULT",
+                JSONObject().apply { put("networks", arr) }.toString())
+        }.apply { isDaemon = true; name = "WifiScan-reply" }.start()
+    }
+
+    private fun securityLabelFor(cap: String?): String {
+        val c = cap.orEmpty().uppercase()
+        return when {
+            "WPA3" in c -> "WPA3"
+            "EAP" in c -> "EAP"
+            "WPA2" in c -> "WPA2"
+            "WPA" in c -> "WPA"
+            "WEP" in c -> "WEP"
+            else -> "OPEN"
+        }
+    }
+
+    private fun handleWifiConnectReq(payload: String) {
+        val (ssid, password, security) = try {
+            val o = JSONObject(payload)
+            Triple(
+                o.optString("ssid", ""),
+                o.optString("password", ""),
+                o.optString("security", "WPA2").uppercase()
+            )
+        } catch (_: Exception) { Triple("", "", "WPA2") }
+        if (ssid.isEmpty()) {
+            sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                JSONObject().apply {
+                    put("ok", false); put("reason", "missing_ssid")
+                }.toString())
+            return
+        }
+        try {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+                as android.net.wifi.WifiManager
+            if (!wifi.isWifiEnabled) {
+                @Suppress("DEPRECATION") wifi.isWifiEnabled = true
+            }
+            val cfg = android.net.wifi.WifiConfiguration().apply {
+                SSID = "\"$ssid\""
+                when (security) {
+                    "OPEN" -> allowedKeyManagement.set(
+                        android.net.wifi.WifiConfiguration.KeyMgmt.NONE
+                    )
+                    "WEP" -> {
+                        allowedKeyManagement.set(
+                            android.net.wifi.WifiConfiguration.KeyMgmt.NONE
+                        )
+                        wepKeys[0] = "\"$password\""
+                        wepTxKeyIndex = 0
+                    }
+                    else -> {
+                        allowedKeyManagement.set(
+                            android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK
+                        )
+                        preSharedKey = "\"$password\""
+                    }
+                }
+            }
+            @Suppress("DEPRECATION")
+            val netId = wifi.addNetwork(cfg)
+            if (netId == -1) {
+                @Suppress("DEPRECATION")
+                val existing = wifi.configuredNetworks
+                    ?.firstOrNull { it.SSID == "\"$ssid\"" }
+                if (existing != null) {
+                    @Suppress("DEPRECATION")
+                    wifi.enableNetwork(existing.networkId, true)
+                    sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                        JSONObject().apply {
+                            put("ok", true); put("reason", "existing")
+                        }.toString())
+                } else {
+                    sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                        JSONObject().apply {
+                            put("ok", false); put("reason", "addNetwork_failed")
+                        }.toString())
+                }
+            } else {
+                @Suppress("DEPRECATION") wifi.disconnect()
+                @Suppress("DEPRECATION") wifi.enableNetwork(netId, true)
+                @Suppress("DEPRECATION") wifi.reconnect()
+                sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                    JSONObject().apply {
+                        put("ok", true); put("reason", "added")
+                    }.toString())
+            }
+            android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed({ sendWifiStateToPhone() }, 2_000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "Wi-Fi connect failed: ${e.message}")
+            sendPluginMessage("base", "WIFI_CONNECT_RESULT",
+                JSONObject().apply {
+                    put("ok", false)
+                    put("reason", "exception:${e.javaClass.simpleName}:${e.message}")
+                }.toString())
+        }
+    }
 
     private fun handleBgUploadReq(payload: String) {
         // Sanity-check the requested size up-front so we can fail
