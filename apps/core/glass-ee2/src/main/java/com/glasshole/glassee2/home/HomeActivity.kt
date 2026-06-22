@@ -818,6 +818,8 @@ class HomeActivity : Activity() {
             // stray tap closing Home when the user just meant to confirm
             // they're on the right tile.
             CardType.EXIT -> Unit
+            // About is read-only — tap has no action.
+            CardType.ABOUT -> Unit
             else -> Unit
         }
     }

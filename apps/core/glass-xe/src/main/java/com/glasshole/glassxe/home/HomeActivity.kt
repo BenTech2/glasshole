@@ -770,6 +770,8 @@ class HomeActivity : Activity() {
             // EXIT card explicitly does NOT close on tap — only swipe-down
             // counts. The hint text on the card says so.
             CardType.EXIT -> Unit
+            // About is read-only — tap has no action.
+            CardType.ABOUT -> Unit
             else -> Unit
         }
     }

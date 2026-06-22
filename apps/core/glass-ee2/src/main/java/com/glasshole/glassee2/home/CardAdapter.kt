@@ -25,7 +25,7 @@ import java.util.TimeZone
  * we'll replace in later milestones. NAV is inserted/removed dynamically
  * in M3.
  */
-enum class CardType { EXIT, SETTINGS, NOTIFICATION, TIME, MEDIA, NAV }
+enum class CardType { ABOUT, EXIT, SETTINGS, NOTIFICATION, TIME, MEDIA, NAV }
 
 class CardAdapter(
     private val context: Context
@@ -35,7 +35,7 @@ class CardAdapter(
      *  tile ships in both variants — standalone closes the activity,
      *  launcher hands control back to the stock Glass home. */
     private val cards: MutableList<CardType> = mutableListOf(
-        CardType.EXIT, CardType.SETTINGS, CardType.NOTIFICATION,
+        CardType.ABOUT, CardType.EXIT, CardType.SETTINGS, CardType.NOTIFICATION,
         CardType.TIME, CardType.MEDIA
     )
 
@@ -87,6 +87,7 @@ class CardAdapter(
         val inflater = LayoutInflater.from(parent.context)
         val type = CardType.values()[viewType]
         val layout = when (type) {
+            CardType.ABOUT -> R.layout.card_about
             CardType.EXIT -> R.layout.card_exit
             CardType.SETTINGS -> R.layout.card_settings
             CardType.TIME -> R.layout.card_time
@@ -124,6 +125,7 @@ class CardAdapter(
 
     override fun onBindViewHolder(holder: CardHolder, position: Int) {
         when (holder.type) {
+            CardType.ABOUT -> bindAbout(holder)
             CardType.EXIT -> Unit  // fully static layout
             CardType.SETTINGS -> Unit  // fully static layout
             CardType.TIME -> bindTime(holder)
@@ -131,6 +133,22 @@ class CardAdapter(
             CardType.MEDIA -> bindMedia(holder)
             CardType.NAV -> bindNav(holder)
         }
+    }
+
+    /** Fill in the About card with the running app's version + the
+     *  per-APK build counter (versionCode = build_counter.txt + 1 per
+     *  successful package). */
+    private fun bindAbout(holder: CardHolder) {
+        val versionLine = holder.itemView.findViewById<TextView>(R.id.aboutVersionLine)
+        val pm = context.packageManager
+        val versionName = try {
+            pm.getPackageInfo(context.packageName, 0).versionName ?: "?"
+        } catch (_: Exception) { "?" }
+        val versionCode = try {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(context.packageName, 0).versionCode
+        } catch (_: Exception) { 0 }
+        versionLine?.text = "v$versionName · build $versionCode"
     }
 
     /** Rebinds only the time card if it's in the current window. */
