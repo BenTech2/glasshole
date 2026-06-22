@@ -52,6 +52,27 @@
             android:textAppearance="?attr/textAppearanceBodySmall"
             android:textColor="?attr/colorOnSurfaceVariant"
             android:visibility="gone" />
+
+        <!-- Per-app notification sound override. Tap to pick a built-
+             in tone or an uploaded file; "Default" falls back to the
+             global beep + volume. Hidden until the row's main toggle
+             is on. -->
+        <TextView
+            android:id="@+id/soundChip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:background="@drawable/sound_chip_bg"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnSurface"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="Sound: Default"
+            android:visibility="gone" />
     </LinearLayout>
 
     <com.google.android.material.checkbox.MaterialCheckBox

@@ -7,6 +7,25 @@
     android:focusableInTouchMode="false"
     android:descendantFocusability="blocksDescendants">
 
+    <!-- Optional Home-wallpaper layer + fade overlay. Stays gone unless
+         the user has flipped the "Show on App drawer" toggle in the
+         phone app; AppDrawerActivity reads the pref + shared fade alpha
+         on resume. -->
+    <ImageView
+        android:id="@+id/backgroundImage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:visibility="gone"
+        android:contentDescription="Wallpaper" />
+
+    <View
+        android:id="@+id/backgroundFade"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone" />
+
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/appPager"
         android:layout_width="match_parent"

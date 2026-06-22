@@ -82,11 +82,20 @@ class NotificationDisplayActivity : Activity() {
             .takeIf { it > 0L } ?: DEFAULT_DISMISS_MS
         setContentView(buildCardView(parsed))
 
-        try {
-            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP, 300)
-            handler.postDelayed({ tone.release() }, 500)
-        } catch (_: Exception) {}
+        // Sound playback follows the EE2 design: global enabled + volume
+        // prefs plus an optional per-app override keyed by source pkg.
+        // Empty / missing override falls through to the default beep.
+        val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+        val soundEnabled = prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true)
+        val soundVolume = prefs.getInt(BaseSettings.KEY_NOTIF_SOUND_VOLUME, 100)
+            .coerceIn(0, 100)
+        if (soundEnabled && soundVolume > 0) {
+            val perAppSounds = getSharedPreferences("notif_app_sounds", MODE_PRIVATE)
+            val soundId = if (parsed.pkg.isNotEmpty()) {
+                perAppSounds.getString(parsed.pkg, "") ?: ""
+            } else ""
+            NotifSoundPlayer.play(soundId, soundVolume)
+        }
 
         resetAutoDismiss()
     }
@@ -202,6 +211,7 @@ class NotificationDisplayActivity : Activity() {
 
     private data class ParsedNotif(
         val app: String,
+        val pkg: String,
         val title: String,
         val text: String,
         val iconBase64: String,
@@ -213,6 +223,7 @@ class NotificationDisplayActivity : Activity() {
 
     private fun parseIntent(): ParsedNotif {
         val app = intent.getStringExtra("app") ?: ""
+        val pkg = intent.getStringExtra("pkg") ?: ""
         val title = intent.getStringExtra("title") ?: ""
         val text = intent.getStringExtra("text") ?: ""
         val icon = intent.getStringExtra("icon") ?: ""
@@ -224,18 +235,18 @@ class NotificationDisplayActivity : Activity() {
         if (app.isEmpty() && title.isEmpty() && text.isEmpty() && !intent.hasExtra("text")) {
             val raw = intent.getStringExtra("message") ?: "(empty)"
             val colon = raw.indexOf(":")
-            if (colon <= 0) return ParsedNotif("", "", raw.trim(), "", "", "", "", emptyList())
+            if (colon <= 0) return ParsedNotif("", "", "", raw.trim(), "", "", "", "", emptyList())
             val pkgName = raw.substring(0, colon).trim()
             val rest = raw.substring(colon + 1).trim()
             val dash = rest.indexOf(" - ")
             return if (dash > 0) {
-                ParsedNotif(pkgName, rest.substring(0, dash).trim(), rest.substring(dash + 3).trim(), "", "", "", "", emptyList())
+                ParsedNotif(pkgName, "", rest.substring(0, dash).trim(), rest.substring(dash + 3).trim(), "", "", "", "", emptyList())
             } else {
-                ParsedNotif(pkgName, "", rest, "", "", "", "", emptyList())
+                ParsedNotif(pkgName, "", "", rest, "", "", "", "", emptyList())
             }
         }
 
-        return ParsedNotif(app, title, text, icon, titleIcon, picture, key, NotifAction.parseArray(actionsJson))
+        return ParsedNotif(app, pkg, title, text, icon, titleIcon, picture, key, NotifAction.parseArray(actionsJson))
     }
 
     private fun buildCardView(p: ParsedNotif): View {

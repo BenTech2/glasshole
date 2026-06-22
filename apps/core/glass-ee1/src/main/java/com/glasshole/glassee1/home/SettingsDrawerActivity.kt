@@ -39,16 +39,18 @@ class SettingsDrawerActivity : Activity() {
         /** Each half of the overlay-label fade transition (out, then in). */
         private const val FADE_MS = 110L
 
+        /** Tile fires either a system [action] or an in-launcher
+         *  [internalActivity]. See EE2 copy for the design note. */
         private data class Entry(
             val label: String,
             val iconRes: Int,
             val action: String,
-            val useAppPackage: Boolean = false
+            val useAppPackage: Boolean = false,
+            val internalActivity: Class<out Activity>? = null,
         )
 
-        // Ordered so the user reaches the most common controls first
-        // (Wi-Fi, Bluetooth, brightness, volume) without having to swipe
-        // deep into the carousel.
+        // Ordered so the user reaches the most common controls first.
+        // Dev Tools is last — deliberate destination, not a frequent flow.
         private val SETTINGS_ENTRIES: List<Entry> = listOf(
             Entry("Wi-Fi", R.drawable.ic_settings_wifi, Settings.ACTION_WIFI_SETTINGS),
             Entry("Bluetooth", R.drawable.ic_settings_bluetooth, Settings.ACTION_BLUETOOTH_SETTINGS),
@@ -59,12 +61,19 @@ class SettingsDrawerActivity : Activity() {
             Entry("Storage", R.drawable.ic_settings_storage, Settings.ACTION_INTERNAL_STORAGE_SETTINGS),
             Entry("Accessibility", R.drawable.ic_settings_accessibility, Settings.ACTION_ACCESSIBILITY_SETTINGS),
             Entry("About", R.drawable.ic_settings_info, Settings.ACTION_DEVICE_INFO_SETTINGS),
-            Entry("All Settings", R.drawable.ic_settings_gear, Settings.ACTION_SETTINGS)
+            Entry("All Settings", R.drawable.ic_settings_gear, Settings.ACTION_SETTINGS),
+            Entry(
+                label = "Dev Tools",
+                iconRes = R.drawable.ic_settings_devtools,
+                action = "",
+                internalActivity = com.glasshole.glassee1.devtools.DevToolsActivity::class.java,
+            ),
         )
     }
 
     private lateinit var pager: ViewPager2
     private lateinit var overlayLabel: TextView
+    private lateinit var drawerBackground: DrawerBackground
     /** SETTINGS_ENTRIES filtered to only those whose intent the device can
      *  actually handle — Glass EE1's stock Settings is a narrower subset
      *  than EE2 so pre-filtering at runtime via PackageManager removes
@@ -100,13 +109,21 @@ class SettingsDrawerActivity : Activity() {
         setContentView(R.layout.activity_settings_drawer)
 
         entries = SETTINGS_ENTRIES.filter {
-            // Always keep ACTION_SETTINGS — it's the root entry and is
-            // guaranteed to exist on any Glass build.
-            it.action == Settings.ACTION_SETTINGS || resolvesActivity(it.action)
+            // Always keep ACTION_SETTINGS and any internal-activity
+            // tile — we control the latter's target ourselves.
+            it.internalActivity != null
+                || it.action == Settings.ACTION_SETTINGS
+                || resolvesActivity(it.action)
         }
 
         pager = findViewById(R.id.settingsPager)
         overlayLabel = findViewById(R.id.overlayLabel)
+        drawerBackground = DrawerBackground(
+            activity = this,
+            backgroundImage = findViewById(R.id.backgroundImage),
+            backgroundFade = findViewById(R.id.backgroundFade),
+            enabledPrefKey = com.glasshole.glassee1.BaseSettings.KEY_WALLPAPER_ON_SETTINGS,
+        )
         pager.offscreenPageLimit = 4
         pager.isUserInputEnabled = false
         pager.adapter = SettingsAdapter(entries)
@@ -142,6 +159,16 @@ class SettingsDrawerActivity : Activity() {
         // ghosting around the chip as it re-centers on each text swap.
         overlayLabel.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         (overlayLabel.parent as? View)?.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        drawerBackground.attach()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        drawerBackground.detach()
     }
 
     /** Fade the overlay label out, swap its text, fade back in.
@@ -241,6 +268,15 @@ class SettingsDrawerActivity : Activity() {
 
     private fun launchCurrent() {
         val entry = entries.getOrNull(pendingPosition) ?: return
+        if (entry.internalActivity != null) {
+            try {
+                startActivity(Intent(this, entry.internalActivity)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+                Toast.makeText(this, "${entry.label} failed to open", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         val intent = Intent(entry.action).apply {
             if (entry.useAppPackage) {
                 data = Uri.parse("package:$packageName")

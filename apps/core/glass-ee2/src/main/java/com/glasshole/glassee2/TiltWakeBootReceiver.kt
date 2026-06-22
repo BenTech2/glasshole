@@ -83,6 +83,33 @@ object BaseSettings {
      *  255 = wallpaper fully hidden (solid black). Driven by the
      *  phone-side fade slider in DeviceActivity. */
     const val KEY_BACKGROUND_FADE = "background_fade"
+    /** How the wallpaper ImageView scales the source: "fit" (default —
+     *  whole image visible, letterboxed), "zoom" (centerCrop — fills
+     *  screen by cropping), "stretch" (fitXY — fills screen, distorts
+     *  aspect). User-driven via the phone-side wallpaper section. */
+    const val KEY_WALLPAPER_SCALE_MODE = "wallpaper_scale_mode"
+    /** When true, the battery indicator on the Time card shows the
+     *  numeric percent next to the icon. When false, just the icon. */
+    const val KEY_SHOW_BATTERY_PERCENT = "show_battery_percent"
+    /** When true, the top-bar status row is mirrored: battery moves to
+     *  the top-left, phone+Wi-Fi icons to the top-right. Default off
+     *  (matches stock Glass: connection on left, battery on right). */
+    const val KEY_SWAP_TOP_BAR = "swap_top_bar"
+    /** When true, show the same Home wallpaper behind the Settings
+     *  cover-flow drawer (with the same fade). Default off — the drawer
+     *  is text-heavy and not everyone wants the contrast variability. */
+    const val KEY_WALLPAPER_ON_SETTINGS = "wallpaper_on_settings"
+    /** When true, show the same Home wallpaper behind the App cover-flow
+     *  drawer. Same reasoning as above. */
+    const val KEY_WALLPAPER_ON_APP_DRAWER = "wallpaper_on_app_drawer"
+    /** When true, ring the ToneGenerator beep behind the notification
+     *  popup. Off lets the visual card alone do the alerting. */
+    const val KEY_NOTIF_SOUND_ENABLED = "notif_sound_enabled"
+    /** Beep loudness in the 0..100 range ToneGenerator's constructor
+     *  takes directly. 0 is equivalent to disabling sound; we still
+     *  honour the enabled toggle as a separate "remember my volume"
+     *  affordance. */
+    const val KEY_NOTIF_SOUND_VOLUME = "notif_sound_volume"
 
     /** Convenience accessor for the invert flag — every nav surface
      *  reads this once per gesture; the cost of a SharedPreferences

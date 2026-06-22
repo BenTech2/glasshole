@@ -174,12 +174,28 @@ class HomeActivity : Activity() {
             when (key) {
                 com.glasshole.glassxe.BaseSettings.KEY_NAV_KEEP_SCREEN_ON -> updateKeepScreenOn()
                 com.glasshole.glassxe.BaseSettings.KEY_BACKGROUND_FADE -> applyBackgroundFade()
+                com.glasshole.glassxe.BaseSettings.KEY_WALLPAPER_SCALE_MODE -> applyWallpaperScale()
+                com.glasshole.glassxe.BaseSettings.KEY_SHOW_BATTERY_PERCENT,
+                com.glasshole.glassxe.BaseSettings.KEY_SWAP_TOP_BAR -> cardAdapter.refreshTimeCard()
             }
         }
 
     /** Read the fade slider value (0..255) from prefs and apply it to
      *  the black overlay covering the wallpaper. 0 = no fade,
      *  255 = solid black (wallpaper effectively hidden). */
+    /** Translate the wallpaper scale mode pref into a concrete
+     *  ImageView.ScaleType. See EE2 copy for the design note. */
+    private fun applyWallpaperScale() {
+        val mode = getSharedPreferences(
+            com.glasshole.glassxe.BaseSettings.PREFS, MODE_PRIVATE
+        ).getString(com.glasshole.glassxe.BaseSettings.KEY_WALLPAPER_SCALE_MODE, "fit")
+        backgroundImage.scaleType = when (mode) {
+            "zoom" -> android.widget.ImageView.ScaleType.CENTER_CROP
+            "stretch" -> android.widget.ImageView.ScaleType.FIT_XY
+            else -> android.widget.ImageView.ScaleType.FIT_CENTER
+        }
+    }
+
     private fun applyBackgroundFade() {
         val alpha = getSharedPreferences(
             com.glasshole.glassxe.BaseSettings.PREFS, MODE_PRIVATE
@@ -260,6 +276,12 @@ class HomeActivity : Activity() {
     /** Fired by BluetoothListenerService after a successful
      *  wallpaper upload. Triggers an immediate re-scan so the new
      *  image appears without re-opening Home. */
+    private val weatherChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            cardAdapter.refreshTimeCard()
+        }
+    }
+
     private val wallpaperChangedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             loadBackgroundAsync()
@@ -283,6 +305,8 @@ class HomeActivity : Activity() {
             val payload = intent.getStringExtra(GlassPluginConstants.EXTRA_PAYLOAD) ?: ""
             when (pluginId) {
                 "media" -> if (type == "NOW_PLAYING") {
+                    // Phone-side MediaPlugin already coalesces skip-storms;
+                    // render each arrival immediately.
                     val newState = MediaState.fromJson(payload, cardAdapter.mediaState)
                     cardAdapter.setMediaState(newState)
                     if (mediaOverlayVisible) refreshMediaOverlayText()
@@ -509,6 +533,13 @@ class HomeActivity : Activity() {
             registerReceiver(wallpaperChangedReceiver, wallpaperFilter)
         }
 
+        val weatherFilter = IntentFilter("com.glasshole.glass.WEATHER_CHANGED")
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(weatherChangedReceiver, weatherFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(weatherChangedReceiver, weatherFilter)
+        }
+
         NotificationStore.addListener(notifStoreListener)
         cardAdapter.refreshNotificationCard()
         refreshFromPhone()
@@ -520,6 +551,7 @@ class HomeActivity : Activity() {
             .registerOnSharedPreferenceChangeListener(prefsChangeListener)
         updateKeepScreenOn()
         applyBackgroundFade()
+        applyWallpaperScale()
         loadBackgroundAsync()
     }
 
@@ -529,6 +561,7 @@ class HomeActivity : Activity() {
         tickHandler.removeCallbacks(dimRunnable)
         try { unregisterReceiver(pluginMessageReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(weatherChangedReceiver) } catch (_: Exception) {}
         NotificationStore.removeListener(notifStoreListener)
         try {
             getSharedPreferences(com.glasshole.glassxe.BaseSettings.PREFS, MODE_PRIVATE)
@@ -753,6 +786,8 @@ class HomeActivity : Activity() {
             // EXIT card explicitly does NOT close on tap — only swipe-down
             // counts. The hint text on the card says so.
             CardType.EXIT -> Unit
+            // About is read-only — tap has no action.
+            CardType.ABOUT -> Unit
             else -> Unit
         }
     }

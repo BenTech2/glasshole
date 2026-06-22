@@ -2,6 +2,7 @@ package com.glasshole.phone.plugins.device
 
 import android.content.Context
 import android.os.Bundle
+import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.SeekBar
@@ -30,6 +31,7 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var backgroundFadeSeek: SeekBar
     private lateinit var backgroundFadeLabel: TextView
     private lateinit var uploadBackgroundButton: Button
+    private lateinit var wallpaperScaleSpinner: Spinner
 
     private lateinit var volumeSeek: SeekBar
     private lateinit var volumeLabel: TextView
@@ -48,11 +50,25 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var wakeToTimeCardSwitch: MaterialSwitch
     private lateinit var invertNavSwitch: MaterialSwitch
     private lateinit var stayAwakeWhenChargingSwitch: MaterialSwitch
+    private lateinit var wallpaperOnSettingsSwitch: MaterialSwitch
+    private lateinit var wallpaperOnAppDrawerSwitch: MaterialSwitch
+    private lateinit var showBatteryPercentSwitch: MaterialSwitch
+    private lateinit var swapTopBarSwitch: MaterialSwitch
+    private lateinit var weatherEnabledSwitch: MaterialSwitch
+    private lateinit var weatherUnitsToggle: com.google.android.material.button.MaterialButtonToggleGroup
+    private lateinit var weatherIntervalSpinner: Spinner
+    private lateinit var notifSoundEnabledSwitch: MaterialSwitch
+    private lateinit var notifSoundVolumeSeek: SeekBar
+    private lateinit var notifSoundVolumeLabel: TextView
     private lateinit var stayAwakeWhenChargingSubtitle: TextView
 
     private lateinit var wakeButton: Button
     private lateinit var syncTimeButton: Button
     private lateinit var refreshButton: Button
+    private lateinit var showWifiIpButton: Button
+    private lateinit var glassWifiStatusText: TextView
+    private lateinit var glassWifiSwitch: MaterialSwitch
+    private lateinit var glassWifiScanButton: Button
 
     private lateinit var cameraLedSwitch: MaterialSwitch
     private lateinit var cameraLedStatusText: TextView
@@ -88,6 +104,7 @@ class DeviceActivity : AppCompatActivity() {
         backgroundFadeSeek = findViewById(R.id.backgroundFadeSeek)
         backgroundFadeLabel = findViewById(R.id.backgroundFadeLabel)
         uploadBackgroundButton = findViewById(R.id.uploadBackgroundButton)
+        wallpaperScaleSpinner = findViewById(R.id.wallpaperScaleSpinner)
         volumeSeek = findViewById(R.id.volumeSeek)
         volumeLabel = findViewById(R.id.volumeLabel)
         timeoutSeek = findViewById(R.id.timeoutSeek)
@@ -102,10 +119,24 @@ class DeviceActivity : AppCompatActivity() {
         wakeToTimeCardSwitch = findViewById(R.id.wakeToTimeCardSwitch)
         invertNavSwitch = findViewById(R.id.invertNavSwitch)
         stayAwakeWhenChargingSwitch = findViewById(R.id.stayAwakeWhenChargingSwitch)
+        wallpaperOnSettingsSwitch = findViewById(R.id.wallpaperOnSettingsSwitch)
+        wallpaperOnAppDrawerSwitch = findViewById(R.id.wallpaperOnAppDrawerSwitch)
+        showBatteryPercentSwitch = findViewById(R.id.showBatteryPercentSwitch)
+        swapTopBarSwitch = findViewById(R.id.swapTopBarSwitch)
+        weatherEnabledSwitch = findViewById(R.id.weatherEnabledSwitch)
+        weatherUnitsToggle = findViewById(R.id.weatherUnitsToggle)
+        weatherIntervalSpinner = findViewById(R.id.weatherIntervalSpinner)
+        notifSoundEnabledSwitch = findViewById(R.id.notifSoundEnabledSwitch)
+        notifSoundVolumeSeek = findViewById(R.id.notifSoundVolumeSeek)
+        notifSoundVolumeLabel = findViewById(R.id.notifSoundVolumeLabel)
         stayAwakeWhenChargingSubtitle = findViewById(R.id.stayAwakeWhenChargingSubtitle)
         wakeButton = findViewById(R.id.wakeButton)
         syncTimeButton = findViewById(R.id.syncTimeButton)
         refreshButton = findViewById(R.id.refreshButton)
+        showWifiIpButton = findViewById(R.id.showWifiIpButton)
+        glassWifiStatusText = findViewById(R.id.glassWifiStatusText)
+        glassWifiSwitch = findViewById(R.id.glassWifiSwitch)
+        glassWifiScanButton = findViewById(R.id.glassWifiScanButton)
 
         cameraLedSwitch = findViewById(R.id.cameraLedSwitch)
         cameraLedStatusText = findViewById(R.id.cameraLedStatusText)
@@ -142,6 +173,50 @@ class DeviceActivity : AppCompatActivity() {
         refreshButton.setOnClickListener {
             val sent = DevicePlugin.instance?.requestState() ?: false
             if (!sent) toast("Glass not connected")
+        }
+
+        showWifiIpButton.setOnClickListener {
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected")
+                return@setOnClickListener
+            }
+            showWifiIpButton.isEnabled = false
+            showWifiIpButton.text = "Asking glass…"
+            bridge.queryWifiIp { ip, ssid, error ->
+                runOnUiThread {
+                    showWifiIpButton.isEnabled = true
+                    showWifiIpButton.text = "Show glass Wi-Fi IP"
+                    if (error != null) {
+                        toast(error)
+                        return@runOnUiThread
+                    }
+                    showWifiIpDialog(ip, ssid)
+                }
+            }
+        }
+
+        glassWifiSwitch.setOnCheckedChangeListener { _, isChecked ->
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            // Echo back fresh state once glass reports back. Swallow
+            // local toggle changes during the round-trip so a bounce
+            // doesn't double-fire.
+            if (!bridge.setGlassWifiEnabled(isChecked)) {
+                toast("Send failed")
+            }
+        }
+
+        glassWifiScanButton.setOnClickListener {
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected")
+                return@setOnClickListener
+            }
+            startActivity(android.content.Intent(this, GlassWifiPickerActivity::class.java))
         }
 
         brightnessSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -254,6 +329,35 @@ class DeviceActivity : AppCompatActivity() {
         backgroundFadeSeek.progress = cachedFade
         backgroundFadeLabel.text = "Background fade: $cachedFade / 255"
 
+        // Wallpaper scale spinner — IDs ("fit"/"zoom"/"stretch") match
+        // the glass-side BaseSettings.KEY_WALLPAPER_SCALE_MODE values,
+        // shown to the user with friendlier labels.
+        val scaleIds = listOf("fit", "zoom", "stretch")
+        val scaleLabels = listOf("Center", "Zoom", "Fill screen")
+        wallpaperScaleSpinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, scaleLabels
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        val cachedScale = prefs.getString("wallpaper_scale_mode", "fit") ?: "fit"
+        wallpaperScaleSpinner.setSelection(
+            scaleIds.indexOf(cachedScale).coerceAtLeast(0), false
+        )
+        wallpaperScaleSpinner.onItemSelectedListener =
+            object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?, view: View?,
+                    position: Int, id: Long
+                ) {
+                    val mode = scaleIds.getOrNull(position) ?: "fit"
+                    if (mode == prefs.getString("wallpaper_scale_mode", "fit")) return
+                    prefs.edit().putString("wallpaper_scale_mode", mode).apply()
+                    val bridge = BridgeService.instance ?: return
+                    if (!bridge.isConnected) return
+                    val json = JSONObject().apply { put("mode", mode) }.toString()
+                    bridge.sendPluginMessage("base", "SET_WALLPAPER_SCALE_MODE", json)
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+
         tiltWakeSwitch.isChecked = prefs.getBoolean("tilt_wake_enabled", false)
         tiltWakeSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("tilt_wake_enabled", isChecked).apply()
@@ -351,6 +455,185 @@ class DeviceActivity : AppCompatActivity() {
             toast(if (sent) "Stay awake while charging ${if (isChecked) "enabled" else "disabled"}"
                   else "Send failed")
         }
+
+        wallpaperOnSettingsSwitch.isChecked = prefs.getBoolean("wallpaper_on_settings", false)
+        wallpaperOnSettingsSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("wallpaper_on_settings", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_WALLPAPER_ON_SETTINGS", json)
+            toast(if (sent) "Wallpaper on Settings drawer ${if (isChecked) "on" else "off"}"
+                  else "Send failed")
+        }
+
+        wallpaperOnAppDrawerSwitch.isChecked = prefs.getBoolean("wallpaper_on_app_drawer", false)
+        wallpaperOnAppDrawerSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("wallpaper_on_app_drawer", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_WALLPAPER_ON_APP_DRAWER", json)
+            toast(if (sent) "Wallpaper on App drawer ${if (isChecked) "on" else "off"}"
+                  else "Send failed")
+        }
+
+        // Home Screen — show battery percent next to the icon. Default on
+        // so the time card reads like the stock launcher unless the user
+        // explicitly hides it. Pref key matches the glass-side STATE echo.
+        showBatteryPercentSwitch.isChecked = prefs.getBoolean("show_battery_percent", true)
+        showBatteryPercentSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("show_battery_percent", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val sent = bridge.setShowBatteryPercent(isChecked)
+            toast(if (sent) "Battery percent ${if (isChecked) "on" else "off"}"
+                  else "Send failed")
+        }
+
+        // Home Screen — mirror battery vs connection icons. Default off
+        // matches stock Glass (icons left, battery right).
+        swapTopBarSwitch.isChecked = prefs.getBoolean("swap_top_bar", false)
+        swapTopBarSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("swap_top_bar", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val sent = bridge.setSwapTopBar(isChecked)
+            toast(if (sent) "Top-bar sides ${if (isChecked) "swapped" else "default"}"
+                  else "Send failed")
+        }
+
+        // Weather — Open-Meteo, keyless. Default ON since the user
+        // already granted FINE_LOCATION at install time on older
+        // Androids (the camera/media path needs it); on API 23+
+        // they'll need to grant the runtime perm the first time the
+        // switch is flipped on.
+        weatherEnabledSwitch.isChecked = prefs.getBoolean("weather_enabled", true)
+        weatherEnabledSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked && !hasLocationPermission()) {
+                weatherPermissionLauncher.launch(arrayOf(
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                ))
+                // Wait until the callback flips the pref + scheduler;
+                // keep the switch reflecting the requested state for now.
+                return@setOnCheckedChangeListener
+            }
+            prefs.edit().putBoolean("weather_enabled", isChecked).apply()
+            val bridge = BridgeService.instance ?: return@setOnCheckedChangeListener
+            if (isChecked) {
+                bridge.startWeatherSchedulerIfEnabled()
+                bridge.runWeatherFetchIfDue(force = true)
+                toast("Weather on — chip will appear in a moment")
+            } else {
+                bridge.stopWeatherScheduler()
+                bridge.sendWeatherUpdate(null)
+                toast("Weather off")
+            }
+        }
+
+        // Units toggle group — F or C. Restores the previous selection
+        // on first paint, then forces an immediate re-fetch on change
+        // so the unit flip reflects on the chip without a 30-min wait.
+        val cachedUnits = prefs.getString("weather_units", "F") ?: "F"
+        weatherUnitsToggle.check(
+            if (cachedUnits.equals("C", true)) R.id.weatherUnitCelsius
+            else R.id.weatherUnitFahrenheit
+        )
+        weatherUnitsToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val newUnits = if (checkedId == R.id.weatherUnitCelsius) "C" else "F"
+            if (newUnits == prefs.getString("weather_units", "F")) return@addOnButtonCheckedListener
+            prefs.edit().putString("weather_units", newUnits).apply()
+            val bridge = BridgeService.instance ?: return@addOnButtonCheckedListener
+            if (prefs.getBoolean("weather_enabled", true)) {
+                bridge.runWeatherFetchIfDue(force = true)
+            }
+        }
+
+        // Refresh-interval picker. Tied to BOTH the location and
+        // forecast cadence — short intervals (5 min) keep the chip
+        // tracking movement; long ones (2h) are kinder to battery and
+        // Open-Meteo's rate limits.
+        val intervalChoices = listOf(5, 15, 30, 60, 120)
+        val intervalLabels = listOf("5 min", "15 min", "30 min", "1 hour", "2 hours")
+        weatherIntervalSpinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, intervalLabels
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        val cachedInterval = prefs.getInt("weather_interval_minutes", 30)
+        weatherIntervalSpinner.setSelection(
+            intervalChoices.indexOf(cachedInterval).coerceAtLeast(2), false
+        )
+        weatherIntervalSpinner.onItemSelectedListener =
+            object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?, view: View?,
+                    position: Int, id: Long
+                ) {
+                    val newInterval = intervalChoices.getOrNull(position) ?: 30
+                    if (newInterval == prefs.getInt("weather_interval_minutes", 30))
+                        return
+                    prefs.edit().putInt("weather_interval_minutes", newInterval).apply()
+                    val bridge = BridgeService.instance ?: return
+                    bridge.restartWeatherScheduler()
+                    if (prefs.getBoolean("weather_enabled", true)) {
+                        bridge.runWeatherFetchIfDue(force = true)
+                    }
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+
+        // Notification sound — master switch + 0..100 volume. The slider
+        // stays usable when the switch is off so the user can pre-pick a
+        // volume to apply once they flip it back on; we just dim it as a
+        // visual hint that it isn't currently audible.
+        val cachedNotifSoundEnabled = prefs.getBoolean("notif_sound_enabled", true)
+        val cachedNotifSoundVolume = prefs.getInt("notif_sound_volume", 100).coerceIn(0, 100)
+        notifSoundEnabledSwitch.isChecked = cachedNotifSoundEnabled
+        notifSoundVolumeSeek.progress = cachedNotifSoundVolume
+        notifSoundVolumeLabel.text = "Beep volume: $cachedNotifSoundVolume / 100"
+        notifSoundVolumeSeek.alpha = if (cachedNotifSoundEnabled) 1f else 0.5f
+
+        notifSoundEnabledSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("notif_sound_enabled", isChecked).apply()
+            notifSoundVolumeSeek.alpha = if (isChecked) 1f else 0.5f
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val json = JSONObject().apply { put("enabled", isChecked) }.toString()
+            val sent = bridge.sendPluginMessage("base", "SET_NOTIF_SOUND_ENABLED", json)
+            toast(if (sent) "Notification beep ${if (isChecked) "on" else "off"}"
+                  else "Send failed")
+        }
+
+        notifSoundVolumeSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                notifSoundVolumeLabel.text = "Beep volume: $progress / 100"
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val value = seekBar?.progress ?: return
+                prefs.edit().putInt("notif_sound_volume", value).apply()
+                val bridge = BridgeService.instance
+                if (bridge == null || !bridge.isConnected) return
+                val json = JSONObject().apply { put("value", value) }.toString()
+                bridge.sendPluginMessage("base", "SET_NOTIF_SOUND_VOLUME", json)
+            }
+        })
 
         // Connection-success notifications — local-only (BridgeService reads
         // the same pref on every connect). No round-trip to glass needed to
@@ -510,6 +793,125 @@ class DeviceActivity : AppCompatActivity() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun hasLocationPermission(): Boolean {
+        val fine = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val coarse = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
+    /** Permission flow for the weather toggle. The first time the user
+     *  flips it on we need at least COARSE_LOCATION — if they refuse
+     *  we leave the switch off and toast why. */
+    private val weatherPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result.values.any { it }
+        val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+        if (granted) {
+            prefs.edit().putBoolean("weather_enabled", true).apply()
+            weatherEnabledSwitch.isChecked = true
+            BridgeService.instance?.let {
+                it.startWeatherSchedulerIfEnabled()
+                it.runWeatherFetchIfDue(force = true)
+            }
+            toast("Weather on — chip will appear in a moment")
+        } else {
+            prefs.edit().putBoolean("weather_enabled", false).apply()
+            weatherEnabledSwitch.isChecked = false
+            toast("Location permission needed for weather")
+        }
+    }
+
+    /** Display the glass's Wi-Fi IP + SSID with a copy-to-clipboard for
+     *  the matching `adb connect ip:5555` recovery command. Useful when
+     *  the glass USB port is broken and you've already enabled adb
+     *  tcpip mode from a previously-authorized machine. */
+    override fun onResume() {
+        super.onResume()
+        // Refresh the glass Wi-Fi panel each time the user comes back
+        // (e.g. after the picker connects to a new network).
+        refreshGlassWifiStatus()
+    }
+
+    /** Asks the glass for the current Wi-Fi snapshot and pushes it
+     *  into the status text + switch. Skips silently when the glass
+     *  isn't reachable so this can be called any time without
+     *  surfacing a "not connected" toast. */
+    private fun refreshGlassWifiStatus() {
+        val bridge = BridgeService.instance ?: return
+        if (!bridge.isConnected) {
+            glassWifiStatusText.text = "Glass not connected"
+            return
+        }
+        glassWifiStatusText.text = "Asking glass…"
+        bridge.queryGlassWifiState { state, err ->
+            runOnUiThread {
+                if (err != null || state == null) {
+                    glassWifiStatusText.text = "Status: ${err ?: "?"}"
+                    return@runOnUiThread
+                }
+                glassWifiStatusText.text = buildString {
+                    append("Radio: ").append(if (state.enabled) "on" else "off")
+                    if (state.connected) {
+                        append("  •  ").append(state.ssid)
+                        if (state.ip.isNotEmpty()) append("  •  ").append(state.ip)
+                    } else if (state.enabled) {
+                        append("  •  not connected")
+                    }
+                }
+                // Update the switch without echoing back to the BT
+                // handler — that would re-fire SET_WIFI_ENABLED in a
+                // loop on every state refresh.
+                glassWifiSwitch.setOnCheckedChangeListener(null)
+                glassWifiSwitch.isChecked = state.enabled
+                rebindGlassWifiSwitch()
+            }
+        }
+    }
+
+    private fun rebindGlassWifiSwitch() {
+        glassWifiSwitch.setOnCheckedChangeListener { _, isChecked ->
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            if (!bridge.setGlassWifiEnabled(isChecked)) toast("Send failed")
+        }
+    }
+
+    private fun showWifiIpDialog(ip: String, ssid: String) {
+        if (ip.isEmpty()) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Glass Wi-Fi")
+                .setMessage("Glass isn't on Wi-Fi right now. Connect it to a network and try again.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+        val connectCmd = "adb connect $ip:5555"
+        val ssidLine = if (ssid.isNotEmpty()) "SSID: $ssid\n" else ""
+        val message = "${ssidLine}IP: $ip\n\n" +
+            "If you've already enabled `adb tcpip 5555` on the glass " +
+            "(e.g. from a previously-authorized machine), copy the " +
+            "command below and run it on your dev machine.\n\n" +
+            connectCmd
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Glass Wi-Fi")
+            .setMessage(message)
+            .setPositiveButton("Copy adb connect") { _, _ ->
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("adb connect", connectCmd))
+                toast("Copied")
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     /**

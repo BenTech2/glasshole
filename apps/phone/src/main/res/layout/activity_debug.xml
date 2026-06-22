@@ -342,6 +342,75 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- ================================================== FILE SHARE -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="?attr/colorSurfaceContainer">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="LAN file share"
+                    style="@style/GlassHole.SectionHeader"
+                    android:layout_marginBottom="6dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Start a cleartext HTTP server on this phone, serving the GlassHole share folder. Open the URL on the glass's browser to download and install APKs when USB / BT transfer isn't working. Both devices must be on the same Wi-Fi."
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:layout_marginBottom="6dp" />
+
+                <TextView
+                    android:id="@+id/debugFileShareDirText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Sharing: —"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:fontFamily="monospace"
+                    android:layout_marginBottom="6dp" />
+
+                <TextView
+                    android:id="@+id/debugFileShareUrlText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Not running."
+                    android:textAppearance="?attr/textAppearanceTitleMedium"
+                    android:textColor="?attr/colorOnSurface"
+                    android:fontFamily="monospace"
+                    android:textIsSelectable="true"
+                    android:layout_marginBottom="10dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/debugFileShareToggleButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Start file server" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/debugFileShareCopyButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Copy URL"
+                    android:layout_marginTop="6dp"
+                    android:enabled="false" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- ================================================== LIVE STREAMS -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
@@ -433,6 +502,18 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Wake glass" />
+
+                <!-- Asks glass to run the root setprop + adbd-restart
+                     chain. On a rooted device this fires Magisk/SuperSU's
+                     grant prompt; on a non-rooted device glass replies
+                     with a clear error so the user knows. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/debugEnableWirelessAdbButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Enable wireless ADB on glass"
+                    android:layout_marginTop="8dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/debugTakePictureButton"

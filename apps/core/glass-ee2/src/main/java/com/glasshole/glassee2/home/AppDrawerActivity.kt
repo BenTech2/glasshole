@@ -51,6 +51,7 @@ class AppDrawerActivity : Activity() {
     private lateinit var emptyText: TextView
     private lateinit var overlayLabel: TextView
     private lateinit var apps: List<AppEntry>
+    private lateinit var drawerBackground: DrawerBackground
 
     /** Position whose label the overlay currently shows. We only swap the
      *  overlay text once the cover-flow scroll has fully settled. */
@@ -76,6 +77,12 @@ class AppDrawerActivity : Activity() {
         pager = findViewById(R.id.appPager)
         emptyText = findViewById(R.id.emptyText)
         overlayLabel = findViewById(R.id.overlayLabel)
+        drawerBackground = DrawerBackground(
+            activity = this,
+            backgroundImage = findViewById(R.id.backgroundImage),
+            backgroundFade = findViewById(R.id.backgroundFade),
+            enabledPrefKey = com.glasshole.glassee2.BaseSettings.KEY_WALLPAPER_ON_APP_DRAWER,
+        )
 
         apps = loadLauncherApps()
         if (apps.isEmpty()) {
@@ -125,6 +132,16 @@ class AppDrawerActivity : Activity() {
         // neighbors that stick out the sides aren't chopped.
         pager.clipChildren = false
         pager.clipToPadding = false
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::drawerBackground.isInitialized) drawerBackground.attach()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::drawerBackground.isInitialized) drawerBackground.detach()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {

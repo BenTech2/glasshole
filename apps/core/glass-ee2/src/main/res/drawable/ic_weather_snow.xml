@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material cloud + three six-armed snowflakes. Stroke-drawn so the
+     flakes stay sharp at small render sizes (vs. tiny path fills). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#CFD8DC"
+        android:pathData="M17.66,8.04 C16.99,4.59 13.96,2 10.32,2 7.43,2 4.92,3.64 3.67,6.04 0.66,6.36 -1.68,8.91 -1.68,12 c0,3.31 2.69,6 6,6 h13 c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.66,-4.96 z" />
+    <!-- Snowflakes: each is a 6-arm star (horizontal, vertical, two
+         diagonals). Drawn as line paths with stroke. -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.9"
+        android:pathData="M7,19 v3 M5.5,20.5 h3 M5.7,19.5 l2.6,2 M5.7,21.5 l2.6,-2
+                          M13,19 v3 M11.5,20.5 h3 M11.7,19.5 l2.6,2 M11.7,21.5 l2.6,-2
+                          M19,19 v3 M17.5,20.5 h3 M17.7,19.5 l2.6,2 M17.7,21.5 l2.6,-2" />
+</vector>

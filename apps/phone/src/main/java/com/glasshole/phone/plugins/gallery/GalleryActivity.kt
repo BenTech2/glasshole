@@ -37,6 +37,13 @@ import java.util.concurrent.Executors
 
 class GalleryActivity : AppCompatActivity() {
 
+    companion object {
+        /** Persists the toolbar "allow any file type" checkmark across
+         *  opens so users who keep it on for recovery sessions don't
+         *  need to re-enable it every time. */
+        private const val PREF_UPLOAD_ANY_TYPE = "upload_any_type"
+    }
+
     private lateinit var grid: GridView
     private lateinit var emptyView: TextView
     private lateinit var toolbar: MaterialToolbar
@@ -166,15 +173,33 @@ class GalleryActivity : AppCompatActivity() {
             toolbar.navigationIcon = null
             toolbar.setNavigationOnClickListener(null)
             toolbar.inflateMenu(R.menu.gallery_menu)
+            // Restore the "allow any file type" toggle state so the
+            // checkmark survives across opens.
+            toolbar.menu.findItem(R.id.galleryMenuUploadAnyType)?.isChecked =
+                uploadPickerAcceptsAnyType()
             toolbar.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     R.id.galleryMenuRefresh -> { refresh(); true }
                     R.id.galleryMenuUpload -> { launchUploadPicker(); true }
+                    R.id.galleryMenuUploadAnyType -> {
+                        // Checkable menu items don't toggle on their
+                        // own when invoked via setOnMenuItemClickListener
+                        // — flip the state explicitly + persist.
+                        val newState = !item.isChecked
+                        item.isChecked = newState
+                        getSharedPreferences("glasshole_gallery", MODE_PRIVATE)
+                            .edit().putBoolean(PREF_UPLOAD_ANY_TYPE, newState).apply()
+                        true
+                    }
                     else -> false
                 }
             }
         }
     }
+
+    private fun uploadPickerAcceptsAnyType(): Boolean =
+        getSharedPreferences("glasshole_gallery", MODE_PRIVATE)
+            .getBoolean(PREF_UPLOAD_ANY_TYPE, false)
 
     private fun subtitleForListState(): String {
         val transport = if (GalleryPlugin.instance?.wifiBaseUrl?.isNotEmpty() == true)
@@ -409,7 +434,13 @@ class GalleryActivity : AppCompatActivity() {
             return
         }
         try {
-            pickMediaLauncher.launch(arrayOf("image/*", "video/*"))
+            // Default is images + videos. The "Upload: allow any file
+            // type" toolbar checkmark widens it to */* so APKs / audio
+            // / archives can ride the gallery channel as a recovery
+            // affordance when other transfer paths are broken.
+            val mimes = if (uploadPickerAcceptsAnyType()) arrayOf("*/*")
+                else arrayOf("image/*", "video/*")
+            pickMediaLauncher.launch(mimes)
         } catch (e: Exception) {
             Toast.makeText(this, "No file picker available: ${e.message}", Toast.LENGTH_LONG).show()
         }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material cloud (shifted up to make room for raindrops) + three
+     slanted teardrop streaks. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Cloud, lifted ~3 units so the rain has somewhere to fall. -->
+    <path
+        android:fillColor="#90A4AE"
+        android:pathData="M17.66,8.04 C16.99,4.59 13.96,2 10.32,2 7.43,2 4.92,3.64 3.67,6.04 0.66,6.36 -1.68,8.91 -1.68,12 c0,3.31 2.69,6 6,6 h13 c2.76,0 5,-2.24 5,-5 0,-2.64 -2.05,-4.78 -4.66,-4.96 z" />
+    <!-- Three slanted droplet streaks, 60° from vertical. -->
+    <path
+        android:fillColor="#42A5F5"
+        android:pathData="M5.5,19 l-1.5,3 l1.2,0 l1.5,-3 z M10,19 l-1.5,3 l1.2,0 l1.5,-3 z M14.5,19 l-1.5,3 l1.2,0 l1.5,-3 z M19,19 l-1.5,3 l1.2,0 l1.5,-3 z" />
+</vector>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Standalone-only "Exit" card. Leftmost on the main carousel; the only
-     surface where swipe-down actually closes Home. Sizes scaled ~⅔ from
-     EE1/EE2 to fit XE's 240dpi 360-px-tall display. -->
+     surface where swipe-down actually closes Home. Other cards consume
+     the gesture silently so users don't accidentally back out of Home. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -17,7 +17,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textColor="#FF5252"
-            android:textSize="56sp"
+            android:textSize="80sp"
             android:fontFamily="sans-serif-thin"
             android:includeFontPadding="false"
             android:text="↓" />
@@ -25,18 +25,18 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="8dp"
             android:textColor="#FFFFFF"
-            android:textSize="22sp"
+            android:textSize="34sp"
             android:fontFamily="sans-serif-light"
             android:text="Exit" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="20dp"
             android:textColor="#4FC3F7"
-            android:textSize="10sp"
+            android:textSize="12sp"
             android:fontFamily="sans-serif-medium"
             android:letterSpacing="0.12"
             android:text="SWIPE DOWN TO CLOSE" />

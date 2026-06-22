@@ -29,7 +29,7 @@ import java.util.TimeZone
  * we'll replace in later milestones. NAV is inserted/removed dynamically
  * in M3.
  */
-enum class CardType { EXIT, SETTINGS, NOTIFICATION, TIME, MEDIA, NAV }
+enum class CardType { ABOUT, EXIT, SETTINGS, NOTIFICATION, TIME, MEDIA, NAV }
 
 class CardAdapter(
     private val context: Context
@@ -39,7 +39,7 @@ class CardAdapter(
      *  tile ships in both variants — standalone closes the activity,
      *  launcher hands control back to the stock Glass home. */
     private val cards: MutableList<CardType> = mutableListOf(
-        CardType.EXIT, CardType.SETTINGS, CardType.NOTIFICATION,
+        CardType.ABOUT, CardType.EXIT, CardType.SETTINGS, CardType.NOTIFICATION,
         CardType.TIME, CardType.MEDIA
     )
 
@@ -91,6 +91,7 @@ class CardAdapter(
         val inflater = LayoutInflater.from(parent.context)
         val type = CardType.values()[viewType]
         val layout = when (type) {
+            CardType.ABOUT -> R.layout.card_about
             CardType.EXIT -> R.layout.card_exit
             CardType.SETTINGS -> R.layout.card_settings
             CardType.TIME -> R.layout.card_time
@@ -108,6 +109,7 @@ class CardAdapter(
 
     override fun onBindViewHolder(holder: CardHolder, position: Int) {
         when (holder.type) {
+            CardType.ABOUT -> bindAbout(holder)
             CardType.EXIT -> Unit  // fully static layout
             CardType.SETTINGS -> Unit  // fully static layout
             CardType.TIME -> bindTime(holder)
@@ -115,6 +117,21 @@ class CardAdapter(
             CardType.MEDIA -> bindMedia(holder)
             CardType.NAV -> bindNav(holder)
         }
+    }
+
+    /** Fill in the About card with version + build counter. See EE2
+     *  copy for the design note. */
+    private fun bindAbout(holder: CardHolder) {
+        val versionLine = holder.itemView.findViewById<TextView>(R.id.aboutVersionLine)
+        val pm = context.packageManager
+        val versionName = try {
+            pm.getPackageInfo(context.packageName, 0).versionName ?: "?"
+        } catch (_: Exception) { "?" }
+        val versionCode = try {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(context.packageName, 0).versionCode
+        } catch (_: Exception) { 0 }
+        versionLine?.text = "v$versionName · build $versionCode"
     }
 
     fun refreshTimeCard() {
@@ -167,17 +184,131 @@ class CardAdapter(
         ampmText.text = ampmFmt.format(now)
         dateText.text = dateFmt.format(now)
 
+        val prefs = context.getSharedPreferences(
+            com.glasshole.glassxe.BaseSettings.PREFS, Context.MODE_PRIVATE
+        )
+        val showPercent = prefs.getBoolean(
+            com.glasshole.glassxe.BaseSettings.KEY_SHOW_BATTERY_PERCENT, true
+        )
+        val swap = prefs.getBoolean(
+            com.glasshole.glassxe.BaseSettings.KEY_SWAP_TOP_BAR, false
+        )
+
         val status = readBatteryStatus()
-        batteryText?.text = when {
-            status == null -> ""
-            status.charging -> "⚡ ${status.percent}%"
-            else -> "${status.percent}%"
+        batteryText?.let { tv ->
+            if (!showPercent || status == null) {
+                tv.visibility = View.GONE
+            } else {
+                tv.visibility = View.VISIBLE
+                tv.text = if (status.charging) "⚡ ${status.percent}%" else "${status.percent}%"
+            }
         }
+        val batteryIcon = holder.itemView.findViewById<BatteryIndicatorView>(R.id.batteryIcon)
+        if (status == null) {
+            batteryIcon?.visibility = View.GONE
+        } else {
+            batteryIcon?.visibility = View.VISIBLE
+            batteryIcon?.setBattery(status.percent, status.charging)
+        }
+
+        applyTopBarSwap(holder.itemView, swap)
+        bindWeather(holder.itemView)
 
         val wifi = holder.itemView.findViewById<ImageView>(R.id.wifiStatusIcon)
         val phone = holder.itemView.findViewById<ImageView>(R.id.phoneStatusIcon)
         wifi?.visibility = if (isWifiConnected()) View.VISIBLE else View.GONE
         phone?.visibility = if (isPhoneConnected()) View.VISIBLE else View.GONE
+    }
+
+    /** See EE2 copy for the design note. */
+    private fun bindWeather(root: View) {
+        val chip = root.findViewById<View>(R.id.weatherChip) ?: return
+        val icon = root.findViewById<ImageView>(R.id.weatherIcon)
+        val tempT = root.findViewById<TextView>(R.id.weatherTemp)
+        val hiLoT = root.findViewById<TextView>(R.id.weatherHiLo)
+        val aqiT = root.findViewById<TextView>(R.id.weatherAqi)
+        val raw = context.getSharedPreferences("glasshole_weather", Context.MODE_PRIVATE)
+            .getString("payload", null)
+        if (raw == null) { chip.visibility = View.GONE; return }
+        val obj = try { org.json.JSONObject(raw) } catch (_: Exception) {
+            chip.visibility = View.GONE; return
+        }
+        val ts = obj.optLong("ts", 0L) * 1000L
+        if (ts > 0 && System.currentTimeMillis() - ts > 6L * 60 * 60 * 1000) {
+            chip.visibility = View.GONE; return
+        }
+        val temp = obj.optInt("temp", Int.MIN_VALUE)
+        if (temp == Int.MIN_VALUE) { chip.visibility = View.GONE; return }
+        val high = obj.optInt("high", Int.MIN_VALUE)
+        val low = obj.optInt("low", Int.MIN_VALUE)
+        val code = obj.optInt("code", -1)
+        val units = obj.optString("units", "F")
+        val isDay = obj.optBoolean("isDay", true)
+        chip.visibility = View.VISIBLE
+        tempT?.text = "$temp°$units"
+        hiLoT?.text = if (high != Int.MIN_VALUE && low != Int.MIN_VALUE)
+            "H $high°  L $low°" else ""
+        icon?.setImageResource(weatherIconFor(code, isDay))
+        val aqi = if (obj.has("aqi")) obj.optInt("aqi", -1) else -1
+        bindAqi(aqiT, aqi)
+    }
+
+    /** See EE2 copy for the design note. */
+    private fun bindAqi(view: TextView?, aqi: Int) {
+        view ?: return
+        if (aqi < 0) { view.visibility = View.GONE; return }
+        view.visibility = View.VISIBLE
+        val (label, color) = when {
+            aqi <= 50 -> "Good" to 0xFFA5D6A7.toInt()
+            aqi <= 100 -> "Moderate" to 0xFFFFF59D.toInt()
+            aqi <= 150 -> "Unhealthy SG" to 0xFFFFB74D.toInt()
+            aqi <= 200 -> "Unhealthy" to 0xFFEF5350.toInt()
+            aqi <= 300 -> "Very Unhealthy" to 0xFFAB47BC.toInt()
+            else -> "Hazardous" to 0xFF8D6E63.toInt()
+        }
+        view.text = "AQI $aqi · $label"
+        view.setTextColor(color)
+    }
+
+    private fun weatherIconFor(code: Int, @Suppress("UNUSED_PARAMETER") isDay: Boolean): Int = when (code) {
+        0, 1 -> R.drawable.ic_weather_clear
+        2 -> R.drawable.ic_weather_partly_cloudy
+        3 -> R.drawable.ic_weather_cloudy
+        45, 48 -> R.drawable.ic_weather_fog
+        in 51..67 -> R.drawable.ic_weather_rain
+        in 71..77 -> R.drawable.ic_weather_snow
+        in 80..82 -> R.drawable.ic_weather_rain
+        in 85..86 -> R.drawable.ic_weather_snow
+        in 95..99 -> R.drawable.ic_weather_thunder
+        else -> R.drawable.ic_weather_partly_cloudy
+    }
+
+    /** See EE2 copy for the design note. */
+    private fun applyTopBarSwap(root: View, swap: Boolean) {
+        val statusRow = root.findViewById<View>(R.id.statusIconsRow) ?: return
+        val batteryRow = root.findViewById<View>(R.id.batteryRow) ?: return
+        val margin = (16f * context.resources.displayMetrics.density).toInt()
+        val statusParams = statusRow.layoutParams as? android.widget.FrameLayout.LayoutParams
+            ?: return
+        val batteryParams = batteryRow.layoutParams as? android.widget.FrameLayout.LayoutParams
+            ?: return
+        if (swap) {
+            statusParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            statusParams.marginStart = 0
+            statusParams.marginEnd = margin
+            batteryParams.gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            batteryParams.marginStart = margin
+            batteryParams.marginEnd = 0
+        } else {
+            statusParams.gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            statusParams.marginStart = margin
+            statusParams.marginEnd = 0
+            batteryParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            batteryParams.marginStart = 0
+            batteryParams.marginEnd = margin
+        }
+        statusRow.layoutParams = statusParams
+        batteryRow.layoutParams = batteryParams
     }
 
     private data class BatteryStatus(val percent: Int, val charging: Boolean)
@@ -223,19 +354,18 @@ class CardAdapter(
      * are API 23+. On EE1 fall back to the deprecated activeNetworkInfo.
      */
     @Suppress("DEPRECATION")
+    /** See EE2 copy for the design note. */
     private fun isWifiConnected(): Boolean {
         return try {
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE)
-                as? android.net.ConnectivityManager ?: return false
-            if (Build.VERSION.SDK_INT >= 23) {
-                val nw = cm.activeNetwork ?: return false
-                val caps = cm.getNetworkCapabilities(nw) ?: return false
-                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
-                    caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            } else {
-                val info = cm.activeNetworkInfo ?: return false
-                info.isConnected && info.type == android.net.ConnectivityManager.TYPE_WIFI
-            }
+            val wifi = context.getSystemService(Context.WIFI_SERVICE)
+                as? android.net.wifi.WifiManager ?: return false
+            @Suppress("DEPRECATION")
+            val info = wifi.connectionInfo ?: return false
+            @Suppress("DEPRECATION")
+            val ip = info.ipAddress
+            @Suppress("DEPRECATION")
+            val ssid = info.ssid.orEmpty().trim('"')
+            ip != 0 && ssid.isNotEmpty() && ssid != "<unknown ssid>"
         } catch (_: Exception) {
             false
         }

@@ -212,6 +212,8 @@ class BridgeService : Service() {
         // reach a connected state within IDLE_SHUTDOWN_MS.
         disconnectedSinceMillis = System.currentTimeMillis()
         idleHandler.postDelayed(idleCheckRunnable, IDLE_CHECK_INTERVAL_MS)
+
+        startWeatherSchedulerIfEnabled()
     }
 
     override fun onDestroy() {
@@ -220,6 +222,7 @@ class BridgeService : Service() {
         autoReconnect = false
         workerManager.stop()
         idleHandler.removeCallbacks(idleCheckRunnable)
+        stopWeatherScheduler()
         reconnectThread?.interrupt()
         reconnectThread = null
         disconnectBluetooth()
@@ -549,6 +552,597 @@ class BridgeService : Service() {
         }
     }
 
+    /**
+     * Ask the glass for its current Wi-Fi IP + SSID. Sends GET_WIFI_IP
+     * over the base channel, swaps onBaseMessage to catch the WIFI_IP
+     * reply (restoring the prior handler whether we succeed, fail, or
+     * time out), and invokes [onResult] on the BT reader thread with
+     * the parsed values (ip and ssid may be empty when Wi-Fi is off).
+     *
+     * Mirrors the swap-and-restore pattern in uploadWallpaper. The 5 s
+     * timeout is generous — the round-trip is tiny but BT RFCOMM can
+     * stall briefly after a recent disconnect.
+     */
+    /**
+     * Upload an audio file to the glass for per-app notification
+     * sounds. Mirrors uploadWallpaper's swap-and-restore handler
+     * pattern — request a one-shot HTTP URL over BT, POST the bytes
+     * over Wi-Fi, wait for the DONE/ERR ack.
+     */
+    fun uploadNotifSound(
+        bytes: ByteArray,
+        filename: String,
+        onResult: (success: Boolean, message: String) -> Unit
+    ) {
+        if (!btConnected) {
+            onResult(false, "Glass not connected"); return
+        }
+        val prevHandler = onBaseMessage
+        onBaseMessage = handler@{ type, payload ->
+            when (type) {
+                "NOTIF_SOUND_UPLOAD_OPEN" -> {
+                    val url = try {
+                        org.json.JSONObject(payload).optString("url", "")
+                    } catch (_: Exception) { "" }
+                    Log.i(TAG, "NOTIF_SOUND_UPLOAD_OPEN url=$url bytes=${bytes.size}")
+                    if (url.isEmpty()) {
+                        onBaseMessage = prevHandler
+                        onResult(false, "Glass returned no URL"); return@handler
+                    }
+                    Thread {
+                        try {
+                            postWallpaperBytes(url, filename, bytes)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Notif sound POST failed", e)
+                            onBaseMessage = prevHandler
+                            onResult(false, "POST failed: ${e.javaClass.simpleName}: ${e.message}")
+                        }
+                    }.apply { isDaemon = true; name = "NotifSoundUpload-post"; start() }
+                }
+                "NOTIF_SOUND_UPLOAD_DONE" -> {
+                    onBaseMessage = prevHandler
+                    val fn = try {
+                        org.json.JSONObject(payload).optString("filename", filename)
+                    } catch (_: Exception) { filename }
+                    onResult(true, fn)
+                }
+                "NOTIF_SOUND_UPLOAD_ERR" -> {
+                    onBaseMessage = prevHandler
+                    val reason = try {
+                        org.json.JSONObject(payload).optString("reason", "unknown")
+                    } catch (_: Exception) { "unknown" }
+                    onResult(false, "Glass rejected: $reason")
+                }
+                else -> prevHandler?.invoke(type, payload)
+            }
+        }
+
+        val req = org.json.JSONObject().apply {
+            put("filename", filename)
+            put("size", bytes.size)
+        }.toString()
+        if (!sendPluginMessage("base", "NOTIF_SOUND_UPLOAD_REQ", req)) {
+            onBaseMessage = prevHandler
+            onResult(false, "Failed to send upload request")
+        }
+    }
+
+    /** Ask the glass for the current list of uploaded notif-sound files.
+     *  Reply lands on the same swap-and-restore channel as everything
+     *  else. */
+    fun queryNotifSoundList(onResult: (files: List<String>, error: String?) -> Unit) {
+        if (!btConnected) { onResult(emptyList(), "Glass not connected"); return }
+        val prevHandler = onBaseMessage
+        var fired = false
+        val timeoutHandler = Handler(Looper.getMainLooper())
+        val timeout = Runnable {
+            if (!fired) { fired = true; onBaseMessage = prevHandler
+                onResult(emptyList(), "Timed out waiting for glass") }
+        }
+        onBaseMessage = handler@{ type, payload ->
+            if (type == "NOTIF_SOUND_LIST") {
+                if (fired) return@handler
+                fired = true
+                timeoutHandler.removeCallbacks(timeout)
+                onBaseMessage = prevHandler
+                val files = mutableListOf<String>()
+                try {
+                    val arr = org.json.JSONObject(payload).optJSONArray("files")
+                    if (arr != null) for (i in 0 until arr.length()) files.add(arr.getString(i))
+                } catch (_: Exception) {}
+                onResult(files, null)
+            } else prevHandler?.invoke(type, payload)
+        }
+        timeoutHandler.postDelayed(timeout, 5_000L)
+        if (!sendPluginMessage("base", "NOTIF_SOUND_LIST_REQ", "")) {
+            timeoutHandler.removeCallbacks(timeout)
+            if (!fired) {
+                fired = true; onBaseMessage = prevHandler
+                onResult(emptyList(), "Send failed")
+            }
+        }
+    }
+
+    /** Tell the glass to delete an uploaded notif-sound file. Fire-
+     *  and-forget; the glass replies with a fresh NOTIF_SOUND_LIST
+     *  the next time we ask. */
+    fun deleteNotifSound(filename: String) {
+        sendPluginMessage("base", "NOTIF_SOUND_DELETE",
+            org.json.JSONObject().apply { put("filename", filename) }.toString())
+    }
+
+    /** Send the per-app sound choice (or clear it when soundId is
+     *  empty). Glass-side prefs key is the app's package name. */
+    fun setNotifAppSound(pkg: String, soundId: String): Boolean {
+        val json = org.json.JSONObject().apply {
+            put("pkg", pkg)
+            put("soundId", soundId)
+        }.toString()
+        return sendPluginMessage("base", "SET_NOTIF_APP_SOUND", json)
+    }
+
+    /**
+     * Push an APK over the Wi-Fi LAN to the glass and trigger
+     * triggerInstall there. Same shape as uploadWallpaper /
+     * uploadNotifSound: BT carries the four short
+     * APK_INSTALL_REQ/_OPEN/_DONE/_ERR envelopes, Wi-Fi carries the
+     * bytes. Replaces the chunked-BT path which has been crashing
+     * the glass-side BT stack mid-stream on EE2.
+     *
+     * Progress callbacks fire during the POST so the existing
+     * ApkManagerActivity progress dialog stays useful. Final
+     * onResult is called once the glass replies with DONE or ERR.
+     */
+    fun installApkOverWifi(
+        bytes: ByteArray,
+        filename: String,
+        onResult: (success: Boolean, message: String) -> Unit,
+    ) {
+        if (!btConnected) { onResult(false, "Glass not connected"); return }
+        val prevHandler = onBaseMessage
+        onBaseMessage = handler@{ type, payload ->
+            when (type) {
+                "APK_INSTALL_OPEN" -> {
+                    val url = try {
+                        org.json.JSONObject(payload).optString("url", "")
+                    } catch (_: Exception) { "" }
+                    Log.i(TAG, "APK_INSTALL_OPEN url=$url bytes=${bytes.size}")
+                    if (url.isEmpty()) {
+                        onBaseMessage = prevHandler
+                        onResult(false, "Glass returned no URL"); return@handler
+                    }
+                    Thread {
+                        try {
+                            postWallpaperBytes(url, filename, bytes)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "APK POST failed", e)
+                            onBaseMessage = prevHandler
+                            onResult(false, "POST failed: ${e.javaClass.simpleName}: ${e.message}")
+                        }
+                    }.apply { isDaemon = true; name = "ApkInstall-post"; start() }
+                }
+                "APK_INSTALL_DONE" -> {
+                    onBaseMessage = prevHandler
+                    val status = try {
+                        org.json.JSONObject(payload).optString("status", "ok")
+                    } catch (_: Exception) { "ok" }
+                    // Phone-side success matches the same "glass got the
+                    // bytes" semantics the old chunked path used —
+                    // triggerInstall may still pop a system installer
+                    // prompt on glass that the user has to tap. Pass the
+                    // status string through so the caller can surface it.
+                    onResult(true, status)
+                }
+                "APK_INSTALL_ERR" -> {
+                    onBaseMessage = prevHandler
+                    val reason = try {
+                        org.json.JSONObject(payload).optString("reason", "unknown")
+                    } catch (_: Exception) { "unknown" }
+                    onResult(false, "Glass rejected: $reason")
+                }
+                else -> prevHandler?.invoke(type, payload)
+            }
+        }
+
+        val req = org.json.JSONObject().apply {
+            put("filename", filename)
+            put("size", bytes.size)
+        }.toString()
+        if (!sendPluginMessage("base", "APK_INSTALL_REQ", req)) {
+            onBaseMessage = prevHandler
+            onResult(false, "Failed to send install request")
+        }
+    }
+
+    /** Snapshot of the glass's Wi-Fi radio state. */
+    data class GlassWifiState(
+        val enabled: Boolean,
+        val connected: Boolean,
+        val ssid: String,
+        val ip: String,
+    )
+
+    /** Single scan-result entry returned by [scanGlassWifi]. */
+    data class GlassWifiNetwork(
+        val ssid: String,
+        val rssi: Int,
+        val security: String,
+    )
+
+    fun queryGlassWifiState(onResult: (state: GlassWifiState?, error: String?) -> Unit) {
+        runOneShotBaseRoundTrip(
+            request = "GET_WIFI_STATE", payload = "",
+            replyType = "WIFI_STATE", timeoutMs = 5_000L,
+            parse = { json ->
+                GlassWifiState(
+                    enabled = json.optBoolean("enabled", false),
+                    connected = json.optBoolean("connected", false),
+                    ssid = json.optString("ssid", ""),
+                    ip = json.optString("ip", ""),
+                )
+            },
+            onResult = onResult,
+        )
+    }
+
+    /** Toggles the glass-side Wi-Fi radio. Glass echoes a fresh
+     *  WIFI_STATE after the call; this fire-and-forget only confirms
+     *  the BT send succeeded — callers should requery the state if
+     *  they need the post-toggle truth. */
+    fun setGlassWifiEnabled(enabled: Boolean): Boolean {
+        val json = org.json.JSONObject().put("enabled", enabled).toString()
+        return sendPluginMessage("base", "SET_WIFI_ENABLED", json)
+    }
+
+    /** Home Screen prefs (Time card top-bar): show the numeric battery
+     *  percent next to the icon. Default true. */
+    fun setShowBatteryPercent(enabled: Boolean): Boolean {
+        val json = org.json.JSONObject().put("enabled", enabled).toString()
+        return sendPluginMessage("base", "SET_SHOW_BATTERY_PERCENT", json)
+    }
+
+    /** Home Screen prefs (Time card top-bar): mirror battery vs
+     *  connection icons (battery left, icons right when enabled).
+     *  Default false. */
+    fun setSwapTopBar(enabled: Boolean): Boolean {
+        val json = org.json.JSONObject().put("enabled", enabled).toString()
+        return sendPluginMessage("base", "SET_SWAP_TOP_BAR", json)
+    }
+
+    /** Send a cached / fresh weather payload to glass. Pass null to
+     *  tell glass "weather is off, hide the chip" — useful when the
+     *  user disables the feature so the stale value doesn't linger. */
+    fun sendWeatherUpdate(result: WeatherFetcher.Result?): Boolean {
+        val json = if (result == null) {
+            org.json.JSONObject().put("enabled", false).toString()
+        } else {
+            org.json.JSONObject().apply {
+                put("enabled", true)
+                put("temp", Math.round(result.tempCurrent))
+                put("high", Math.round(result.tempHigh))
+                put("low", Math.round(result.tempLow))
+                put("code", result.weatherCode)
+                put("isDay", result.isDay)
+                put("units", result.units)
+                if (result.aqi != null) put("aqi", result.aqi)
+                put("ts", result.fetchedAt / 1000L)
+            }.toString()
+        }
+        return sendPluginMessage("base", "WEATHER_UPDATE", json)
+    }
+
+    // --- Weather scheduler ---
+
+    /** Valid refetch cadences exposed to the user (minutes). The
+     *  scheduler clamps any pref to this set so out-of-band values
+     *  written by older builds or hand-edits can't strand us at e.g.
+     *  60s and burn through Open-Meteo's free-tier rate limit. */
+    private val weatherIntervalChoicesMin = listOf(5, 15, 30, 60, 120)
+    private val weatherHandler = Handler(Looper.getMainLooper())
+    private val weatherTick = object : Runnable {
+        override fun run() {
+            runWeatherFetchIfDue(force = false)
+            weatherHandler.postDelayed(this, weatherIntervalMs())
+        }
+    }
+
+    /** Read the user's chosen interval from prefs and convert to ms.
+     *  Default 30 min; anything outside [weatherIntervalChoicesMin]
+     *  snaps back to 30 so a corrupt pref can't break the loop. */
+    private fun weatherIntervalMs(): Long {
+        val raw = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+            .getInt("weather_interval_minutes", 30)
+        val safe = if (raw in weatherIntervalChoicesMin) raw else 30
+        return safe.toLong() * 60 * 1000
+    }
+
+    /** Called from onCreate to seed the periodic refetch, and again
+     *  from connectBluetooth's success path so the chip lights up
+     *  immediately on (re-)connect. */
+    fun startWeatherSchedulerIfEnabled() {
+        weatherHandler.removeCallbacks(weatherTick)
+        if (!isWeatherEnabled()) return
+        weatherHandler.postDelayed(weatherTick, 4_000L)
+    }
+
+    /** Restart the scheduler with the latest interval pref. Called
+     *  when the user picks a new cadence in DeviceActivity so the
+     *  change takes effect on the next tick rather than waiting out
+     *  the previous (potentially long) interval. */
+    fun restartWeatherScheduler() {
+        weatherHandler.removeCallbacks(weatherTick)
+        if (!isWeatherEnabled()) return
+        weatherHandler.postDelayed(weatherTick, weatherIntervalMs())
+    }
+
+    fun stopWeatherScheduler() {
+        weatherHandler.removeCallbacks(weatherTick)
+    }
+
+    private fun isWeatherEnabled(): Boolean =
+        getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+            .getBoolean("weather_enabled", true)
+
+    private fun weatherUnits(): String =
+        getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+            .getString("weather_units", "F") ?: "F"
+
+    /** Fetch + cache + ship to glass. [force] skips the freshness check
+     *  so a unit-toggle flip can reflect immediately. Runs the HTTP
+     *  call on a daemon thread to keep the BT main loop unblocked. */
+    fun runWeatherFetchIfDue(force: Boolean) {
+        if (!isWeatherEnabled()) return
+        val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+        val lastTs = prefs.getLong("weather_last_ts", 0L)
+        if (!force && System.currentTimeMillis() - lastTs < weatherIntervalMs()) {
+            // Still fresh — just re-send what we have so glass doesn't
+            // miss an update across a (re)connect.
+            shipCachedWeather()
+            return
+        }
+        // Active location: request a fresh fix via the NETWORK provider
+        // (Wi-Fi positioning, no GPS spin-up), then chain the forecast
+        // + AQI fetches on a daemon thread. requestFreshLocation falls
+        // back to last-known after its internal timeout so this can't
+        // hang forever even with location disabled mid-flight.
+        WeatherFetcher.requestFreshLocation(this@BridgeService, 8_000L) { loc ->
+            if (loc == null) {
+                log("Weather: no location available — skipping fetch")
+                return@requestFreshLocation
+            }
+            Thread {
+                val units = weatherUnits()
+                val forecast = WeatherFetcher.fetch(loc.latitude, loc.longitude, units) ?: run {
+                    log("Weather: Open-Meteo fetch failed")
+                    return@Thread
+                }
+                // Air quality is a best-effort secondary call — Open-Meteo's
+                // AQI coverage is global-ish but spotty in remote regions.
+                val aqi = WeatherFetcher.fetchAirQuality(loc.latitude, loc.longitude)
+                val result = forecast.copy(aqi = aqi)
+                writeAndShipWeather(prefs, result)
+            }.apply { isDaemon = true; name = "WeatherFetch" }.start()
+        }
+    }
+
+    private fun writeAndShipWeather(
+        prefs: android.content.SharedPreferences,
+        result: WeatherFetcher.Result,
+    ) {
+        prefs.edit().apply {
+            putLong("weather_last_ts", result.fetchedAt)
+            putString("weather_payload", org.json.JSONObject().apply {
+                put("temp", result.tempCurrent)
+                put("high", result.tempHigh)
+                put("low", result.tempLow)
+                put("code", result.weatherCode)
+                put("isDay", result.isDay)
+                put("units", result.units)
+                if (result.aqi != null) put("aqi", result.aqi)
+                put("fetchedAt", result.fetchedAt)
+            }.toString())
+        }.apply()
+        Handler(Looper.getMainLooper()).post { sendWeatherUpdate(result) }
+    }
+
+    /** Re-ship the last cached payload (if any) to glass. Called from
+     *  the connection-up path so a reconnect doesn't leave the chip
+     *  blank until the next scheduler tick. */
+    fun shipCachedWeather() {
+        if (!isWeatherEnabled()) return
+        val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+        val raw = prefs.getString("weather_payload", null) ?: return
+        try {
+            val obj = org.json.JSONObject(raw)
+            sendWeatherUpdate(
+                WeatherFetcher.Result(
+                    tempCurrent = obj.optDouble("temp", Double.NaN),
+                    tempHigh = obj.optDouble("high", Double.NaN),
+                    tempLow = obj.optDouble("low", Double.NaN),
+                    weatherCode = obj.optInt("code", 0),
+                    isDay = obj.optBoolean("isDay", true),
+                    units = obj.optString("units", "F"),
+                    aqi = if (obj.has("aqi")) obj.optInt("aqi") else null,
+                    fetchedAt = obj.optLong("fetchedAt", 0L),
+                )
+            )
+        } catch (_: Exception) {}
+    }
+
+    /** Trigger a fresh scan on the glass and wait for the result.
+     *  Allow ~3 s — the glass-side handler delays 800 ms before
+     *  reading the cache to give the radio a chance to populate. */
+    fun scanGlassWifi(onResult: (networks: List<GlassWifiNetwork>, error: String?) -> Unit) {
+        runOneShotBaseRoundTrip(
+            request = "WIFI_SCAN_REQ", payload = "",
+            replyType = "WIFI_SCAN_RESULT", timeoutMs = 6_000L,
+            parse = { json ->
+                val out = mutableListOf<GlassWifiNetwork>()
+                val arr = json.optJSONArray("networks")
+                if (arr != null) for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    out.add(GlassWifiNetwork(
+                        ssid = o.optString("ssid", ""),
+                        rssi = o.optInt("rssi", -100),
+                        security = o.optString("security", "OPEN"),
+                    ))
+                }
+                out
+            },
+            onResult = { list, err -> onResult(list ?: emptyList(), err) },
+        )
+    }
+
+    /** Add + enable a WifiConfiguration on the glass. [security] is
+     *  one of "OPEN", "WEP", "WPA", "WPA2", "WPA3" — matches the
+     *  badge returned by scanGlassWifi. */
+    fun connectGlassWifi(
+        ssid: String, password: String, security: String,
+        onResult: (ok: Boolean, message: String) -> Unit,
+    ) {
+        val req = org.json.JSONObject().apply {
+            put("ssid", ssid)
+            put("password", password)
+            put("security", security)
+        }.toString()
+        runOneShotBaseRoundTrip(
+            request = "WIFI_CONNECT_REQ", payload = req,
+            replyType = "WIFI_CONNECT_RESULT", timeoutMs = 8_000L,
+            parse = { json ->
+                Pair(
+                    json.optBoolean("ok", false),
+                    json.optString("reason", "")
+                )
+            },
+            onResult = { pair, err ->
+                if (err != null) onResult(false, err)
+                else onResult(pair?.first == true, pair?.second.orEmpty())
+            },
+        )
+    }
+
+    /** Ask glass to flip wireless ADB on (root required). Glass runs
+     *  `setprop service.adb.tcp.port 5555 && stop adbd && start adbd`
+     *  through its RootHelper and replies with the live state — port +
+     *  IP if the daemon came up, or an error string if su was refused
+     *  / missing. The reply also fires Magisk/SuperSU's grant prompt on
+     *  glass the first time, which is the whole reason this button
+     *  exists. */
+    fun enableGlassWirelessAdb(
+        onResult: (ok: Boolean, message: String) -> Unit,
+    ) {
+        runOneShotBaseRoundTrip(
+            request = "ENABLE_WIRELESS_ADB", payload = "",
+            replyType = "WIRELESS_ADB_RESULT", timeoutMs = 20_000L,
+            parse = { json ->
+                Triple(
+                    json.optBoolean("ok", false),
+                    json.optInt("port", 0),
+                    Pair(json.optString("ip", ""), json.optString("reason", "")),
+                )
+            },
+            onResult = { trip, err ->
+                if (err != null) { onResult(false, err); return@runOneShotBaseRoundTrip }
+                if (trip == null) { onResult(false, "no reply"); return@runOneShotBaseRoundTrip }
+                val (ok, port, rest) = trip
+                val (ip, reason) = rest
+                val msg = when {
+                    ok && ip.isNotEmpty() && port > 0 -> "adb connect $ip:$port"
+                    ok && port > 0 -> "Listening on port $port (no Wi-Fi IP)"
+                    reason.isNotEmpty() -> reason
+                    else -> "Failed"
+                }
+                onResult(ok, msg)
+            },
+        )
+    }
+
+    /** Generic single-message round trip on the base channel.
+     *  Captures the next reply of [replyType], parses it with
+     *  [parse], restores the previous handler. Used by the Wi-Fi
+     *  helpers above so each one isn't ~50 lines of swap/restore
+     *  boilerplate. */
+    private fun <T> runOneShotBaseRoundTrip(
+        request: String, payload: String,
+        replyType: String, timeoutMs: Long,
+        parse: (org.json.JSONObject) -> T,
+        onResult: (T?, String?) -> Unit,
+    ) {
+        if (!btConnected) { onResult(null, "Glass not connected"); return }
+        val prevHandler = onBaseMessage
+        var fired = false
+        val timeoutHandler = Handler(Looper.getMainLooper())
+        val timeout = Runnable {
+            if (!fired) { fired = true; onBaseMessage = prevHandler
+                onResult(null, "Timed out waiting for glass") }
+        }
+        onBaseMessage = handler@{ type, body ->
+            if (type == replyType) {
+                if (fired) return@handler
+                fired = true
+                timeoutHandler.removeCallbacks(timeout)
+                onBaseMessage = prevHandler
+                val parsed = try {
+                    parse(org.json.JSONObject(body))
+                } catch (e: Exception) { null }
+                if (parsed == null) onResult(null, "Bad reply payload")
+                else onResult(parsed, null)
+            } else prevHandler?.invoke(type, body)
+        }
+        timeoutHandler.postDelayed(timeout, timeoutMs)
+        if (!sendPluginMessage("base", request, payload)) {
+            timeoutHandler.removeCallbacks(timeout)
+            if (!fired) {
+                fired = true; onBaseMessage = prevHandler
+                onResult(null, "Send failed")
+            }
+        }
+    }
+
+    fun queryWifiIp(onResult: (ip: String, ssid: String, error: String?) -> Unit) {
+        if (!btConnected) {
+            onResult("", "", "Glass not connected")
+            return
+        }
+        val prevHandler = onBaseMessage
+        var fired = false
+        val timeout = Runnable {
+            if (!fired) {
+                fired = true
+                onBaseMessage = prevHandler
+                onResult("", "", "Timed out waiting for glass")
+            }
+        }
+        val timeoutHandler = Handler(Looper.getMainLooper())
+        onBaseMessage = handler@{ type, payload ->
+            when (type) {
+                "WIFI_IP" -> {
+                    if (fired) return@handler
+                    fired = true
+                    timeoutHandler.removeCallbacks(timeout)
+                    onBaseMessage = prevHandler
+                    val ip = try {
+                        org.json.JSONObject(payload).optString("ip", "")
+                    } catch (_: Exception) { "" }
+                    val ssid = try {
+                        org.json.JSONObject(payload).optString("ssid", "")
+                    } catch (_: Exception) { "" }
+                    onResult(ip, ssid, null)
+                }
+                else -> prevHandler?.invoke(type, payload)
+            }
+        }
+        timeoutHandler.postDelayed(timeout, 5_000L)
+        if (!sendPluginMessage("base", "GET_WIFI_IP", "")) {
+            timeoutHandler.removeCallbacks(timeout)
+            if (!fired) {
+                fired = true
+                onBaseMessage = prevHandler
+                onResult("", "", "Send failed")
+            }
+        }
+    }
+
     private fun ensureConnectChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(NotificationManager::class.java)
@@ -663,6 +1257,11 @@ class BridgeService : Service() {
         pluginRouter?.notifyConnectionChanged(true)
         workerManager.onConnectionChanged(true)
         updateNotification("Connected to ${device.name}")
+        // Weather: re-ship cached payload immediately and trigger a
+        // fresh fetch in the background so the chip lights up on
+        // reconnect without waiting for the next 30-min tick.
+        shipCachedWeather()
+        runWeatherFetchIfDue(force = false)
         // Glass auto-sends PLUGIN_LIST on socket accept, but if our
         // process restarted while the BT socket survived (e.g. an `adb
         // install` that didn't bring down the OS Bluetooth stack), we

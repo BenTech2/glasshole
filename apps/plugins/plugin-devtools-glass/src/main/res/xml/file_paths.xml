@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The plugin's own external cache + files dir. SCP target via
+         the SSH server lands here without needing READ/WRITE_EXTERNAL_STORAGE,
+         since the plugin owns these paths. -->
+    <external-cache-path name="ext_cache" path="." />
+    <external-files-path name="ext_files" path="." />
+    <!-- The plugin's internal cache + files dir, for paths that
+         happen to land inside the app's data dir. -->
+    <cache-path name="int_cache" path="." />
+    <files-path name="int_files" path="." />
+</paths>

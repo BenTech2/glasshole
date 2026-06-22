@@ -183,8 +183,26 @@ class HomeActivity : Activity() {
             when (key) {
                 com.glasshole.glassee2.BaseSettings.KEY_NAV_KEEP_SCREEN_ON -> updateKeepScreenOn()
                 com.glasshole.glassee2.BaseSettings.KEY_BACKGROUND_FADE -> applyBackgroundFade()
+                com.glasshole.glassee2.BaseSettings.KEY_WALLPAPER_SCALE_MODE -> applyWallpaperScale()
+                com.glasshole.glassee2.BaseSettings.KEY_SHOW_BATTERY_PERCENT,
+                com.glasshole.glassee2.BaseSettings.KEY_SWAP_TOP_BAR -> cardAdapter.refreshTimeCard()
             }
         }
+
+    /** Translate the "fit" / "zoom" / "stretch" pref into a concrete
+     *  ImageView.ScaleType and push it to the wallpaper view. Called
+     *  on activity start, on pref change, and after the bitmap is
+     *  loaded so a fresh upload also picks up the right scaling. */
+    private fun applyWallpaperScale() {
+        val mode = getSharedPreferences(
+            com.glasshole.glassee2.BaseSettings.PREFS, MODE_PRIVATE
+        ).getString(com.glasshole.glassee2.BaseSettings.KEY_WALLPAPER_SCALE_MODE, "fit")
+        backgroundImage.scaleType = when (mode) {
+            "zoom" -> android.widget.ImageView.ScaleType.CENTER_CROP
+            "stretch" -> android.widget.ImageView.ScaleType.FIT_XY
+            else -> android.widget.ImageView.ScaleType.FIT_CENTER
+        }
+    }
 
     /** Read the fade slider value (0..255) from prefs and apply it to
      *  the black overlay covering the wallpaper. 0 = no fade,
@@ -283,6 +301,15 @@ class HomeActivity : Activity() {
         }
     }
 
+    /** Broadcast from BluetoothListenerService on WEATHER_UPDATE so the
+     *  Time card's weather chip re-renders without waiting for the next
+     *  minute tick. */
+    private val weatherChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            cardAdapter.refreshTimeCard()
+        }
+    }
+
     private fun setBrightness(value: Float) {
         val lp = window.attributes
         lp.screenBrightness = value
@@ -302,6 +329,9 @@ class HomeActivity : Activity() {
             val payload = intent.getStringExtra(GlassPluginConstants.EXTRA_PAYLOAD) ?: ""
             when (pluginId) {
                 "media" -> if (type == "NOW_PLAYING") {
+                    // Phone-side MediaPlugin already coalesces a skip-storm
+                    // into a single push + a delayed settling push, so we
+                    // render each arrival immediately.
                     val newState = MediaState.fromJson(payload, cardAdapter.mediaState)
                     cardAdapter.setMediaState(newState)
                     if (mediaOverlayVisible) refreshMediaOverlayText()
@@ -536,6 +566,13 @@ class HomeActivity : Activity() {
             registerReceiver(wallpaperChangedReceiver, wallpaperFilter)
         }
 
+        val weatherFilter = IntentFilter("com.glasshole.glass.WEATHER_CHANGED")
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(weatherChangedReceiver, weatherFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(weatherChangedReceiver, weatherFilter)
+        }
+
         NotificationStore.addListener(notifStoreListener)
         cardAdapter.refreshNotificationCard()
         refreshFromPhone()
@@ -547,6 +584,7 @@ class HomeActivity : Activity() {
             .registerOnSharedPreferenceChangeListener(prefsChangeListener)
         updateKeepScreenOn()
         applyBackgroundFade()
+        applyWallpaperScale()
         loadBackgroundAsync()
     }
 
@@ -556,6 +594,7 @@ class HomeActivity : Activity() {
         tickHandler.removeCallbacks(dimRunnable)
         try { unregisterReceiver(pluginMessageReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(weatherChangedReceiver) } catch (_: Exception) {}
         NotificationStore.removeListener(notifStoreListener)
         try {
             getSharedPreferences(com.glasshole.glassee2.BaseSettings.PREFS, MODE_PRIVATE)
@@ -798,6 +837,8 @@ class HomeActivity : Activity() {
             // stray tap closing Home when the user just meant to confirm
             // they're on the right tile.
             CardType.EXIT -> Unit
+            // About is read-only — tap has no action.
+            CardType.ABOUT -> Unit
             else -> Unit
         }
     }

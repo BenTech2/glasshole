@@ -176,6 +176,12 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".plugins.device.GlassWifiPickerActivity"
+            android:exported="false"
+            android:label="Glass Wi-Fi"
+            android:parentActivityName=".plugins.device.DeviceActivity" />
+
+        <activity
             android:name=".plugins.gallery.GalleryActivity"
             android:exported="false"
             android:label="Glass Gallery"

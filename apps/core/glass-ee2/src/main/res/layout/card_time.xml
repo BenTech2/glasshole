@@ -4,10 +4,13 @@
     android:layout_height="match_parent"
     android:background="@android:color/transparent">
 
-    <!-- Top-left status icons: phone (BT) and Wi-Fi. Each is hidden when
+    <!-- Top status icons: phone (BT) and Wi-Fi. Each is hidden when
          the corresponding link is down — we intentionally show nothing
-         rather than a "disconnected" placeholder. -->
+         rather than a "disconnected" placeholder. Default position is
+         top-start; CardAdapter mirrors layout_gravity + margins to
+         top-end when KEY_SWAP_TOP_BAR is on. -->
     <LinearLayout
+        android:id="@+id/statusIconsRow"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|start"
@@ -35,8 +38,11 @@
 
     </LinearLayout>
 
-    <!-- Top-right battery indicator -->
+    <!-- Top battery indicator. Default position top-end; CardAdapter
+         mirrors to top-start when KEY_SWAP_TOP_BAR is on. The numeric
+         percent text is hidden when KEY_SHOW_BATTERY_PERCENT is off. -->
     <LinearLayout
+        android:id="@+id/batteryRow"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
@@ -45,11 +51,11 @@
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <ImageView
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+        <com.glasshole.glassee2.home.BatteryIndicatorView
+            android:id="@+id/batteryIcon"
+            android:layout_width="36dp"
+            android:layout_height="18dp"
             android:layout_marginEnd="8dp"
-            android:src="@drawable/ic_battery"
             android:contentDescription="Battery" />
 
         <TextView
@@ -110,5 +116,68 @@
         android:src="@drawable/ic_app_drawer_grid"
         android:alpha="0.7"
         android:contentDescription="Open app drawer" />
+
+    <!-- Bottom-start weather block. Populated by CardAdapter.bindTime
+         from the cached payload (phone fetches Open-Meteo and ships
+         the latest over BT). Bigger than the v1 chip and gains an
+         AQI row colored by US category. Hidden when there's no fresh
+         data. -->
+    <LinearLayout
+        android:id="@+id/weatherChip"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="14dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/weatherIcon"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginEnd="10dp"
+            android:src="@drawable/ic_weather_clear"
+            android:contentDescription="Weather" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/weatherTemp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="28sp"
+                android:fontFamily="sans-serif-medium"
+                android:includeFontPadding="false"
+                android:text="" />
+
+            <TextView
+                android:id="@+id/weatherHiLo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#B0BEC5"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif"
+                android:includeFontPadding="false"
+                android:text="" />
+
+            <TextView
+                android:id="@+id/weatherAqi"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#A5D6A7"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif-medium"
+                android:includeFontPadding="false"
+                android:visibility="gone"
+                android:text="" />
+
+        </LinearLayout>
+    </LinearLayout>
 
 </FrameLayout>
