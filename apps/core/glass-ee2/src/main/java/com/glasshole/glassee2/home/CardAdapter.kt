@@ -222,6 +222,17 @@ class CardAdapter(
                 tv.text = if (status.charging) "⚡ ${status.percent}%" else "${status.percent}%"
             }
         }
+        // BatteryIndicatorView draws the actual fill + threshold color
+        // (white → yellow → red). When the BATTERY_SERVICE read fails
+        // (rare; restricted profiles) we hide the icon rather than
+        // showing a misleading 100% full battery.
+        val batteryIcon = holder.itemView.findViewById<BatteryIndicatorView>(R.id.batteryIcon)
+        if (status == null) {
+            batteryIcon?.visibility = View.GONE
+        } else {
+            batteryIcon?.visibility = View.VISIBLE
+            batteryIcon?.setBattery(status.percent, status.charging)
+        }
 
         applyTopBarSwap(holder.itemView, swap)
         bindWeather(holder.itemView)

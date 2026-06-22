@@ -51,11 +51,11 @@
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <ImageView
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+        <com.glasshole.glassee1.home.BatteryIndicatorView
+            android:id="@+id/batteryIcon"
+            android:layout_width="36dp"
+            android:layout_height="18dp"
             android:layout_marginEnd="8dp"
-            android:src="@drawable/ic_battery"
             android:contentDescription="Battery" />
 
         <TextView

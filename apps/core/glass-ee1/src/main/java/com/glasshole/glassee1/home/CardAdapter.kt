@@ -203,6 +203,13 @@ class CardAdapter(
                 tv.text = if (status.charging) "⚡ ${status.percent}%" else "${status.percent}%"
             }
         }
+        val batteryIcon = holder.itemView.findViewById<BatteryIndicatorView>(R.id.batteryIcon)
+        if (status == null) {
+            batteryIcon?.visibility = View.GONE
+        } else {
+            batteryIcon?.visibility = View.VISIBLE
+            batteryIcon?.setBattery(status.percent, status.charging)
+        }
 
         applyTopBarSwap(holder.itemView, swap)
         bindWeather(holder.itemView)
