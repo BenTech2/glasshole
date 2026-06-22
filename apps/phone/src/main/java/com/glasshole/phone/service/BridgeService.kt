@@ -833,21 +833,27 @@ class BridgeService : Service() {
 
     // --- Weather scheduler ---
 
-    /** Refetch cadence. Open-Meteo updates the current observation
-     *  every ~15 min server-side; 30 min is a comfortable cadence that
-     *  keeps us under 100 calls/day per user (way under their 10k
-     *  free quota) and keeps the chip "current enough". */
-    private val weatherIntervalMs = 30L * 60 * 1000
-    /** How long a cached payload stays "fresh enough" to ship to glass
-     *  on connect without triggering a fetch first. Same as the
-     *  interval — if it's older than this we always re-fetch. */
-    private val weatherFreshMs = weatherIntervalMs
+    /** Valid refetch cadences exposed to the user (minutes). The
+     *  scheduler clamps any pref to this set so out-of-band values
+     *  written by older builds or hand-edits can't strand us at e.g.
+     *  60s and burn through Open-Meteo's free-tier rate limit. */
+    private val weatherIntervalChoicesMin = listOf(5, 15, 30, 60, 120)
     private val weatherHandler = Handler(Looper.getMainLooper())
     private val weatherTick = object : Runnable {
         override fun run() {
             runWeatherFetchIfDue(force = false)
-            weatherHandler.postDelayed(this, weatherIntervalMs)
+            weatherHandler.postDelayed(this, weatherIntervalMs())
         }
+    }
+
+    /** Read the user's chosen interval from prefs and convert to ms.
+     *  Default 30 min; anything outside [weatherIntervalChoicesMin]
+     *  snaps back to 30 so a corrupt pref can't break the loop. */
+    private fun weatherIntervalMs(): Long {
+        val raw = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+            .getInt("weather_interval_minutes", 30)
+        val safe = if (raw in weatherIntervalChoicesMin) raw else 30
+        return safe.toLong() * 60 * 1000
     }
 
     /** Called from onCreate to seed the periodic refetch, and again
@@ -857,6 +863,16 @@ class BridgeService : Service() {
         weatherHandler.removeCallbacks(weatherTick)
         if (!isWeatherEnabled()) return
         weatherHandler.postDelayed(weatherTick, 4_000L)
+    }
+
+    /** Restart the scheduler with the latest interval pref. Called
+     *  when the user picks a new cadence in DeviceActivity so the
+     *  change takes effect on the next tick rather than waiting out
+     *  the previous (potentially long) interval. */
+    fun restartWeatherScheduler() {
+        weatherHandler.removeCallbacks(weatherTick)
+        if (!isWeatherEnabled()) return
+        weatherHandler.postDelayed(weatherTick, weatherIntervalMs())
     }
 
     fun stopWeatherScheduler() {
@@ -878,43 +894,55 @@ class BridgeService : Service() {
         if (!isWeatherEnabled()) return
         val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
         val lastTs = prefs.getLong("weather_last_ts", 0L)
-        if (!force && System.currentTimeMillis() - lastTs < weatherFreshMs) {
+        if (!force && System.currentTimeMillis() - lastTs < weatherIntervalMs()) {
             // Still fresh — just re-send what we have so glass doesn't
             // miss an update across a (re)connect.
             shipCachedWeather()
             return
         }
-        Thread {
-            val loc = WeatherFetcher.lastKnownLocation(this@BridgeService)
+        // Active location: request a fresh fix via the NETWORK provider
+        // (Wi-Fi positioning, no GPS spin-up), then chain the forecast
+        // + AQI fetches on a daemon thread. requestFreshLocation falls
+        // back to last-known after its internal timeout so this can't
+        // hang forever even with location disabled mid-flight.
+        WeatherFetcher.requestFreshLocation(this@BridgeService, 8_000L) { loc ->
             if (loc == null) {
-                log("Weather: no location fix yet — skipping fetch")
-                return@Thread
+                log("Weather: no location available — skipping fetch")
+                return@requestFreshLocation
             }
-            val units = weatherUnits()
-            val forecast = WeatherFetcher.fetch(loc.latitude, loc.longitude, units) ?: run {
-                log("Weather: Open-Meteo fetch failed")
-                return@Thread
-            }
-            // Air quality is a best-effort secondary call — Open-Meteo's
-            // AQI coverage is global-ish but spotty in remote regions.
-            // null here just means the chip drops its AQI line.
-            val aqi = WeatherFetcher.fetchAirQuality(loc.latitude, loc.longitude)
-            val result = forecast.copy(aqi = aqi)
-            prefs.edit().apply {
-                putLong("weather_last_ts", result.fetchedAt)
-                putString("weather_payload", org.json.JSONObject().apply {
-                    put("temp", result.tempCurrent)
-                    put("high", result.tempHigh)
-                    put("low", result.tempLow)
-                    put("code", result.weatherCode)
-                    put("isDay", result.isDay)
-                    put("units", result.units)
-                    if (result.aqi != null) put("aqi", result.aqi)
-                    put("fetchedAt", result.fetchedAt)
-                }.toString())
-            }.apply()
-            Handler(Looper.getMainLooper()).post { sendWeatherUpdate(result) }
-        }.apply { isDaemon = true; name = "WeatherFetch" }.start()
+            Thread {
+                val units = weatherUnits()
+                val forecast = WeatherFetcher.fetch(loc.latitude, loc.longitude, units) ?: run {
+                    log("Weather: Open-Meteo fetch failed")
+                    return@Thread
+                }
+                // Air quality is a best-effort secondary call — Open-Meteo's
+                // AQI coverage is global-ish but spotty in remote regions.
+                val aqi = WeatherFetcher.fetchAirQuality(loc.latitude, loc.longitude)
+                val result = forecast.copy(aqi = aqi)
+                writeAndShipWeather(prefs, result)
+            }.apply { isDaemon = true; name = "WeatherFetch" }.start()
+        }
+    }
+
+    private fun writeAndShipWeather(
+        prefs: android.content.SharedPreferences,
+        result: WeatherFetcher.Result,
+    ) {
+        prefs.edit().apply {
+            putLong("weather_last_ts", result.fetchedAt)
+            putString("weather_payload", org.json.JSONObject().apply {
+                put("temp", result.tempCurrent)
+                put("high", result.tempHigh)
+                put("low", result.tempLow)
+                put("code", result.weatherCode)
+                put("isDay", result.isDay)
+                put("units", result.units)
+                if (result.aqi != null) put("aqi", result.aqi)
+                put("fetchedAt", result.fetchedAt)
+            }.toString())
+        }.apply()
+        Handler(Looper.getMainLooper()).post { sendWeatherUpdate(result) }
     }
 
     /** Re-ship the last cached payload (if any) to glass. Called from

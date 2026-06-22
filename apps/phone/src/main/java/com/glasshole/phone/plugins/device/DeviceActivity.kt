@@ -56,6 +56,7 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var swapTopBarSwitch: MaterialSwitch
     private lateinit var weatherEnabledSwitch: MaterialSwitch
     private lateinit var weatherUnitsToggle: com.google.android.material.button.MaterialButtonToggleGroup
+    private lateinit var weatherIntervalSpinner: Spinner
     private lateinit var notifSoundEnabledSwitch: MaterialSwitch
     private lateinit var notifSoundVolumeSeek: SeekBar
     private lateinit var notifSoundVolumeLabel: TextView
@@ -124,6 +125,7 @@ class DeviceActivity : AppCompatActivity() {
         swapTopBarSwitch = findViewById(R.id.swapTopBarSwitch)
         weatherEnabledSwitch = findViewById(R.id.weatherEnabledSwitch)
         weatherUnitsToggle = findViewById(R.id.weatherUnitsToggle)
+        weatherIntervalSpinner = findViewById(R.id.weatherIntervalSpinner)
         notifSoundEnabledSwitch = findViewById(R.id.notifSoundEnabledSwitch)
         notifSoundVolumeSeek = findViewById(R.id.notifSoundVolumeSeek)
         notifSoundVolumeLabel = findViewById(R.id.notifSoundVolumeLabel)
@@ -560,6 +562,38 @@ class DeviceActivity : AppCompatActivity() {
                 bridge.runWeatherFetchIfDue(force = true)
             }
         }
+
+        // Refresh-interval picker. Tied to BOTH the location and
+        // forecast cadence — short intervals (5 min) keep the chip
+        // tracking movement; long ones (2h) are kinder to battery and
+        // Open-Meteo's rate limits.
+        val intervalChoices = listOf(5, 15, 30, 60, 120)
+        val intervalLabels = listOf("5 min", "15 min", "30 min", "1 hour", "2 hours")
+        weatherIntervalSpinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_item, intervalLabels
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        val cachedInterval = prefs.getInt("weather_interval_minutes", 30)
+        weatherIntervalSpinner.setSelection(
+            intervalChoices.indexOf(cachedInterval).coerceAtLeast(2), false
+        )
+        weatherIntervalSpinner.onItemSelectedListener =
+            object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?, view: View?,
+                    position: Int, id: Long
+                ) {
+                    val newInterval = intervalChoices.getOrNull(position) ?: 30
+                    if (newInterval == prefs.getInt("weather_interval_minutes", 30))
+                        return
+                    prefs.edit().putInt("weather_interval_minutes", newInterval).apply()
+                    val bridge = BridgeService.instance ?: return
+                    bridge.restartWeatherScheduler()
+                    if (prefs.getBoolean("weather_enabled", true)) {
+                        bridge.runWeatherFetchIfDue(force = true)
+                    }
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
 
         // Notification sound — master switch + 0..100 volume. The slider
         // stays usable when the switch is off so the user can pre-pick a

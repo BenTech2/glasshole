@@ -355,6 +355,23 @@
 
                 </com.google.android.material.button.MaterialButtonToggleGroup>
 
+                <!-- Refresh interval. Drives both the weather call AND
+                     the active location request so the chip tracks
+                     movement at the cadence the user picks. -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Refresh every"
+                    android:textAppearance="?attr/textAppearanceBodyLarge"
+                    android:textColor="?attr/colorOnSurface"
+                    android:layout_marginTop="14dp" />
+
+                <Spinner
+                    android:id="@+id/weatherIntervalSpinner"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"

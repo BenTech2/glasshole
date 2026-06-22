@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
+import android.os.Bundle
 import android.util.Log
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
@@ -84,6 +85,72 @@ object WeatherFetcher {
             lm.getLastKnownLocation(provider)
         } catch (_: SecurityException) { null }
         catch (_: IllegalArgumentException) { null }
+    }
+
+    /** Pulls a *fresh* fix from the NETWORK provider (Wi-Fi positioning;
+     *  usually settles in 1-3 s) with a bounded timeout. Falls back to
+     *  [lastKnownLocation] if no update arrives in time so the weather
+     *  fetch can still proceed. Listener is always removed before
+     *  invoking the callback so we never leak a registration.
+     *
+     *  Used by the scheduler so the weather chip actually tracks
+     *  movement instead of pinning to whatever the system's location
+     *  cache happens to hold. */
+    fun requestFreshLocation(
+        context: Context,
+        timeoutMs: Long = 8_000L,
+        onResult: (Location?) -> Unit,
+    ) {
+        val fine = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) { onResult(null); return }
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        if (lm == null) { onResult(lastKnownLocation(context)); return }
+
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val delivered = java.util.concurrent.atomic.AtomicBoolean(false)
+        val listener = object : android.location.LocationListener {
+            override fun onLocationChanged(loc: Location) {
+                if (delivered.compareAndSet(false, true)) {
+                    try { lm.removeUpdates(this) } catch (_: Exception) {}
+                    onResult(loc)
+                }
+            }
+            override fun onStatusChanged(p: String?, s: Int, e: Bundle?) {}
+            override fun onProviderEnabled(p: String) {}
+            override fun onProviderDisabled(p: String) {}
+        }
+
+        handler.postDelayed({
+            if (delivered.compareAndSet(false, true)) {
+                try { lm.removeUpdates(listener) } catch (_: Exception) {}
+                // Timed out — best-effort fall back to the cache so the
+                // outer fetch doesn't fail just because the OS hasn't
+                // refreshed its fix in the listener window.
+                onResult(lastKnownLocation(context))
+            }
+        }, timeoutMs)
+
+        // Prefer NETWORK (Wi-Fi positioning, no GPS draw). If it's
+        // disabled the listener will simply never fire and our timeout
+        // path delivers last-known.
+        val provider = if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER))
+            LocationManager.NETWORK_PROVIDER
+        else LocationManager.PASSIVE_PROVIDER
+        try {
+            @Suppress("MissingPermission")
+            lm.requestLocationUpdates(provider, 0L, 0f, listener, handler.looper)
+        } catch (e: Exception) {
+            Log.w(TAG, "requestLocationUpdates failed: ${e.message}")
+            if (delivered.compareAndSet(false, true)) {
+                handler.removeCallbacksAndMessages(null)
+                onResult(lastKnownLocation(context))
+            }
+        }
     }
 
     /** Air-quality secondary call. Returns null on any failure (the
