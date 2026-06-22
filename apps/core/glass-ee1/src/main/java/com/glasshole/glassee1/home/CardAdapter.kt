@@ -184,17 +184,60 @@ class CardAdapter(
         ampmText.text = ampmFmt.format(now)
         dateText.text = dateFmt.format(now)
 
+        val prefs = context.getSharedPreferences(
+            com.glasshole.glassee1.BaseSettings.PREFS, Context.MODE_PRIVATE
+        )
+        val showPercent = prefs.getBoolean(
+            com.glasshole.glassee1.BaseSettings.KEY_SHOW_BATTERY_PERCENT, true
+        )
+        val swap = prefs.getBoolean(
+            com.glasshole.glassee1.BaseSettings.KEY_SWAP_TOP_BAR, false
+        )
+
         val status = readBatteryStatus()
-        batteryText?.text = when {
-            status == null -> ""
-            status.charging -> "⚡ ${status.percent}%"
-            else -> "${status.percent}%"
+        batteryText?.let { tv ->
+            if (!showPercent || status == null) {
+                tv.visibility = View.GONE
+            } else {
+                tv.visibility = View.VISIBLE
+                tv.text = if (status.charging) "⚡ ${status.percent}%" else "${status.percent}%"
+            }
         }
+
+        applyTopBarSwap(holder.itemView, swap)
 
         val wifi = holder.itemView.findViewById<ImageView>(R.id.wifiStatusIcon)
         val phone = holder.itemView.findViewById<ImageView>(R.id.phoneStatusIcon)
         wifi?.visibility = if (isWifiConnected()) View.VISIBLE else View.GONE
         phone?.visibility = if (isPhoneConnected()) View.VISIBLE else View.GONE
+    }
+
+    /** See EE2 copy for the design note. */
+    private fun applyTopBarSwap(root: View, swap: Boolean) {
+        val statusRow = root.findViewById<View>(R.id.statusIconsRow) ?: return
+        val batteryRow = root.findViewById<View>(R.id.batteryRow) ?: return
+        val margin = (16f * context.resources.displayMetrics.density).toInt()
+        val statusParams = statusRow.layoutParams as? android.widget.FrameLayout.LayoutParams
+            ?: return
+        val batteryParams = batteryRow.layoutParams as? android.widget.FrameLayout.LayoutParams
+            ?: return
+        if (swap) {
+            statusParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            statusParams.marginStart = 0
+            statusParams.marginEnd = margin
+            batteryParams.gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            batteryParams.marginStart = margin
+            batteryParams.marginEnd = 0
+        } else {
+            statusParams.gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            statusParams.marginStart = margin
+            statusParams.marginEnd = 0
+            batteryParams.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            batteryParams.marginStart = 0
+            batteryParams.marginEnd = margin
+        }
+        statusRow.layoutParams = statusParams
+        batteryRow.layoutParams = batteryParams
     }
 
     private data class BatteryStatus(val percent: Int, val charging: Boolean)

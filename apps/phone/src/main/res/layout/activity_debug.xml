@@ -503,6 +503,18 @@
                     android:layout_height="wrap_content"
                     android:text="Wake glass" />
 
+                <!-- Asks glass to run the root setprop + adbd-restart
+                     chain. On a rooted device this fires Magisk/SuperSU's
+                     grant prompt; on a non-rooted device glass replies
+                     with a clear error so the user knows. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/debugEnableWirelessAdbButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Enable wireless ADB on glass"
+                    android:layout_marginTop="8dp" />
+
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/debugTakePictureButton"
                     style="@style/Widget.Material3.Button.OutlinedButton"

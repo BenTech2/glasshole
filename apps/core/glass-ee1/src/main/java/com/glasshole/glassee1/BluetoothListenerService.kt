@@ -503,6 +503,20 @@ class BluetoothListenerService : Service() {
                 Log.i(TAG, "Background fade=$value")
                 sendBaseStateToPhone()
             }
+            "SET_SHOW_BATTERY_PERCENT" -> {
+                val enabled = try { JSONObject(payload).optBoolean("enabled", true) }
+                    catch (_: Exception) { true }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putBoolean(BaseSettings.KEY_SHOW_BATTERY_PERCENT, enabled).apply()
+                sendBaseStateToPhone()
+            }
+            "SET_SWAP_TOP_BAR" -> {
+                val enabled = try { JSONObject(payload).optBoolean("enabled", false) }
+                    catch (_: Exception) { false }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putBoolean(BaseSettings.KEY_SWAP_TOP_BAR, enabled).apply()
+                sendBaseStateToPhone()
+            }
             "SET_WALLPAPER_SCALE_MODE" -> {
                 val mode = try {
                     JSONObject(payload).optString("mode", "fit")
@@ -602,6 +616,7 @@ class BluetoothListenerService : Service() {
             }
             "WIFI_SCAN_REQ" -> handleWifiScanReq()
             "WIFI_CONNECT_REQ" -> handleWifiConnectReq(payload)
+            "ENABLE_WIRELESS_ADB" -> handleEnableWirelessAdb()
             else -> Log.d(TAG, "Unknown base message: $type")
         }
     }
@@ -706,6 +721,8 @@ class BluetoothListenerService : Service() {
             put("stayAwakeWhenChargingGranted", canWriteSecureSettings())
             put("backgroundFade", prefs.getInt(BaseSettings.KEY_BACKGROUND_FADE, 0))
             put("wallpaperScaleMode", prefs.getString(BaseSettings.KEY_WALLPAPER_SCALE_MODE, "fit"))
+            put("showBatteryPercent", prefs.getBoolean(BaseSettings.KEY_SHOW_BATTERY_PERCENT, true))
+            put("swapTopBar", prefs.getBoolean(BaseSettings.KEY_SWAP_TOP_BAR, false))
             put("wallpaperOnSettings", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_SETTINGS, false))
             put("wallpaperOnAppDrawer", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_APP_DRAWER, false))
             put("notifSoundEnabled", prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true))
@@ -949,6 +966,50 @@ class BluetoothListenerService : Service() {
             else -> "OPEN"
         }
     }
+
+    /** Phone-driven version of the Dev Tools "Enable wireless ADB"
+     *  button. See EE2 copy for the design note. */
+    private fun handleEnableWirelessAdb() {
+        com.glasshole.glassee1.devtools.RootHelper.run(
+            "setprop service.adb.tcp.port 5555 && stop adbd && start adbd"
+        ) { r ->
+            android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed({
+                    val port = readAdbTcpPort()
+                    val ip = wifiIpOrEmpty()
+                    val reply = JSONObject().apply {
+                        put("ok", r.ok && port > 0)
+                        put("port", port)
+                        put("ip", ip)
+                        val reason = when {
+                            r.ok && port > 0 -> ""
+                            !r.available -> "root not available (su missing or denied)"
+                            r.exitCode != 0 -> "su exit ${r.exitCode}: ${
+                                r.stderr.ifEmpty { r.stdout }.take(200)
+                            }"
+                            else -> "adbd did not pick up port"
+                        }
+                        put("reason", reason)
+                    }
+                    sendPluginMessage("base", "WIRELESS_ADB_RESULT", reply.toString())
+                }, 800L)
+        }
+    }
+
+    private fun readAdbTcpPort(): Int = try {
+        val sp = Class.forName("android.os.SystemProperties")
+        val get = sp.getMethod("get", String::class.java, String::class.java)
+        val raw = (get.invoke(null, "service.adb.tcp.port", "") as? String).orEmpty()
+        raw.toIntOrNull() ?: -1
+    } catch (_: Exception) { -1 }
+
+    private fun wifiIpOrEmpty(): String = try {
+        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE)
+            as android.net.wifi.WifiManager
+        @Suppress("DEPRECATION")
+        val raw = wifi.connectionInfo?.ipAddress ?: 0
+        if (raw == 0) "" else android.text.format.Formatter.formatIpAddress(raw)
+    } catch (_: Exception) { "" }
 
     private fun handleWifiConnectReq(payload: String) {
         val (ssid, password, security) = try {

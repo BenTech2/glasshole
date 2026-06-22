@@ -94,6 +94,12 @@ object BaseSettings {
      *  screen by cropping), "stretch" (fitXY — fills screen, distorts
      *  aspect). User-driven via the phone-side wallpaper section. */
     const val KEY_WALLPAPER_SCALE_MODE = "wallpaper_scale_mode"
+    /** When true, the battery indicator on the Time card shows the
+     *  numeric percent next to the icon. When false, just the icon. */
+    const val KEY_SHOW_BATTERY_PERCENT = "show_battery_percent"
+    /** When true, the top-bar status row is mirrored: battery moves to
+     *  the top-left, phone+Wi-Fi icons to the top-right. Default off. */
+    const val KEY_SWAP_TOP_BAR = "swap_top_bar"
     /** When true, show the same Home wallpaper behind the Settings
      *  cover-flow drawer (with the same fade). Default off — the drawer
      *  is text-heavy and not everyone wants the contrast variability. */

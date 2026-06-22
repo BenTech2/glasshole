@@ -39,6 +39,7 @@ class DebugActivity : AppCompatActivity() {
 
     // Actions group
     private lateinit var wakeGlassButton: Button
+    private lateinit var enableWirelessAdbButton: Button
     private lateinit var takePictureButton: Button
     private lateinit var screenshotButton: Button
     private lateinit var recordVideoButton: Button
@@ -110,6 +111,7 @@ class DebugActivity : AppCompatActivity() {
         statusText = findViewById(R.id.debugStatusText)
 
         wakeGlassButton = findViewById(R.id.debugWakeGlassButton)
+        enableWirelessAdbButton = findViewById(R.id.debugEnableWirelessAdbButton)
         takePictureButton = findViewById(R.id.debugTakePictureButton)
         screenshotButton = findViewById(R.id.debugScreenshotButton)
         recordVideoButton = findViewById(R.id.debugRecordVideoButton)
@@ -237,6 +239,7 @@ class DebugActivity : AppCompatActivity() {
         sendImageButton.isEnabled = enabled
         resetAdminPromptButton.isEnabled = enabled
         wakeGlassButton.isEnabled = enabled
+        enableWirelessAdbButton.isEnabled = enabled
         takePictureButton.isEnabled = enabled
         screenshotButton.isEnabled = enabled && !liveRequestPending
         recordVideoButton.isEnabled = enabled
@@ -492,6 +495,18 @@ class DebugActivity : AppCompatActivity() {
         }
         wakeGlassButton.setOnClickListener {
             sendPluginAction("device", "WAKE", "", "Wake sent")
+        }
+        enableWirelessAdbButton.setOnClickListener {
+            val bridge = bridgeService
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected"); updateStatus(); return@setOnClickListener
+            }
+            enableWirelessAdbButton.isEnabled = false
+            toast("Asking glass — grant root on the headset if prompted")
+            bridge.enableGlassWirelessAdb { ok, message ->
+                enableWirelessAdbButton.isEnabled = bridge.isConnected
+                toast(if (ok) "Wireless ADB on · $message" else "Failed: $message")
+            }
         }
         takePictureButton.setOnClickListener {
             sendPluginAction("camera2", "CAPTURE_STILL", "", "Capture sent")

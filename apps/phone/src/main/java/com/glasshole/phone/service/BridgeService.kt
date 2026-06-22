@@ -791,6 +791,21 @@ class BridgeService : Service() {
         return sendPluginMessage("base", "SET_WIFI_ENABLED", json)
     }
 
+    /** Home Screen prefs (Time card top-bar): show the numeric battery
+     *  percent next to the icon. Default true. */
+    fun setShowBatteryPercent(enabled: Boolean): Boolean {
+        val json = org.json.JSONObject().put("enabled", enabled).toString()
+        return sendPluginMessage("base", "SET_SHOW_BATTERY_PERCENT", json)
+    }
+
+    /** Home Screen prefs (Time card top-bar): mirror battery vs
+     *  connection icons (battery left, icons right when enabled).
+     *  Default false. */
+    fun setSwapTopBar(enabled: Boolean): Boolean {
+        val json = org.json.JSONObject().put("enabled", enabled).toString()
+        return sendPluginMessage("base", "SET_SWAP_TOP_BAR", json)
+    }
+
     /** Trigger a fresh scan on the glass and wait for the result.
      *  Allow ~3 s — the glass-side handler delays 800 ms before
      *  reading the cache to give the radio a chance to populate. */
@@ -839,6 +854,42 @@ class BridgeService : Service() {
             onResult = { pair, err ->
                 if (err != null) onResult(false, err)
                 else onResult(pair?.first == true, pair?.second.orEmpty())
+            },
+        )
+    }
+
+    /** Ask glass to flip wireless ADB on (root required). Glass runs
+     *  `setprop service.adb.tcp.port 5555 && stop adbd && start adbd`
+     *  through its RootHelper and replies with the live state — port +
+     *  IP if the daemon came up, or an error string if su was refused
+     *  / missing. The reply also fires Magisk/SuperSU's grant prompt on
+     *  glass the first time, which is the whole reason this button
+     *  exists. */
+    fun enableGlassWirelessAdb(
+        onResult: (ok: Boolean, message: String) -> Unit,
+    ) {
+        runOneShotBaseRoundTrip(
+            request = "ENABLE_WIRELESS_ADB", payload = "",
+            replyType = "WIRELESS_ADB_RESULT", timeoutMs = 20_000L,
+            parse = { json ->
+                Triple(
+                    json.optBoolean("ok", false),
+                    json.optInt("port", 0),
+                    Pair(json.optString("ip", ""), json.optString("reason", "")),
+                )
+            },
+            onResult = { trip, err ->
+                if (err != null) { onResult(false, err); return@runOneShotBaseRoundTrip }
+                if (trip == null) { onResult(false, "no reply"); return@runOneShotBaseRoundTrip }
+                val (ok, port, rest) = trip
+                val (ip, reason) = rest
+                val msg = when {
+                    ok && ip.isNotEmpty() && port > 0 -> "adb connect $ip:$port"
+                    ok && port > 0 -> "Listening on port $port (no Wi-Fi IP)"
+                    reason.isNotEmpty() -> reason
+                    else -> "Failed"
+                }
+                onResult(ok, msg)
             },
         )
     }

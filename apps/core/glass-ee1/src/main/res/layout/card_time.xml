@@ -4,10 +4,13 @@
     android:layout_height="match_parent"
     android:background="@android:color/transparent">
 
-    <!-- Top-left status icons: phone (BT) and Wi-Fi. Each is hidden when
+    <!-- Top status icons: phone (BT) and Wi-Fi. Each is hidden when
          the corresponding link is down — we intentionally show nothing
-         rather than a "disconnected" placeholder. -->
+         rather than a "disconnected" placeholder. Default position is
+         top-start; CardAdapter mirrors layout_gravity + margins to
+         top-end when KEY_SWAP_TOP_BAR is on. -->
     <LinearLayout
+        android:id="@+id/statusIconsRow"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|start"
@@ -35,8 +38,11 @@
 
     </LinearLayout>
 
-    <!-- Top-right battery indicator -->
+    <!-- Top battery indicator. Default position top-end; CardAdapter
+         mirrors to top-start when KEY_SWAP_TOP_BAR is on. The numeric
+         percent text is hidden when KEY_SHOW_BATTERY_PERCENT is off. -->
     <LinearLayout
+        android:id="@+id/batteryRow"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"

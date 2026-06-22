@@ -52,6 +52,8 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var stayAwakeWhenChargingSwitch: MaterialSwitch
     private lateinit var wallpaperOnSettingsSwitch: MaterialSwitch
     private lateinit var wallpaperOnAppDrawerSwitch: MaterialSwitch
+    private lateinit var showBatteryPercentSwitch: MaterialSwitch
+    private lateinit var swapTopBarSwitch: MaterialSwitch
     private lateinit var notifSoundEnabledSwitch: MaterialSwitch
     private lateinit var notifSoundVolumeSeek: SeekBar
     private lateinit var notifSoundVolumeLabel: TextView
@@ -116,6 +118,8 @@ class DeviceActivity : AppCompatActivity() {
         stayAwakeWhenChargingSwitch = findViewById(R.id.stayAwakeWhenChargingSwitch)
         wallpaperOnSettingsSwitch = findViewById(R.id.wallpaperOnSettingsSwitch)
         wallpaperOnAppDrawerSwitch = findViewById(R.id.wallpaperOnAppDrawerSwitch)
+        showBatteryPercentSwitch = findViewById(R.id.showBatteryPercentSwitch)
+        swapTopBarSwitch = findViewById(R.id.swapTopBarSwitch)
         notifSoundEnabledSwitch = findViewById(R.id.notifSoundEnabledSwitch)
         notifSoundVolumeSeek = findViewById(R.id.notifSoundVolumeSeek)
         notifSoundVolumeLabel = findViewById(R.id.notifSoundVolumeLabel)
@@ -471,6 +475,37 @@ class DeviceActivity : AppCompatActivity() {
             val json = JSONObject().apply { put("enabled", isChecked) }.toString()
             val sent = bridge.sendPluginMessage("base", "SET_WALLPAPER_ON_APP_DRAWER", json)
             toast(if (sent) "Wallpaper on App drawer ${if (isChecked) "on" else "off"}"
+                  else "Send failed")
+        }
+
+        // Home Screen — show battery percent next to the icon. Default on
+        // so the time card reads like the stock launcher unless the user
+        // explicitly hides it. Pref key matches the glass-side STATE echo.
+        showBatteryPercentSwitch.isChecked = prefs.getBoolean("show_battery_percent", true)
+        showBatteryPercentSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("show_battery_percent", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val sent = bridge.setShowBatteryPercent(isChecked)
+            toast(if (sent) "Battery percent ${if (isChecked) "on" else "off"}"
+                  else "Send failed")
+        }
+
+        // Home Screen — mirror battery vs connection icons. Default off
+        // matches stock Glass (icons left, battery right).
+        swapTopBarSwitch.isChecked = prefs.getBoolean("swap_top_bar", false)
+        swapTopBarSwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("swap_top_bar", isChecked).apply()
+            val bridge = BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                toast("Glass not connected — will apply on next connect")
+                return@setOnCheckedChangeListener
+            }
+            val sent = bridge.setSwapTopBar(isChecked)
+            toast(if (sent) "Top-bar sides ${if (isChecked) "swapped" else "default"}"
                   else "Send failed")
         }
 
