@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "provider",
+      "type": "radio",
+      "label": "AI provider",
+      "default": "openai",
+      "options": [
+        { "value": "openai",    "label": "OpenAI (GPT)" },
+        { "value": "anthropic", "label": "Anthropic Claude" },
+        { "value": "gemini",    "label": "Google Gemini" }
+      ]
+    },
+    { "type": "section", "label": "OpenAI" },
+    {
+      "key": "openai_api_key",
+      "type": "password",
+      "label": "OpenAI API key (sk-…)",
+      "visible_when": { "key": "provider", "eq": "openai" }
+    },
+    {
+      "key": "openai_model",
+      "type": "text",
+      "label": "OpenAI model",
+      "default": "gpt-4o-mini",
+      "visible_when": { "key": "provider", "eq": "openai" }
+    },
+    { "type": "section", "label": "Anthropic" },
+    {
+      "key": "anthropic_api_key",
+      "type": "password",
+      "label": "Anthropic API key (sk-ant-…)",
+      "visible_when": { "key": "provider", "eq": "anthropic" }
+    },
+    {
+      "key": "anthropic_model",
+      "type": "text",
+      "label": "Anthropic model",
+      "default": "claude-haiku-4-5-20251001",
+      "visible_when": { "key": "provider", "eq": "anthropic" }
+    },
+    { "type": "section", "label": "Gemini" },
+    {
+      "key": "gemini_api_key",
+      "type": "password",
+      "label": "Google AI Studio API key",
+      "visible_when": { "key": "provider", "eq": "gemini" }
+    },
+    {
+      "key": "gemini_model",
+      "type": "text",
+      "label": "Gemini model",
+      "default": "gemini-2.5-flash",
+      "visible_when": { "key": "provider", "eq": "gemini" }
+    },
+    { "type": "section", "label": "Behaviour" },
+    {
+      "key": "system_prompt",
+      "type": "text",
+      "label": "System prompt",
+      "default": "You are a concise voice assistant running on Google Glass. Answer in 1-3 short sentences. Plain text only — no markdown."
+    },
+    {
+      "key": "temperature_pct",
+      "type": "slider",
+      "label": "Temperature (×100)",
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "default": 30
+    },
+    {
+      "key": "max_tokens",
+      "type": "slider",
+      "label": "Max response tokens",
+      "min": 50,
+      "max": 1500,
+      "step": 50,
+      "default": 400
+    },
+    {
+      "key": "voice_response",
+      "type": "checkbox",
+      "label": "Speak the response on glass",
+      "default": true
+    }
+  ],
+  "workers": []
+}

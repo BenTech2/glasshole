@@ -1,19 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- INTERNET only used in the unlikely case we ever do direct calls
+         from glass; today the phone proxies every AI request over BT. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <uses-feature android:name="android.hardware.camera" android:required="true" />
-    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="true" />
 
     <application
-        android:name="androidx.multidex.MultiDexApplication"
         android:allowBackup="true"
-        android:label="Broadcast"
+        android:label="AI Assistant"
         android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
@@ -22,25 +19,23 @@
             android:value="true" />
 
         <service
-            android:name=".BroadcastGlassPluginService"
+            android:name=".AiAssistantPluginService"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
             </intent-filter>
-            <meta-data android:name="com.glasshole.plugin.ID" android:value="broadcast" />
-            <meta-data android:name="com.glasshole.plugin.NAME" android:value="Broadcast" />
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="ai" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="AI Assistant" />
             <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
-                android:value="RTMP live streamer with optional on-glass chat overlay (Camera1 path for EE1 / XE)" />
+                android:value="Voice in, AI response on glass (OpenAI / Anthropic / Gemini)" />
             <meta-data android:name="com.glasshole.plugin.SCHEMA"
                 android:resource="@raw/plugin_schema" />
         </service>
 
         <activity
-            android:name=".BroadcastActivity"
-            android:label="Broadcast"
-            android:icon="@mipmap/ic_launcher"
+            android:name=".AssistantActivity"
+            android:label="AI Assistant"
             android:exported="true"
-            android:screenOrientation="landscape"
             android:launchMode="singleTask"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
             <intent-filter>
@@ -49,5 +44,6 @@
                 <category android:name="com.google.android.glass.category.DIRECTORY" />
             </intent-filter>
         </activity>
+
     </application>
 </manifest>

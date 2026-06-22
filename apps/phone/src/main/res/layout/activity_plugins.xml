@@ -11,15 +11,38 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <TextView
+        <!-- Title row: heading on the left, refresh button on the right.
+             Theme.GlassHole is NoActionBar so the system toolbar isn't
+             available — we surface the refresh control inline instead
+             of via a menu item. -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Plugins"
-            android:textAppearance="?attr/textAppearanceHeadlineMedium"
-            android:textColor="?attr/colorOnSurface"
-            android:layout_marginStart="8dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:layout_marginTop="8dp"
-            android:layout_marginBottom="4dp" />
+            android:layout_marginBottom="4dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Plugins"
+                android:textAppearance="?attr/textAppearanceHeadlineMedium"
+                android:textColor="?attr/colorOnSurface"
+                android:layout_marginStart="8dp" />
+
+            <ImageButton
+                android:id="@+id/refreshPluginsButton"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_refresh"
+                android:contentDescription="Refresh plugin list"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                app:tint="?attr/colorOnSurface"
+                xmlns:app="http://schemas.android.com/apk/res-auto" />
+
+        </LinearLayout>
 
         <TextView
             android:id="@+id/pluginsStatus"

@@ -70,6 +70,23 @@ class PluginsActivity : AppCompatActivity() {
 
         listContainer = findViewById(R.id.pluginsList)
         statusText = findViewById(R.id.pluginsStatus)
+
+        // Inline refresh button (the activity uses a NoActionBar theme,
+        // so an options-menu entry wouldn't render anywhere).
+        findViewById<ImageButton>(R.id.refreshPluginsButton).setOnClickListener {
+            val bridge = bridgeService
+            if (bridge == null || !bridge.isConnected) {
+                android.widget.Toast.makeText(
+                    this, "Glass not connected — connect to refresh",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
+            }
+            bridge.requestPluginList()
+            android.widget.Toast.makeText(
+                this, "Refreshing…", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     override fun onStart() {
