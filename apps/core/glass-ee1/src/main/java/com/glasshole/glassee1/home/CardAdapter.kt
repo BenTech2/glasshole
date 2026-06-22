@@ -354,19 +354,22 @@ class CardAdapter(
      * are API 23+. On EE1 fall back to the deprecated activeNetworkInfo.
      */
     @Suppress("DEPRECATION")
+    /** See EE2 copy for the design note — switched to a
+     *  WifiManager.connectionInfo check that works on every API level
+     *  and doesn't care whether the network has been "validated for
+     *  internet" (Glass on a captive-portal hotspot would otherwise
+     *  show no icon even when associated). */
     private fun isWifiConnected(): Boolean {
         return try {
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE)
-                as? android.net.ConnectivityManager ?: return false
-            if (Build.VERSION.SDK_INT >= 23) {
-                val nw = cm.activeNetwork ?: return false
-                val caps = cm.getNetworkCapabilities(nw) ?: return false
-                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
-                    caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            } else {
-                val info = cm.activeNetworkInfo ?: return false
-                info.isConnected && info.type == android.net.ConnectivityManager.TYPE_WIFI
-            }
+            val wifi = context.getSystemService(Context.WIFI_SERVICE)
+                as? android.net.wifi.WifiManager ?: return false
+            @Suppress("DEPRECATION")
+            val info = wifi.connectionInfo ?: return false
+            @Suppress("DEPRECATION")
+            val ip = info.ipAddress
+            @Suppress("DEPRECATION")
+            val ssid = info.ssid.orEmpty().trim('"')
+            ip != 0 && ssid.isNotEmpty() && ssid != "<unknown ssid>"
         } catch (_: Exception) {
             false
         }

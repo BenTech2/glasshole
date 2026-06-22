@@ -361,14 +361,23 @@ class CardAdapter(
         }
     }
 
+    /** Live Wi-Fi connectivity check used to gate the Wi-Fi icon on
+     *  the Time card. Reads WifiManager.connectionInfo (available on
+     *  every API level) and treats "has IP + has SSID" as connected.
+     *  The previous ConnectivityManager.activeNetwork path required
+     *  API 23+, which silently failed on KitKat (EE1/XE) so the
+     *  icon never lit up there. */
     private fun isWifiConnected(): Boolean {
         return try {
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE)
-                as? android.net.ConnectivityManager ?: return false
-            val nw = cm.activeNetwork ?: return false
-            val caps = cm.getNetworkCapabilities(nw) ?: return false
-            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
-                caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            val wifi = context.getSystemService(Context.WIFI_SERVICE)
+                as? android.net.wifi.WifiManager ?: return false
+            @Suppress("DEPRECATION")
+            val info = wifi.connectionInfo ?: return false
+            @Suppress("DEPRECATION")
+            val ip = info.ipAddress
+            @Suppress("DEPRECATION")
+            val ssid = info.ssid.orEmpty().trim('"')
+            ip != 0 && ssid.isNotEmpty() && ssid != "<unknown ssid>"
         } catch (_: Exception) {
             false
         }
