@@ -119,12 +119,15 @@ class PluginSettingsActivity : AppCompatActivity() {
         statusText.text = "Loading…"
         statusText.visibility = View.VISIBLE
 
-        if (PluginDirectory.schemaFor(pluginId) == null) {
-            bridge.requestPluginSchema(pluginId)
-        }
-        if (PluginDirectory.configFor(pluginId) == null) {
-            bridge.requestPluginConfig(pluginId)
-        }
+        // Always re-request from glass on settings open. We previously
+        // only fetched when the in-memory cache was empty, which left
+        // the activity rendering a stale schema after the plugin was
+        // updated (e.g. a new section added in a fresh APK install).
+        // The cache still gives us an instant first paint via
+        // renderIfReady() below; the fresh response triggers another
+        // listener callback that re-renders with the new schema.
+        bridge.requestPluginSchema(pluginId)
+        bridge.requestPluginConfig(pluginId)
         renderIfReady()
     }
 

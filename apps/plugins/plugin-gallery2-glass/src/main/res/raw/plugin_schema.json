@@ -1,10 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
   "settings": [
     {
       "key": "sort_order",
       "type": "radio",
-      "label": "Sort order",
+      "label": "Cover-flow sort",
       "default": "newest",
       "options": [
         { "value": "newest", "label": "Newest first" },
@@ -19,6 +19,50 @@
       "max": 480,
       "step": 60,
       "default": 360
+    },
+    { "type": "section", "label": "Slideshow" },
+    {
+      "key": "slideshow_duration_sec",
+      "type": "slider",
+      "label": "Seconds per image",
+      "min": 2,
+      "max": 30,
+      "step": 1,
+      "default": 5
+    },
+    {
+      "key": "slideshow_transition",
+      "type": "radio",
+      "label": "Transition",
+      "default": "fade",
+      "options": [
+        { "value": "fade",  "label": "Fade" },
+        { "value": "glide", "label": "Slide" },
+        { "value": "none",  "label": "None" }
+      ]
+    },
+    {
+      "key": "slideshow_order",
+      "type": "radio",
+      "label": "Image order",
+      "default": "newest",
+      "options": [
+        { "value": "newest", "label": "Newest first" },
+        { "value": "oldest", "label": "Oldest first" },
+        { "value": "random", "label": "Shuffle" }
+      ]
+    },
+    {
+      "key": "slideshow_loop",
+      "type": "checkbox",
+      "label": "Loop when slideshow ends",
+      "default": true
+    },
+    {
+      "key": "slideshow_keep_screen_on",
+      "type": "checkbox",
+      "label": "Keep screen on during slideshow",
+      "default": true
     }
   ],
   "workers": []
