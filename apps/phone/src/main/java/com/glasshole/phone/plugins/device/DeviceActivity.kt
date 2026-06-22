@@ -54,6 +54,8 @@ class DeviceActivity : AppCompatActivity() {
     private lateinit var wallpaperOnAppDrawerSwitch: MaterialSwitch
     private lateinit var showBatteryPercentSwitch: MaterialSwitch
     private lateinit var swapTopBarSwitch: MaterialSwitch
+    private lateinit var weatherEnabledSwitch: MaterialSwitch
+    private lateinit var weatherUnitsToggle: com.google.android.material.button.MaterialButtonToggleGroup
     private lateinit var notifSoundEnabledSwitch: MaterialSwitch
     private lateinit var notifSoundVolumeSeek: SeekBar
     private lateinit var notifSoundVolumeLabel: TextView
@@ -120,6 +122,8 @@ class DeviceActivity : AppCompatActivity() {
         wallpaperOnAppDrawerSwitch = findViewById(R.id.wallpaperOnAppDrawerSwitch)
         showBatteryPercentSwitch = findViewById(R.id.showBatteryPercentSwitch)
         swapTopBarSwitch = findViewById(R.id.swapTopBarSwitch)
+        weatherEnabledSwitch = findViewById(R.id.weatherEnabledSwitch)
+        weatherUnitsToggle = findViewById(R.id.weatherUnitsToggle)
         notifSoundEnabledSwitch = findViewById(R.id.notifSoundEnabledSwitch)
         notifSoundVolumeSeek = findViewById(R.id.notifSoundVolumeSeek)
         notifSoundVolumeLabel = findViewById(R.id.notifSoundVolumeLabel)
@@ -509,6 +513,54 @@ class DeviceActivity : AppCompatActivity() {
                   else "Send failed")
         }
 
+        // Weather — Open-Meteo, keyless. Default ON since the user
+        // already granted FINE_LOCATION at install time on older
+        // Androids (the camera/media path needs it); on API 23+
+        // they'll need to grant the runtime perm the first time the
+        // switch is flipped on.
+        weatherEnabledSwitch.isChecked = prefs.getBoolean("weather_enabled", true)
+        weatherEnabledSwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked && !hasLocationPermission()) {
+                weatherPermissionLauncher.launch(arrayOf(
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                ))
+                // Wait until the callback flips the pref + scheduler;
+                // keep the switch reflecting the requested state for now.
+                return@setOnCheckedChangeListener
+            }
+            prefs.edit().putBoolean("weather_enabled", isChecked).apply()
+            val bridge = BridgeService.instance ?: return@setOnCheckedChangeListener
+            if (isChecked) {
+                bridge.startWeatherSchedulerIfEnabled()
+                bridge.runWeatherFetchIfDue(force = true)
+                toast("Weather on — chip will appear in a moment")
+            } else {
+                bridge.stopWeatherScheduler()
+                bridge.sendWeatherUpdate(null)
+                toast("Weather off")
+            }
+        }
+
+        // Units toggle group — F or C. Restores the previous selection
+        // on first paint, then forces an immediate re-fetch on change
+        // so the unit flip reflects on the chip without a 30-min wait.
+        val cachedUnits = prefs.getString("weather_units", "F") ?: "F"
+        weatherUnitsToggle.check(
+            if (cachedUnits.equals("C", true)) R.id.weatherUnitCelsius
+            else R.id.weatherUnitFahrenheit
+        )
+        weatherUnitsToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val newUnits = if (checkedId == R.id.weatherUnitCelsius) "C" else "F"
+            if (newUnits == prefs.getString("weather_units", "F")) return@addOnButtonCheckedListener
+            prefs.edit().putString("weather_units", newUnits).apply()
+            val bridge = BridgeService.instance ?: return@addOnButtonCheckedListener
+            if (prefs.getBoolean("weather_enabled", true)) {
+                bridge.runWeatherFetchIfDue(force = true)
+            }
+        }
+
         // Notification sound — master switch + 0..100 volume. The slider
         // stays usable when the switch is off so the user can pre-pick a
         // volume to apply once they flip it back on; we just dim it as a
@@ -707,6 +759,39 @@ class DeviceActivity : AppCompatActivity() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun hasLocationPermission(): Boolean {
+        val fine = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val coarse = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
+    /** Permission flow for the weather toggle. The first time the user
+     *  flips it on we need at least COARSE_LOCATION — if they refuse
+     *  we leave the switch off and toast why. */
+    private val weatherPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result.values.any { it }
+        val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+        if (granted) {
+            prefs.edit().putBoolean("weather_enabled", true).apply()
+            weatherEnabledSwitch.isChecked = true
+            BridgeService.instance?.let {
+                it.startWeatherSchedulerIfEnabled()
+                it.runWeatherFetchIfDue(force = true)
+            }
+            toast("Weather on — chip will appear in a moment")
+        } else {
+            prefs.edit().putBoolean("weather_enabled", false).apply()
+            weatherEnabledSwitch.isChecked = false
+            toast("Location permission needed for weather")
+        }
     }
 
     /** Display the glass's Wi-Fi IP + SSID with a copy-to-clipboard for

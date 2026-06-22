@@ -276,6 +276,12 @@ class HomeActivity : Activity() {
     /** Fired by BluetoothListenerService after a successful
      *  wallpaper upload. Triggers an immediate re-scan so the new
      *  image appears without re-opening Home. */
+    private val weatherChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            cardAdapter.refreshTimeCard()
+        }
+    }
+
     private val wallpaperChangedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             loadBackgroundAsync()
@@ -527,6 +533,13 @@ class HomeActivity : Activity() {
             registerReceiver(wallpaperChangedReceiver, wallpaperFilter)
         }
 
+        val weatherFilter = IntentFilter("com.glasshole.glass.WEATHER_CHANGED")
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(weatherChangedReceiver, weatherFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(weatherChangedReceiver, weatherFilter)
+        }
+
         NotificationStore.addListener(notifStoreListener)
         cardAdapter.refreshNotificationCard()
         refreshFromPhone()
@@ -548,6 +561,7 @@ class HomeActivity : Activity() {
         tickHandler.removeCallbacks(dimRunnable)
         try { unregisterReceiver(pluginMessageReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(weatherChangedReceiver) } catch (_: Exception) {}
         NotificationStore.removeListener(notifStoreListener)
         try {
             getSharedPreferences(com.glasshole.glassxe.BaseSettings.PREFS, MODE_PRIVATE)

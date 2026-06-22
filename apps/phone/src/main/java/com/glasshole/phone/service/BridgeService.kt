@@ -212,6 +212,8 @@ class BridgeService : Service() {
         // reach a connected state within IDLE_SHUTDOWN_MS.
         disconnectedSinceMillis = System.currentTimeMillis()
         idleHandler.postDelayed(idleCheckRunnable, IDLE_CHECK_INTERVAL_MS)
+
+        startWeatherSchedulerIfEnabled()
     }
 
     override fun onDestroy() {
@@ -220,6 +222,7 @@ class BridgeService : Service() {
         autoReconnect = false
         workerManager.stop()
         idleHandler.removeCallbacks(idleCheckRunnable)
+        stopWeatherScheduler()
         reconnectThread?.interrupt()
         reconnectThread = null
         disconnectBluetooth()
@@ -806,6 +809,138 @@ class BridgeService : Service() {
         return sendPluginMessage("base", "SET_SWAP_TOP_BAR", json)
     }
 
+    /** Send a cached / fresh weather payload to glass. Pass null to
+     *  tell glass "weather is off, hide the chip" — useful when the
+     *  user disables the feature so the stale value doesn't linger. */
+    fun sendWeatherUpdate(result: WeatherFetcher.Result?): Boolean {
+        val json = if (result == null) {
+            org.json.JSONObject().put("enabled", false).toString()
+        } else {
+            org.json.JSONObject().apply {
+                put("enabled", true)
+                put("temp", Math.round(result.tempCurrent))
+                put("high", Math.round(result.tempHigh))
+                put("low", Math.round(result.tempLow))
+                put("code", result.weatherCode)
+                put("isDay", result.isDay)
+                put("units", result.units)
+                if (result.aqi != null) put("aqi", result.aqi)
+                put("ts", result.fetchedAt / 1000L)
+            }.toString()
+        }
+        return sendPluginMessage("base", "WEATHER_UPDATE", json)
+    }
+
+    // --- Weather scheduler ---
+
+    /** Refetch cadence. Open-Meteo updates the current observation
+     *  every ~15 min server-side; 30 min is a comfortable cadence that
+     *  keeps us under 100 calls/day per user (way under their 10k
+     *  free quota) and keeps the chip "current enough". */
+    private val weatherIntervalMs = 30L * 60 * 1000
+    /** How long a cached payload stays "fresh enough" to ship to glass
+     *  on connect without triggering a fetch first. Same as the
+     *  interval — if it's older than this we always re-fetch. */
+    private val weatherFreshMs = weatherIntervalMs
+    private val weatherHandler = Handler(Looper.getMainLooper())
+    private val weatherTick = object : Runnable {
+        override fun run() {
+            runWeatherFetchIfDue(force = false)
+            weatherHandler.postDelayed(this, weatherIntervalMs)
+        }
+    }
+
+    /** Called from onCreate to seed the periodic refetch, and again
+     *  from connectBluetooth's success path so the chip lights up
+     *  immediately on (re-)connect. */
+    fun startWeatherSchedulerIfEnabled() {
+        weatherHandler.removeCallbacks(weatherTick)
+        if (!isWeatherEnabled()) return
+        weatherHandler.postDelayed(weatherTick, 4_000L)
+    }
+
+    fun stopWeatherScheduler() {
+        weatherHandler.removeCallbacks(weatherTick)
+    }
+
+    private fun isWeatherEnabled(): Boolean =
+        getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+            .getBoolean("weather_enabled", true)
+
+    private fun weatherUnits(): String =
+        getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+            .getString("weather_units", "F") ?: "F"
+
+    /** Fetch + cache + ship to glass. [force] skips the freshness check
+     *  so a unit-toggle flip can reflect immediately. Runs the HTTP
+     *  call on a daemon thread to keep the BT main loop unblocked. */
+    fun runWeatherFetchIfDue(force: Boolean) {
+        if (!isWeatherEnabled()) return
+        val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+        val lastTs = prefs.getLong("weather_last_ts", 0L)
+        if (!force && System.currentTimeMillis() - lastTs < weatherFreshMs) {
+            // Still fresh — just re-send what we have so glass doesn't
+            // miss an update across a (re)connect.
+            shipCachedWeather()
+            return
+        }
+        Thread {
+            val loc = WeatherFetcher.lastKnownLocation(this@BridgeService)
+            if (loc == null) {
+                log("Weather: no location fix yet — skipping fetch")
+                return@Thread
+            }
+            val units = weatherUnits()
+            val forecast = WeatherFetcher.fetch(loc.latitude, loc.longitude, units) ?: run {
+                log("Weather: Open-Meteo fetch failed")
+                return@Thread
+            }
+            // Air quality is a best-effort secondary call — Open-Meteo's
+            // AQI coverage is global-ish but spotty in remote regions.
+            // null here just means the chip drops its AQI line.
+            val aqi = WeatherFetcher.fetchAirQuality(loc.latitude, loc.longitude)
+            val result = forecast.copy(aqi = aqi)
+            prefs.edit().apply {
+                putLong("weather_last_ts", result.fetchedAt)
+                putString("weather_payload", org.json.JSONObject().apply {
+                    put("temp", result.tempCurrent)
+                    put("high", result.tempHigh)
+                    put("low", result.tempLow)
+                    put("code", result.weatherCode)
+                    put("isDay", result.isDay)
+                    put("units", result.units)
+                    if (result.aqi != null) put("aqi", result.aqi)
+                    put("fetchedAt", result.fetchedAt)
+                }.toString())
+            }.apply()
+            Handler(Looper.getMainLooper()).post { sendWeatherUpdate(result) }
+        }.apply { isDaemon = true; name = "WeatherFetch" }.start()
+    }
+
+    /** Re-ship the last cached payload (if any) to glass. Called from
+     *  the connection-up path so a reconnect doesn't leave the chip
+     *  blank until the next scheduler tick. */
+    fun shipCachedWeather() {
+        if (!isWeatherEnabled()) return
+        val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+        val raw = prefs.getString("weather_payload", null) ?: return
+        try {
+            val obj = org.json.JSONObject(raw)
+            sendWeatherUpdate(
+                WeatherFetcher.Result(
+                    tempCurrent = obj.optDouble("temp", Double.NaN),
+                    tempHigh = obj.optDouble("high", Double.NaN),
+                    tempLow = obj.optDouble("low", Double.NaN),
+                    weatherCode = obj.optInt("code", 0),
+                    isDay = obj.optBoolean("isDay", true),
+                    units = obj.optString("units", "F"),
+                    aqi = if (obj.has("aqi")) obj.optInt("aqi") else null,
+                    fetchedAt = obj.optLong("fetchedAt", 0L),
+                )
+            )
+        } catch (_: Exception) {}
+    }
+
     /** Trigger a fresh scan on the glass and wait for the result.
      *  Allow ~3 s — the glass-side handler delays 800 ms before
      *  reading the cache to give the radio a chance to populate. */
@@ -1094,6 +1229,11 @@ class BridgeService : Service() {
         pluginRouter?.notifyConnectionChanged(true)
         workerManager.onConnectionChanged(true)
         updateNotification("Connected to ${device.name}")
+        // Weather: re-ship cached payload immediately and trigger a
+        // fresh fetch in the background so the chip lights up on
+        // reconnect without waiting for the next 30-min tick.
+        shipCachedWeather()
+        runWeatherFetchIfDue(force = false)
         // Glass auto-sends PLUGIN_LIST on socket accept, but if our
         // process restarted while the BT socket survived (e.g. an `adb
         // install` that didn't bring down the OS Bluetooth stack), we

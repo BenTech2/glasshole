@@ -311,6 +311,12 @@ class HomeActivity : Activity() {
         }
     }
 
+    private val weatherChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            cardAdapter.refreshTimeCard()
+        }
+    }
+
     private val pluginMessageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val pluginId = intent.getStringExtra(GlassPluginConstants.EXTRA_PLUGIN_ID) ?: return
@@ -542,6 +548,13 @@ class HomeActivity : Activity() {
             registerReceiver(wallpaperChangedReceiver, wallpaperFilter)
         }
 
+        val weatherFilter = IntentFilter("com.glasshole.glass.WEATHER_CHANGED")
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(weatherChangedReceiver, weatherFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(weatherChangedReceiver, weatherFilter)
+        }
+
         NotificationStore.addListener(notifStoreListener)
         cardAdapter.refreshNotificationCard()
         refreshFromPhone()
@@ -563,6 +576,7 @@ class HomeActivity : Activity() {
         tickHandler.removeCallbacks(dimRunnable)
         try { unregisterReceiver(pluginMessageReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(weatherChangedReceiver) } catch (_: Exception) {}
         NotificationStore.removeListener(notifStoreListener)
         try {
             getSharedPreferences(com.glasshole.glassee1.BaseSettings.PREFS, MODE_PRIVATE)

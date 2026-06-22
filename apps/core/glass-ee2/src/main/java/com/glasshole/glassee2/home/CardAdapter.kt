@@ -224,11 +224,85 @@ class CardAdapter(
         }
 
         applyTopBarSwap(holder.itemView, swap)
+        bindWeather(holder.itemView)
 
         val wifi = holder.itemView.findViewById<ImageView>(R.id.wifiStatusIcon)
         val phone = holder.itemView.findViewById<ImageView>(R.id.phoneStatusIcon)
         wifi?.visibility = if (isWifiConnected()) View.VISIBLE else View.GONE
         phone?.visibility = if (isPhoneConnected()) View.VISIBLE else View.GONE
+    }
+
+    /** Bottom-start weather chip. Reads the phone-shipped payload from
+     *  "glasshole_weather" prefs (BluetoothListenerService writes it on
+     *  WEATHER_UPDATE) and resolves a WMO code → drawable + temp /
+     *  high-low text. Hidden when there's no fresh payload (≤ 6 hours
+     *  stale guard so a long disconnect doesn't show ancient data). */
+    private fun bindWeather(root: View) {
+        val chip = root.findViewById<View>(R.id.weatherChip) ?: return
+        val icon = root.findViewById<ImageView>(R.id.weatherIcon)
+        val tempT = root.findViewById<TextView>(R.id.weatherTemp)
+        val hiLoT = root.findViewById<TextView>(R.id.weatherHiLo)
+        val aqiT = root.findViewById<TextView>(R.id.weatherAqi)
+        val raw = context.getSharedPreferences("glasshole_weather", Context.MODE_PRIVATE)
+            .getString("payload", null)
+        if (raw == null) { chip.visibility = View.GONE; return }
+        val obj = try { org.json.JSONObject(raw) } catch (_: Exception) {
+            chip.visibility = View.GONE; return
+        }
+        val ts = obj.optLong("ts", 0L) * 1000L
+        if (ts > 0 && System.currentTimeMillis() - ts > 6L * 60 * 60 * 1000) {
+            chip.visibility = View.GONE; return
+        }
+        val temp = obj.optInt("temp", Int.MIN_VALUE)
+        if (temp == Int.MIN_VALUE) { chip.visibility = View.GONE; return }
+        val high = obj.optInt("high", Int.MIN_VALUE)
+        val low = obj.optInt("low", Int.MIN_VALUE)
+        val code = obj.optInt("code", -1)
+        val units = obj.optString("units", "F")
+        val isDay = obj.optBoolean("isDay", true)
+        chip.visibility = View.VISIBLE
+        tempT?.text = "$temp°$units"
+        hiLoT?.text = if (high != Int.MIN_VALUE && low != Int.MIN_VALUE)
+            "H $high°  L $low°" else ""
+        icon?.setImageResource(weatherIconFor(code, isDay))
+        val aqi = if (obj.has("aqi")) obj.optInt("aqi", -1) else -1
+        bindAqi(aqiT, aqi)
+    }
+
+    /** US AQI breakpoints (EPA). Color follows the AirNow palette so a
+     *  glance at the chip matches what users see on weather apps. */
+    private fun bindAqi(view: TextView?, aqi: Int) {
+        view ?: return
+        if (aqi < 0) { view.visibility = View.GONE; return }
+        view.visibility = View.VISIBLE
+        val (label, color) = when {
+            aqi <= 50 -> "Good" to 0xFFA5D6A7.toInt()
+            aqi <= 100 -> "Moderate" to 0xFFFFF59D.toInt()
+            aqi <= 150 -> "Unhealthy SG" to 0xFFFFB74D.toInt()
+            aqi <= 200 -> "Unhealthy" to 0xFFEF5350.toInt()
+            aqi <= 300 -> "Very Unhealthy" to 0xFFAB47BC.toInt()
+            else -> "Hazardous" to 0xFF8D6E63.toInt()
+        }
+        view.text = "AQI $aqi · $label"
+        view.setTextColor(color)
+    }
+
+    /** Map an Open-Meteo / WMO weather code to one of our seven
+     *  in-app drawables. The WMO standard groups codes by family
+     *  (0=clear, 1-3=clouds, 45/48=fog, 51-67=rain/drizzle,
+     *  71-77=snow, 80-86=showers, 95-99=thunder) — we collapse the
+     *  intensity sub-codes into a single icon per family. */
+    private fun weatherIconFor(code: Int, @Suppress("UNUSED_PARAMETER") isDay: Boolean): Int = when (code) {
+        0, 1 -> R.drawable.ic_weather_clear
+        2 -> R.drawable.ic_weather_partly_cloudy
+        3 -> R.drawable.ic_weather_cloudy
+        45, 48 -> R.drawable.ic_weather_fog
+        in 51..67 -> R.drawable.ic_weather_rain
+        in 71..77 -> R.drawable.ic_weather_snow
+        in 80..82 -> R.drawable.ic_weather_rain
+        in 85..86 -> R.drawable.ic_weather_snow
+        in 95..99 -> R.drawable.ic_weather_thunder
+        else -> R.drawable.ic_weather_partly_cloudy
     }
 
     /** Mirror the gravity + margin of the two top-bar containers so the

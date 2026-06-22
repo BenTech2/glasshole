@@ -301,6 +301,15 @@ class HomeActivity : Activity() {
         }
     }
 
+    /** Broadcast from BluetoothListenerService on WEATHER_UPDATE so the
+     *  Time card's weather chip re-renders without waiting for the next
+     *  minute tick. */
+    private val weatherChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            cardAdapter.refreshTimeCard()
+        }
+    }
+
     private fun setBrightness(value: Float) {
         val lp = window.attributes
         lp.screenBrightness = value
@@ -557,6 +566,13 @@ class HomeActivity : Activity() {
             registerReceiver(wallpaperChangedReceiver, wallpaperFilter)
         }
 
+        val weatherFilter = IntentFilter("com.glasshole.glass.WEATHER_CHANGED")
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(weatherChangedReceiver, weatherFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(weatherChangedReceiver, weatherFilter)
+        }
+
         NotificationStore.addListener(notifStoreListener)
         cardAdapter.refreshNotificationCard()
         refreshFromPhone()
@@ -578,6 +594,7 @@ class HomeActivity : Activity() {
         tickHandler.removeCallbacks(dimRunnable)
         try { unregisterReceiver(pluginMessageReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(wallpaperChangedReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(weatherChangedReceiver) } catch (_: Exception) {}
         NotificationStore.removeListener(notifStoreListener)
         try {
             getSharedPreferences(com.glasshole.glassee2.BaseSettings.PREFS, MODE_PRIVATE)

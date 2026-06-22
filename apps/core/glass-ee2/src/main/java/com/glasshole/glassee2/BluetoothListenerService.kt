@@ -513,6 +513,7 @@ class BluetoothListenerService : Service() {
             "WIFI_SCAN_REQ" -> handleWifiScanReq()
             "WIFI_CONNECT_REQ" -> handleWifiConnectReq(payload)
             "ENABLE_WIRELESS_ADB" -> handleEnableWirelessAdb()
+            "WEATHER_UPDATE" -> handleWeatherUpdate(payload)
             else -> Log.d(TAG, "Unknown base message: $type")
         }
     }
@@ -619,6 +620,30 @@ class BluetoothListenerService : Service() {
             "WEP" in c -> "WEP"
             else -> "OPEN"
         }
+    }
+
+    /** Phone-driven weather refresh. The phone fetches Open-Meteo on
+     *  its own cadence and ships the latest payload here; we just
+     *  persist it and poke the Time card so the chip re-renders.
+     *  An "enabled: false" envelope is the disable signal — clear the
+     *  cache so the chip vanishes immediately. */
+    private fun handleWeatherUpdate(payload: String) {
+        val prefs = getSharedPreferences("glasshole_weather", MODE_PRIVATE)
+        try {
+            val obj = JSONObject(payload)
+            if (!obj.optBoolean("enabled", true)) {
+                prefs.edit().remove("payload").apply()
+            } else {
+                prefs.edit().putString("payload", payload).apply()
+            }
+        } catch (_: Exception) {
+            prefs.edit().remove("payload").apply()
+        }
+        // Tell Home to re-bind the time card so the chip updates live.
+        try {
+            sendBroadcast(Intent("com.glasshole.glass.WEATHER_CHANGED")
+                .setPackage(packageName))
+        } catch (_: Exception) {}
     }
 
     /** Phone-driven version of the Dev Tools "Enable wireless ADB"
