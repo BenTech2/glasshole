@@ -61,6 +61,7 @@ module_dir() {
         plugin-ssh-glass)        echo apps/plugins/plugin-ssh-glass ;;
         plugin-devtools-glass)   echo apps/plugins/plugin-devtools-glass ;;
         plugin-aiassistant-glass) echo apps/plugins/plugin-aiassistant-glass ;;
+        plugin-glassnav-glass)   echo apps/plugins/plugin-glassnav-glass ;;
         *) echo "unknown module: $1" >&2; return 1 ;;
     esac
 }
@@ -86,7 +87,7 @@ PLUGINS_CORE_COMMON="plugin-device-glass plugin-gallery-glass"
 # User-facing plugins shared across variants. plugin-gallery2-glass
 # (the on-glass photo/video cover-flow) has minSdk 19, so it lives
 # here even though earlier releases mis-bundled it as EE2-only.
-PLUGINS_COMMON="plugin-notes-glass plugin-calc-glass plugin-openclaw-glass plugin-chat-glass plugin-compass-glass plugin-scouter-glass plugin-ssh-glass plugin-devtools-glass plugin-gallery2-glass plugin-aiassistant-glass"
+PLUGINS_COMMON="plugin-notes-glass plugin-calc-glass plugin-openclaw-glass plugin-chat-glass plugin-compass-glass plugin-scouter-glass plugin-ssh-glass plugin-devtools-glass plugin-gallery2-glass plugin-aiassistant-glass plugin-glassnav-glass"
 # Genuine EE2-only plugins (Camera2 + minSdk 27).
 PLUGINS_EE2_EXTRA="plugin-camera2-glass plugin-broadcast-glass plugin-opencv-glass"
 # EE1 + XE get the Camera1 broadcast variant (minSdk 19).

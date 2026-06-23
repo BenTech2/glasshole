@@ -6,6 +6,13 @@ pluginManagement {
     }
 }
 
+// Foojay toolchain resolver: lets Gradle auto-download a Java 21 JDK
+// for plugin-glassnav-glass without polluting the system. Other
+// modules use the locally-installed Java 11 as before.
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
+}
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -24,6 +31,21 @@ include(":glass-plugin-sdk")
 project(":glass-plugin-sdk").projectDir = file("sdk/glass-plugin-sdk")
 include(":terminal-view")
 project(":terminal-view").projectDir = file("sdk/terminal-view")
+
+// MapLibre navigation core — vendored fork (KitKat-compatible) used by
+// plugin-glassnav-glass for turn-by-turn routing logic. Includes shim
+// classes that bridge to the Java-based maplibre-gl 6.0.1 artifacts
+// instead of the Kotlin 2.x 7.0.0-pre0 (which we can't load).
+include(":maplibre-navigation-core")
+project(":maplibre-navigation-core").projectDir = file("apps/lib/maplibre-navigation-core")
+
+// Google Glass GDK stubs — compile-time only. Lets us build code that
+// uses `com.google.android.glass.*` types (CardBuilder, GestureDetector,
+// etc.) without bundling them in the APK. Real Glass devices provide
+// the actual GDK at runtime; this module is `compileOnly` from the
+// plugin.
+include(":glass-gdk-stubs")
+project(":glass-gdk-stubs").projectDir = file("apps/lib/glass-gdk-stubs")
 
 // Phone companion app
 include(":phone")
@@ -88,3 +110,5 @@ include(":plugin-devtools-glass")
 project(":plugin-devtools-glass").projectDir = file("apps/plugins/plugin-devtools-glass")
 include(":plugin-aiassistant-glass")
 project(":plugin-aiassistant-glass").projectDir = file("apps/plugins/plugin-aiassistant-glass")
+include(":plugin-glassnav-glass")
+project(":plugin-glassnav-glass").projectDir = file("apps/plugins/plugin-glassnav-glass")

@@ -98,9 +98,19 @@ class NavPlugin : PhonePlugin {
                 ?: return
             val active = listener.activeNotifications ?: return
             val maps = active.firstOrNull { it.packageName == MAPS_PKG } ?: run {
-                // No active Maps notification — nav has actually ended. Tell
-                // Home to drop the card.
+                // No active Maps notification — trip ended. Tell Home
+                // to drop the card, and (if a glassnav session was
+                // running) close it down on glass too + clear the
+                // session flag so a future "Maps just navigating" by
+                // itself won't reopen it.
                 sender(PluginMessage("NAV_END", ""))
+                if (GlassNavSession.isActive(appContext)) {
+                    val bridge = com.glasshole.phone.service.BridgeService.instance
+                    bridge?.sendPluginMessage("glassnav", "NAV_END", "")
+                    bridge?.sendPluginMessage("glassnav", "ROUTE_CLEAR", "")
+                    SpeedTracker.stop(appContext)
+                    GlassNavSession.setActive(appContext, false)
+                }
                 return
             }
             handleMapsNotification(maps)
@@ -143,6 +153,16 @@ class NavPlugin : PhonePlugin {
         }.toString()
 
         sender(PluginMessage("NAV_UPDATE", payload))
+        // Tee to the GlassNav full-screen plugin ONLY if the user
+        // explicitly started a glassnav session via the share
+        // target. Otherwise Google Maps navigating in the background
+        // shouldn't hijack the full-screen plugin — the Home "nav"
+        // card above is the right surface for ambient Maps state.
+        if (GlassNavSession.isActive(appContext)) {
+            com.glasshole.phone.service.BridgeService.instance
+                ?.sendPluginMessage("glassnav", "NAV_UPDATE", payload)
+            SpeedTracker.start(appContext)
+        }
     }
 
     fun handleMapsRemoved() {
@@ -150,6 +170,13 @@ class NavPlugin : PhonePlugin {
         lastSignature = ""
         tripMaxMeters = 0.0
         sender(PluginMessage("NAV_END", ""))
+        if (GlassNavSession.isActive(appContext)) {
+            val bridge = com.glasshole.phone.service.BridgeService.instance
+            bridge?.sendPluginMessage("glassnav", "NAV_END", "")
+            bridge?.sendPluginMessage("glassnav", "ROUTE_CLEAR", "")
+            SpeedTracker.stop(appContext)
+            GlassNavSession.setActive(appContext, false)
+        }
     }
 
     /**

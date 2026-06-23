@@ -37,7 +37,9 @@ class PluginsActivity : AppCompatActivity() {
     private val phoneCompanions: Map<String, Class<*>> = mapOf(
         "com.glasshole.plugin.notes.glass" to NotesActivity::class.java,
         "com.glasshole.plugin.calc.glass" to CalcHistoryActivity::class.java,
-        "com.glasshole.plugin.ssh.glass" to com.glasshole.phone.plugins.ssh.SshActivity::class.java
+        "com.glasshole.plugin.ssh.glass" to com.glasshole.phone.plugins.ssh.SshActivity::class.java,
+        "com.glasshole.plugin.glassnav.glass" to
+            com.glasshole.phone.plugins.nav.GlassNavCompanionActivity::class.java
     )
 
     private lateinit var listContainer: LinearLayout

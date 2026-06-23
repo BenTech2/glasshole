@@ -146,6 +146,14 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- Phone-side companion for the GlassNav glass plugin.
+             Reachable from the Plugins screen's "Open" button. -->
+        <activity
+            android:name=".plugins.nav.GlassNavCompanionActivity"
+            android:exported="false"
+            android:label="GlassNav"
+            android:parentActivityName=".PluginsActivity" />
+
         <activity
             android:name=".plugins.notes.NotesActivity"
             android:exported="true"
@@ -209,6 +217,42 @@
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- Share target for Google Maps URLs. Picks up the maps.* host
+             family + maps.app.goo.gl + goo.gl/maps short links via
+             autoVerify-style data filters; the activity itself also
+             handles geo: scheme via VIEW. Headless (NoDisplay) — opens
+             Google Maps with the destination and brings the on-glass
+             GlassNav plugin foreground, then finish()es. -->
+        <activity
+            android:name=".plugins.nav.ShareDirectionsActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay"
+            android:icon="@mipmap/ic_launcher"
+            android:label="Navigate on Glass">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="geo" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="maps.app.goo.gl" />
+                <data android:scheme="https" android:host="goo.gl" android:pathPrefix="/maps" />
+                <data android:scheme="https" android:host="maps.google.com" />
+                <data android:scheme="https" android:host="www.google.com" android:pathPrefix="/maps" />
             </intent-filter>
         </activity>
 

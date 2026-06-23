@@ -1,0 +1,25 @@
+GlassNav-GlassHole plugin
+=========================
+
+Authors
+-------
+
+* Ben Harlett (benharlett@gmail.com) — GlassHole integration, full-screen
+  turn-by-turn HUD, speedometer overlay, share-from-Google-Maps pipeline,
+  GlassHole BT bridge wiring.
+
+Originally inspired by
+----------------------
+
+* GlassNav by CatotheCat11
+  Repository: https://github.com/CatotheCat11/GlassNav
+  Licensed under GPL-3.0-or-later.
+
+  This module is a re-implementation in the spirit of GlassNav, designed
+  to integrate with GlassHole's existing phone↔glass Bluetooth bridge.
+  It uses the same GPL-3.0-or-later license as the original project so
+  the upstream community can freely share improvements and contributions
+  between the two codebases. No source files from the original
+  GlassNav repository are imported verbatim — the UI flow, gesture
+  vocabulary, and Bluetooth-location-streaming concept are credited
+  here as inspiration.
