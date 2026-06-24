@@ -53,6 +53,14 @@ class NotificationDisplayActivity : Activity() {
     private var actions: List<NotifAction> = emptyList()
     private var pendingReplyActionId: String? = null
 
+    /** Stack of pending notifications. New arrivals append to the end
+     *  (or replace in place if their key matches an existing entry).
+     *  Swipe forward / back navigates between them; swipe down pops
+     *  the current entry. When the stack empties, the activity finishes. */
+    private val stack = mutableListOf<ParsedNotif>()
+    private var currentIndex = 0
+    private var counterText: TextView? = null
+
     private var overlayVisible: Boolean = false
     private var overlaySelected: Int = 0
     private var optionsOverlay: LinearLayout? = null
@@ -76,12 +84,60 @@ class NotificationDisplayActivity : Activity() {
         )
 
         val parsed = parseIntent()
-        notifKey = parsed.key
-        actions = parsed.actions
         dismissMs = intent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
             .takeIf { it > 0L } ?: DEFAULT_DISMISS_MS
-        setContentView(buildCardView(parsed))
+        stack.add(parsed)
+        currentIndex = 0
+        showCurrent()
+        playSoundFor(parsed)
+        resetAutoDismiss()
+    }
 
+    /** A second (or third…) PLUGIN:base:NOTIFICATION lands while we're
+     *  already foreground: with `launchMode="singleTop"`, Android
+     *  routes it here instead of restarting us. Stash it on the stack
+     *  and jump the user to the newest one. Same-key updates replace
+     *  in place so a repost (e.g. progress notification) doesn't
+     *  duplicate. */
+    override fun onNewIntent(newIntent: Intent) {
+        super.onNewIntent(newIntent)
+        setIntent(newIntent)
+        val parsed = parseIntent()
+        val existing = stack.indexOfFirst {
+            it.key.isNotEmpty() && it.key == parsed.key
+        }
+        if (existing >= 0) {
+            stack[existing] = parsed
+            currentIndex = existing
+        } else {
+            stack.add(parsed)
+            currentIndex = stack.size - 1
+        }
+        // Honor the new notif's dismissMs only if it shortens the timer —
+        // multi-notif sessions should respect the most-cautious value.
+        val newDismiss = newIntent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
+        if (newDismiss in 1L..dismissMs) dismissMs = newDismiss
+        showCurrent()
+        playSoundFor(parsed)
+        resetAutoDismiss()
+    }
+
+    /** Tear down the current view and rebuild it from stack[currentIndex],
+     *  preserving the overlay state so users mid-action don't lose their
+     *  selection if a new notif lands. The stack counter ("2 / 5") is
+     *  baked into buildCardView, so this picks it up automatically. */
+    private fun showCurrent() {
+        val parsed = stack.getOrNull(currentIndex) ?: run { finish(); return }
+        notifKey = parsed.key
+        actions = parsed.actions
+        // Re-render closes any open overlay; user re-taps to bring it
+        // back. The alternative — preserving overlay across notif
+        // switches — gets confusing fast since actions are per-notif.
+        if (overlayVisible) hideOverlay()
+        setContentView(buildCardView(parsed))
+    }
+
+    private fun playSoundFor(parsed: ParsedNotif) {
         // Sound playback follows the EE2 design: global enabled + volume
         // prefs plus an optional per-app override keyed by source pkg.
         val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
@@ -95,8 +151,6 @@ class NotificationDisplayActivity : Activity() {
             } else ""
             NotifSoundPlayer.play(soundId, soundVolume)
         }
-
-        resetAutoDismiss()
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -120,11 +174,19 @@ class NotificationDisplayActivity : Activity() {
                 val dy = event.y - downY
                 val absDx = kotlin.math.abs(dx); val absDy = kotlin.math.abs(dy)
                 if (dy > 120 && absDy > absDx * 1.3f) {
-                    if (overlayVisible) hideOverlay() else finish()
+                    // Swipe down: cancel the overlay if open, otherwise
+                    // pop the current notification. If more are stacked,
+                    // we drop to the next; if we just popped the last,
+                    // finish().
+                    if (overlayVisible) hideOverlay() else dismissCurrent()
                     return true
                 }
                 if (absDx > 60 && absDx > absDy) {
+                    // Horizontal swipe: overlay cycles selection; with
+                    // no overlay AND multiple notifs stacked, paginate
+                    // between them.
                     if (overlayVisible) cycleOverlaySelection(if (dx > 0) 1 else -1)
+                    else if (stack.size > 1) cycleStack(if (dx > 0) 1 else -1)
                     return true
                 }
                 if (absDx < 25 && absDy < 25) {
@@ -136,13 +198,41 @@ class NotificationDisplayActivity : Activity() {
         return false
     }
 
+    /** Drop the current notif from the stack. Auto-advance to the next
+     *  remaining entry; finish() once nothing's left. */
+    private fun dismissCurrent() {
+        if (stack.isEmpty()) { finish(); return }
+        stack.removeAt(currentIndex.coerceIn(0, stack.size - 1))
+        if (stack.isEmpty()) { finish(); return }
+        currentIndex = currentIndex.coerceAtMost(stack.size - 1)
+        showCurrent()
+        resetAutoDismiss()
+    }
+
+    /** Move the cursor through the notif stack with wrap-around. */
+    private fun cycleStack(delta: Int) {
+        if (stack.size <= 1) return
+        currentIndex = ((currentIndex + delta) % stack.size + stack.size) % stack.size
+        showCurrent()
+        resetAutoDismiss()
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         resetAutoDismiss()
         if (overlayVisible) return handleOverlayKey(keyCode, event)
 
         return when (keyCode) {
-            KeyEvent.KEYCODE_BACK -> { finish(); true }
+            KeyEvent.KEYCODE_BACK -> { dismissCurrent(); true }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showOverlay(); true }
+            // EE2 maps swipe-forward → TAB and swipe-back → SHIFT+TAB.
+            // Mirror the gesture semantics from handleGesture: if more
+            // than one notif is stacked, navigate the stack.
+            KeyEvent.KEYCODE_TAB -> {
+                if (stack.size > 1) {
+                    cycleStack(if (event?.isShiftPressed == true) -1 else 1)
+                    true
+                } else super.onKeyDown(keyCode, event)
+            }
             else -> super.onKeyDown(keyCode, event)
         }
     }
@@ -388,6 +478,35 @@ class NotificationDisplayActivity : Activity() {
         overlay.visibility = View.GONE
         root.addView(overlay)
         optionsOverlay = overlay
+
+        // Stack counter ("3 / 7") at the top-right when more than one
+        // notification is queued. Tiny chip so it doesn't compete with
+        // the actual card. Hidden when only the current notif is in
+        // the stack to keep single-notif UX clean.
+        if (stack.size > 1) {
+            val counter = TextView(this).apply {
+                text = "${currentIndex + 1} / ${stack.size}"
+                setTextColor(Color.WHITE)
+                setBackgroundColor(0x99000000.toInt())
+                val padH = (8 * resources.displayMetrics.density).toInt()
+                val padV = (3 * resources.displayMetrics.density).toInt()
+                setPadding(padH, padV, padH, padV)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            }
+            val cParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                val m = (8 * resources.displayMetrics.density).toInt()
+                setMargins(m, m, m, m)
+            }
+            counter.layoutParams = cParams
+            root.addView(counter)
+            counterText = counter
+        } else {
+            counterText = null
+        }
 
         return root
     }

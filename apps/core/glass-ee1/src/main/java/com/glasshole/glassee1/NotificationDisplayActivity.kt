@@ -53,6 +53,14 @@ class NotificationDisplayActivity : Activity() {
     private var actions: List<NotifAction> = emptyList()
     private var pendingReplyActionId: String? = null
 
+    /** Stack of pending notifications. New arrivals append (or replace
+     *  in place if their key matches an existing entry); swipe
+     *  forward/back navigates between them; swipe down pops the
+     *  current entry. */
+    private val stack = mutableListOf<ParsedNotif>()
+    private var currentIndex = 0
+    private var counterText: TextView? = null
+
     private var overlayVisible: Boolean = false
     private var overlaySelected: Int = 0
     private var optionsOverlay: LinearLayout? = null
@@ -76,15 +84,47 @@ class NotificationDisplayActivity : Activity() {
         )
 
         val parsed = parseIntent()
-        notifKey = parsed.key
-        actions = parsed.actions
         dismissMs = intent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
             .takeIf { it > 0L } ?: DEFAULT_DISMISS_MS
-        setContentView(buildCardView(parsed))
+        stack.add(parsed)
+        currentIndex = 0
+        showCurrent()
+        playSoundFor(parsed)
+        resetAutoDismiss()
+    }
 
-        // Sound playback follows the EE2 design: global enabled + volume
-        // prefs plus an optional per-app override keyed by source pkg.
-        // Empty / missing override falls through to the default beep.
+    /** singleTop launchMode reuses the existing instance when a new
+     *  notification arrives; queue it up rather than replacing. */
+    override fun onNewIntent(newIntent: Intent) {
+        super.onNewIntent(newIntent)
+        setIntent(newIntent)
+        val parsed = parseIntent()
+        val existing = stack.indexOfFirst {
+            it.key.isNotEmpty() && it.key == parsed.key
+        }
+        if (existing >= 0) {
+            stack[existing] = parsed
+            currentIndex = existing
+        } else {
+            stack.add(parsed)
+            currentIndex = stack.size - 1
+        }
+        val newDismiss = newIntent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
+        if (newDismiss in 1L..dismissMs) dismissMs = newDismiss
+        showCurrent()
+        playSoundFor(parsed)
+        resetAutoDismiss()
+    }
+
+    private fun showCurrent() {
+        val parsed = stack.getOrNull(currentIndex) ?: run { finish(); return }
+        notifKey = parsed.key
+        actions = parsed.actions
+        if (overlayVisible) hideOverlay()
+        setContentView(buildCardView(parsed))
+    }
+
+    private fun playSoundFor(parsed: ParsedNotif) {
         val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
         val soundEnabled = prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true)
         val soundVolume = prefs.getInt(BaseSettings.KEY_NOTIF_SOUND_VOLUME, 100)
@@ -96,8 +136,6 @@ class NotificationDisplayActivity : Activity() {
             } else ""
             NotifSoundPlayer.play(soundId, soundVolume)
         }
-
-        resetAutoDismiss()
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -121,11 +159,12 @@ class NotificationDisplayActivity : Activity() {
                 val dy = event.y - downY
                 val absDx = kotlin.math.abs(dx); val absDy = kotlin.math.abs(dy)
                 if (dy > 120 && absDy > absDx * 1.3f) {
-                    if (overlayVisible) hideOverlay() else finish()
+                    if (overlayVisible) hideOverlay() else dismissCurrent()
                     return true
                 }
                 if (absDx > 60 && absDx > absDy) {
                     if (overlayVisible) cycleOverlaySelection(if (dx > 0) 1 else -1)
+                    else if (stack.size > 1) cycleStack(if (dx > 0) 1 else -1)
                     return true
                 }
                 if (absDx < 25 && absDy < 25) {
@@ -137,13 +176,34 @@ class NotificationDisplayActivity : Activity() {
         return false
     }
 
+    private fun dismissCurrent() {
+        if (stack.isEmpty()) { finish(); return }
+        stack.removeAt(currentIndex.coerceIn(0, stack.size - 1))
+        if (stack.isEmpty()) { finish(); return }
+        currentIndex = currentIndex.coerceAtMost(stack.size - 1)
+        showCurrent()
+        resetAutoDismiss()
+    }
+
+    private fun cycleStack(delta: Int) {
+        if (stack.size <= 1) return
+        currentIndex = ((currentIndex + delta) % stack.size + stack.size) % stack.size
+        showCurrent()
+        resetAutoDismiss()
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         resetAutoDismiss()
         if (overlayVisible) return handleOverlayKey(keyCode, event)
 
         return when (keyCode) {
-            KeyEvent.KEYCODE_BACK -> { finish(); true }
+            KeyEvent.KEYCODE_BACK -> { dismissCurrent(); true }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showOverlay(); true }
+            KeyEvent.KEYCODE_TAB -> {
+                if (stack.size > 1) {
+                    cycleStack(if (event?.isShiftPressed == true) -1 else 1); true
+                } else super.onKeyDown(keyCode, event)
+            }
             else -> super.onKeyDown(keyCode, event)
         }
     }
@@ -387,6 +447,32 @@ class NotificationDisplayActivity : Activity() {
         overlay.visibility = View.GONE
         root.addView(overlay)
         optionsOverlay = overlay
+
+        // Stack counter chip — only shown when multiple notifs queued.
+        if (stack.size > 1) {
+            val counter = TextView(this).apply {
+                text = "${currentIndex + 1} / ${stack.size}"
+                setTextColor(Color.WHITE)
+                setBackgroundColor(0x99000000.toInt())
+                val padH = (8 * resources.displayMetrics.density).toInt()
+                val padV = (3 * resources.displayMetrics.density).toInt()
+                setPadding(padH, padV, padH, padV)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            }
+            val cParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                val m = (8 * resources.displayMetrics.density).toInt()
+                setMargins(m, m, m, m)
+            }
+            counter.layoutParams = cParams
+            root.addView(counter)
+            counterText = counter
+        } else {
+            counterText = null
+        }
 
         return root
     }
