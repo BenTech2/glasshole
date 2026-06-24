@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "source_lang",
+      "type": "radio",
+      "label": "Source language (what the camera sees)",
+      "default": "ja",
+      "options": [
+        { "value": "ja", "label": "Japanese (日本語)" },
+        { "value": "zh", "label": "Chinese (中文)" },
+        { "value": "ko", "label": "Korean (한국어)" },
+        { "value": "en", "label": "Latin / English" }
+      ]
+    },
+    {
+      "key": "target_lang",
+      "type": "radio",
+      "label": "Target language (what gets shown)",
+      "default": "en",
+      "options": [
+        { "value": "en", "label": "English" },
+        { "value": "es", "label": "Spanish" },
+        { "value": "fr", "label": "French" },
+        { "value": "de", "label": "German" },
+        { "value": "ja", "label": "Japanese" }
+      ]
+    },
+    {
+      "key": "display_mode",
+      "type": "radio",
+      "label": "How translations appear on glass",
+      "default": "overlay",
+      "options": [
+        { "value": "overlay", "label": "Overlay on the frozen frame" },
+        { "value": "cards", "label": "Card list (original → translation)" }
+      ]
+    },
+    {
+      "key": "auto_dismiss_ms",
+      "type": "radio",
+      "label": "Auto-dismiss translation after",
+      "default": "10000",
+      "options": [
+        { "value": "5000", "label": "5 seconds" },
+        { "value": "10000", "label": "10 seconds" },
+        { "value": "20000", "label": "20 seconds" },
+        { "value": "0", "label": "Never (manual dismiss)" }
+      ]
+    }
+  ]
+}

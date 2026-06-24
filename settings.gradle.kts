@@ -93,6 +93,8 @@ include(":plugin-compass-glass")
 project(":plugin-compass-glass").projectDir = file("apps/plugins/plugin-compass-glass")
 include(":plugin-scouter-glass")
 project(":plugin-scouter-glass").projectDir = file("apps/plugins/plugin-scouter-glass")
+include(":plugin-translate-glass")
+project(":plugin-translate-glass").projectDir = file("apps/plugins/plugin-translate-glass")
 // plugin-media-glass — retired in M2 of the Home rework. Media now lives
 // inside the base app as a card in HomeActivity. Source kept for
 // reference; removed from the build.

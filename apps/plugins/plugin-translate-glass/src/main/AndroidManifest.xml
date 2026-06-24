@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="true" />
+
+    <application
+        android:allowBackup="true"
+        android:label="Translate"
+        android:icon="@mipmap/ic_launcher"
+        android:hardwareAccelerated="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <!-- Glass touchpad gesture support — required for the tap-
+             to-translate interaction on XE. -->
+        <meta-data
+            android:name="com.google.android.glass.TouchEnabledApplication"
+            android:value="true" />
+
+        <!-- Plugin SDK registration. Talks to the phone-side
+             TranslatePhonePlugin via TRANSLATE_REQUEST /
+             TRANSLATE_RESULT messages. -->
+        <service
+            android:name=".TranslatePluginService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
+            </intent-filter>
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="translate" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="Translate" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="Point the camera, tap to translate. JP→EN by default; on-device ML Kit, no internet after model download." />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA" android:resource="@raw/plugin_schema" />
+        </service>
+
+        <activity
+            android:name=".TranslateActivity"
+            android:label="Translate"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.google.android.glass.category.DIRECTORY" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
