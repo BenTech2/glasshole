@@ -110,6 +110,9 @@ object BaseSettings {
      *  honour the enabled toggle as a separate "remember my volume"
      *  affordance. */
     const val KEY_NOTIF_SOUND_VOLUME = "notif_sound_volume"
+    /** Pinned-apps CSV — see XE copy. */
+    const val KEY_PINNED_APPS = "pinned_apps"
+    const val PINNED_APPS_MAX = 4
 
     /** Convenience accessor for the invert flag — every nav surface
      *  reads this once per gesture; the cost of a SharedPreferences
@@ -117,4 +120,14 @@ object BaseSettings {
     fun isNavInverted(context: android.content.Context): Boolean =
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
             .getBoolean(KEY_INVERT_NAV, false)
+
+    fun getPinnedPackages(context: android.content.Context): List<String> {
+        val raw = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .getString(KEY_PINNED_APPS, "") ?: ""
+        return raw.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(PINNED_APPS_MAX)
+    }
 }

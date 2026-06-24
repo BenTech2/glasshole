@@ -114,8 +114,26 @@ object BaseSettings {
      *  honour the enabled toggle as a separate "remember my volume"
      *  affordance. */
     const val KEY_NOTIF_SOUND_VOLUME = "notif_sound_volume"
+    /** Comma-separated list of package names the user has pinned to the
+     *  front of the App Drawer. Capped at 4 — entries past the 4th are
+     *  ignored. Set by the phone-side PinnedAppsActivity via
+     *  SET_PINNED_APPS; read by AppDrawerActivity on every load. */
+    const val KEY_PINNED_APPS = "pinned_apps"
+    const val PINNED_APPS_MAX = 4
 
     fun isNavInverted(context: android.content.Context): Boolean =
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
             .getBoolean(KEY_INVERT_NAV, false)
+
+    /** Returns the user's pinned package list, in pin order, capped to
+     *  [PINNED_APPS_MAX] and de-duplicated. Empty list if nothing pinned. */
+    fun getPinnedPackages(context: android.content.Context): List<String> {
+        val raw = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .getString(KEY_PINNED_APPS, "") ?: ""
+        return raw.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(PINNED_APPS_MAX)
+    }
 }

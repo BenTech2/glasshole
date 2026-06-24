@@ -515,6 +515,13 @@ class DeviceActivity : AppCompatActivity() {
                   else "Send failed")
         }
 
+        // Pinned apps — opens the dedicated picker activity.
+        findViewById<android.widget.Button>(R.id.managePinnedAppsBtn)
+            .setOnClickListener {
+                startActivity(android.content.Intent(
+                    this, com.glasshole.phone.PinnedAppsActivity::class.java))
+            }
+
         // Weather — Open-Meteo, keyless. Default ON since the user
         // already granted FINE_LOCATION at install time on older
         // Androids (the camera/media path needs it); on API 23+

@@ -76,6 +76,12 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".PinnedAppsActivity"
+            android:exported="false"
+            android:label="Pinned Apps"
+            android:parentActivityName=".MainActivity" />
+
+        <activity
             android:name=".DebugActivity"
             android:exported="false"
             android:label="Debug"

@@ -809,6 +809,21 @@ class BridgeService : Service() {
         return sendPluginMessage("base", "SET_SWAP_TOP_BAR", json)
     }
 
+    /** Ask glass to enumerate its launcher activities + ship the list
+     *  back via PLUGIN:base:LAUNCHER_APPS_LIST. The phone-side
+     *  PinnedAppsActivity listens on onBaseMessage for the reply. */
+    fun requestLauncherApps(): Boolean =
+        sendPluginMessage("base", "LIST_LAUNCHER_APPS_REQ", "")
+
+    /** Push the user's pinned package list to glass. Capped at 4 on
+     *  the glass side; extra entries dropped silently. */
+    fun setPinnedApps(pkgs: List<String>): Boolean {
+        val arr = org.json.JSONArray()
+        pkgs.forEach { arr.put(it) }
+        val json = org.json.JSONObject().put("pkgs", arr).toString()
+        return sendPluginMessage("base", "SET_PINNED_APPS", json)
+    }
+
     /** Send a cached / fresh weather payload to glass. Pass null to
      *  tell glass "weather is off, hide the chip" — useful when the
      *  user disables the feature so the stale value doesn't linger. */

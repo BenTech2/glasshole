@@ -501,6 +501,22 @@ class BluetoothListenerService : Service() {
                     .edit().putBoolean(BaseSettings.KEY_SWAP_TOP_BAR, enabled).apply()
                 sendBaseStateToPhone()
             }
+            "LIST_LAUNCHER_APPS_REQ" -> handleListLauncherAppsRequest()
+            "SET_PINNED_APPS" -> {
+                val pkgs = try {
+                    val arr = JSONObject(payload).optJSONArray("pkgs")
+                    val out = mutableListOf<String>()
+                    if (arr != null) for (i in 0 until arr.length()) {
+                        arr.optString(i, "").takeIf { it.isNotBlank() }?.let { out.add(it) }
+                    }
+                    out
+                } catch (_: Exception) { emptyList() }
+                val csv = pkgs.distinct().take(BaseSettings.PINNED_APPS_MAX).joinToString(",")
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putString(BaseSettings.KEY_PINNED_APPS, csv).apply()
+                Log.i(TAG, "Pinned apps set to: $csv")
+                sendBaseStateToPhone()
+            }
             "SET_WALLPAPER_SCALE_MODE" -> {
                 val mode = try {
                     JSONObject(payload).optString("mode", "fit")
@@ -712,8 +728,36 @@ class BluetoothListenerService : Service() {
             put("wallpaperOnAppDrawer", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_APP_DRAWER, false))
             put("notifSoundEnabled", prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true))
             put("notifSoundVolume", prefs.getInt(BaseSettings.KEY_NOTIF_SOUND_VOLUME, 100))
+            // Pinned-apps echo so the phone UI can render the current
+            // pin list on first open without a separate round-trip.
+            val pinnedArr = org.json.JSONArray()
+            BaseSettings.getPinnedPackages(this@BluetoothListenerService)
+                .forEach { pinnedArr.put(it) }
+            put("pinnedApps", pinnedArr)
         }.toString()
         sendPluginMessage("base", "STATE", json)
+    }
+
+    /** Enumerate every launcher activity on the glass + ship the list
+     *  back to the phone so the PinnedAppsActivity can render it as a
+     *  pickable list. Skips the launcher itself so the user can't pin
+     *  the home screen onto the home screen. */
+    private fun handleListLauncherAppsRequest() {
+        val pm = packageManager
+        val launcherIntent = android.content.Intent(android.content.Intent.ACTION_MAIN)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        val seen = mutableSetOf<String>()
+        val arr = org.json.JSONArray()
+        for (ri in pm.queryIntentActivities(launcherIntent, 0)) {
+            val pkg = ri.activityInfo?.packageName ?: continue
+            if (pkg == packageName) continue
+            if (!seen.add(pkg)) continue
+            val label = ri.loadLabel(pm)?.toString() ?: pkg
+            arr.put(org.json.JSONObject().put("pkg", pkg).put("label", label))
+        }
+        val payload = org.json.JSONObject().put("apps", arr).toString()
+        sendPluginMessage("base", "LAUNCHER_APPS_LIST", payload)
+        Log.i(TAG, "Sent launcher app list (${arr.length()} entries)")
     }
 
     /** Active wallpaper upload server. Built on-demand on the first

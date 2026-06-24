@@ -99,7 +99,7 @@ class LicensesActivity : AppCompatActivity() {
             ),
             License(
                 "Conscrypt",
-                "2.5.2",
+                "2.5.3",
                 "Apache 2.0",
                 "© The Android Open Source Project",
                 "https://github.com/google/conscrypt"
@@ -138,6 +138,106 @@ class LicensesActivity : AppCompatActivity() {
                 "BSD-3-Clause",
                 "© Atsuhiko Yamanaka, JCraft Inc., Michael Wiede",
                 "https://github.com/mwiede/jsch"
+            ),
+
+            // ---- GlassNav plugin port + its dependency stack ----
+            License(
+                "GlassNav (upstream)",
+                "1.0.1",
+                "GPL-3.0-or-later",
+                "© CatotheCat11",
+                "https://github.com/CatotheCat11/GlassNav"
+            ),
+            License(
+                "OpenPrism (Glass UI library)",
+                "1.2.0",
+                "Apache 2.0",
+                "© CatotheCat11",
+                "https://github.com/CatotheCat11/OpenPrism"
+            ),
+            License(
+                "VTM (Vector Tile Map)",
+                "0.27.0",
+                "LGPL-3.0",
+                "© Mapsforge contributors",
+                "https://github.com/mapsforge/vtm"
+            ),
+            License(
+                "Mapsforge",
+                "0.27.0",
+                "LGPL-3.0",
+                "© Mapsforge contributors",
+                "https://github.com/mapsforge/mapsforge"
+            ),
+            License(
+                "MapLibre Navigation SDK (Kurviger fork)",
+                "vendored — see apps/lib/maplibre-navigation-core",
+                "MIT",
+                "© Kurviger (2024), MapLibre (2021), Flitsmeister (2019)",
+                "https://github.com/maplibre/maplibre-navigation-android"
+            ),
+            License(
+                "MapLibre Android Java Utilities (geojson + turf)",
+                "6.0.1",
+                "Apache 2.0",
+                "© MapLibre contributors",
+                "https://github.com/maplibre/maplibre-java"
+            ),
+            License(
+                "AndroidSVG",
+                "1.4",
+                "Apache 2.0",
+                "© Paul LeBeau",
+                "https://github.com/BigBadaboom/androidsvg"
+            ),
+            License(
+                "Mapbox Vector Tile",
+                "4.0.6",
+                "Apache 2.0",
+                "© ci-cmg / Mapbox contributors",
+                "https://github.com/ci-cmg/mapbox-vector-tile-java"
+            ),
+            License(
+                "JTS Topology Suite (Core)",
+                "1.20.0",
+                "EPL-2.0 + EDL-1.0",
+                "© Eclipse Foundation / Vivid Solutions",
+                "https://github.com/locationtech/jts"
+            ),
+            License(
+                "Protocol Buffers — Java",
+                "3.24.2",
+                "BSD-3-Clause",
+                "© Google LLC",
+                "https://github.com/protocolbuffers/protobuf"
+            ),
+            License(
+                "kotlinx-serialization-json",
+                "1.6.3",
+                "Apache 2.0",
+                "© JetBrains s.r.o.",
+                "https://github.com/Kotlin/kotlinx.serialization"
+            ),
+            License(
+                "OpenStreetMap data",
+                "ODbL 1.0",
+                "ODbL 1.0",
+                "© OpenStreetMap contributors",
+                "https://www.openstreetmap.org/copyright"
+            ),
+            License(
+                "Valhalla routing service",
+                "openstreetmap.de demo",
+                "Apache 2.0",
+                "© Mapbox / OpenStreetMap Germany e.V.",
+                "https://github.com/valhalla/valhalla"
+            ),
+            License(
+                "Nominatim geocoder",
+                "openstreetmap.org demo",
+                "BSD-2-Clause / Public Domain",
+                "© OpenStreetMap contributors",
+                "https://nominatim.org/"
             )
         )
     }

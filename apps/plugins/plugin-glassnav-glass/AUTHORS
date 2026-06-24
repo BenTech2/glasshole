@@ -1,25 +1,115 @@
-GlassNav-GlassHole plugin
-=========================
+plugin-glassnav-glass
+=====================
 
-Authors
+A port of GlassNav into GlassHole's plugin system. GPL-3.0-or-later
+(see LICENSE).
+
+Original work
+-------------
+
+* **GlassNav** by **CatotheCat11**
+  Repository: https://github.com/CatotheCat11/GlassNav
+  License: GPL-3.0-or-later
+
+  The Java/Kotlin source files under `com.cato.glassnav`
+  (MainActivity, SearchActivity, RouteActivity, Utils, CustomTrust,
+  HttpsUtils, OsmMvtTileSource, KotlinUtils) are imported essentially
+  verbatim from CatotheCat11's repository. The original package
+  structure, class names and the `com.cato.glassnav` namespace are
+  preserved so improvements can flow back upstream cleanly.
+
+  The drawables (turn arrows, location/marker textures, mode icons,
+  bookmark/search/close glyphs), the VTM dark theme XML, the layout
+  (`mapviewer.xml`) and the values resources (colors, dimens,
+  strings, themes) are likewise imported from the upstream
+  repository.
+
+GlassHole integration work
+--------------------------
+
+* **Ben Harlett** (benharlett@gmail.com)
+
+  - `BluetoothMapsService.java` gutted to a compatibility shim — the
+    upstream RFCOMM transport is replaced by `GlassNavPluginService`,
+    which receives `DEST` / `LOC` / `REQ_GPS_START` messages over
+    GlassHole's existing BT bridge instead.
+  - `GlassNavPluginService.kt` — the new transport service. Buffers
+    incoming messages until `MainActivity` registers its listener
+    (cold-start race) and exposes the dynamic-config flow via
+    `PluginConfigHandler` so the plugin gets a settings gear on the
+    phone-side Plugins screen.
+  - `plugin_schema.json` — settings UI definition (keep-screen-on,
+    distance units, default route mode, ETA format, speedometer
+    mode + position).
+  - Manifest re-targeted to GlassHole's plugin discovery
+    (`com.glasshole.plugin.GLASS_PLUGIN` action + ID/NAME/
+    DESCRIPTION/SCHEMA meta-data).
+  - Multi-region offline-map picker — `MainActivity.pickBestOfflineMap`
+    scans `/sdcard/glasshole/maps/*.map` and picks the file whose
+    bbox contains the current GPS position (smallest-bbox-wins).
+    The legacy `/sdcard/Map.map` slot still works as a fallback.
+  - Map rotation simplified to always head-up regardless of travel
+    mode; auto-fallback to driving when Valhalla rejects walk/cycle
+    with `DistanceExceeded`; ETA formatter handles long routes
+    cleanly.
+
+Vendored dependencies (see apps/lib/)
+-------------------------------------
+
+* **maplibre-navigation-core** (apps/lib/maplibre-navigation-core/)
+  — a fork of the MapLibre Navigation SDK with KitKat-compatibility
+  patches, imported from CatotheCat11/GlassNav.
+  MIT-licensed. © Kurviger (2024), MapLibre (2021), Flitsmeister
+  (2019). Includes shim classes under
+  `org.maplibre.geojson.{model,turf,utils}` that bridge nav-core's
+  expected Kotlin-port API to the Java maplibre-gl 6.0.1 artifacts
+  we can actually load on our Kotlin 1.9 toolchain — those shims
+  are MIT-by-extension since they're part of the same module.
+
+* **glass-gdk-stubs** (apps/lib/glass-gdk-stubs/) — compile-only
+  Google Glass Development Kit class shapes (Sounds, Gesture,
+  GestureDetector, CardBuilder, CardScrollView, CardScrollAdapter).
+  Real implementations come from the Glass OS at runtime.
+  Apache-2.0.
+
+External dependencies (resolved by Gradle)
+------------------------------------------
+
+* **VTM** 0.27.0 — vector map renderer, © Mapsforge contributors.
+  LGPL-3.0. https://github.com/mapsforge/vtm
+* **Mapsforge** 0.27.0 — raster + offline `.map` rendering.
+  LGPL-3.0. https://github.com/mapsforge/mapsforge
+* **OpenPrism** 1.2.0 — Glass UI library (bundles the GDK widget
+  classes). © CatotheCat11. Apache-2.0.
+  https://github.com/CatotheCat11/OpenPrism
+* **MapLibre GeoJSON / Turf** 6.0.1 — geometry primitives.
+  Apache-2.0. https://github.com/maplibre/maplibre-java
+* **Conscrypt** 2.5.3 — modern TLS on KitKat. Apache-2.0.
+  https://github.com/google/conscrypt
+* **OkHttp** 3.12.12 + **Okio** 3.6.0 — Apache-2.0, © Square Inc.
+* **AndroidSVG** 1.4 — Apache-2.0.
+* **Mapbox Vector Tile** 4.0.6 — Apache-2.0.
+* **JTS Core** 1.20.0 — EPL-2.0 + EDL-1.0 (BSD-3-Clause).
+  https://github.com/locationtech/jts
+* **Protobuf Java** 3.24.2 — BSD-3-Clause, © Google LLC.
+* **kotlinx-serialization-json** 1.6.3, **kotlinx-coroutines-core**
+  1.7.3 — Apache-2.0, © JetBrains s.r.o.
+
+Map data
+--------
+
+Online tile fetches use the OpenStreetMap US tile service. Offline
+`.map` files are published by mapsforge.org from OpenStreetMap data.
+
+OpenStreetMap data is licensed under the **Open Database License**
+(ODbL) 1.0 — © OpenStreetMap contributors,
+https://www.openstreetmap.org/copyright
+
+Routing
 -------
 
-* Ben Harlett (benharlett@gmail.com) — GlassHole integration, full-screen
-  turn-by-turn HUD, speedometer overlay, share-from-Google-Maps pipeline,
-  GlassHole BT bridge wiring.
-
-Originally inspired by
-----------------------
-
-* GlassNav by CatotheCat11
-  Repository: https://github.com/CatotheCat11/GlassNav
-  Licensed under GPL-3.0-or-later.
-
-  This module is a re-implementation in the spirit of GlassNav, designed
-  to integrate with GlassHole's existing phone↔glass Bluetooth bridge.
-  It uses the same GPL-3.0-or-later license as the original project so
-  the upstream community can freely share improvements and contributions
-  between the two codebases. No source files from the original
-  GlassNav repository are imported verbatim — the UI flow, gesture
-  vocabulary, and Bluetooth-location-streaming concept are credited
-  here as inspiration.
+Turn-by-turn directions are fetched from the public Valhalla server
+at https://valhalla1.openstreetmap.de (Apache-2.0). Place search is
+Nominatim at https://nominatim.openstreetmap.org (BSD/Public Domain).
+Both are OpenStreetMap-community-run services; respect their
+fair-use policies if forking.
