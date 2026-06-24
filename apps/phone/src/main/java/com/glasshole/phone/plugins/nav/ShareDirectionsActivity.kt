@@ -75,16 +75,19 @@ class ShareDirectionsActivity : Activity() {
             AppLog.warn(TAG, "SpeedTracker.start threw: ${e.message}")
         }
 
-        // Open Maps on the phone so the user has turn-by-turn nav
-        // there too. Fast, doesn't block anything.
-        startMapsNavigation(title, originalUrl = url)
+        // (Intentionally NOT calling startMapsNavigation here — earlier
+        // versions fired google.navigation:q=<dest> so phone Maps would
+        // also start turn-by-turn, but that's annoying when the user
+        // is wearing the glass and didn't ask for two nav screens.
+        // Glass-side GlassNav does its own routing now via Valhalla;
+        // the phone just streams GPS over BT and stays out of the way.)
 
         // Bring the GlassNav activity foreground on glass. The DEST
         // JSON below will follow as soon as we have coords.
         attemptOpenGlassNav(attemptsLeft = 10)
 
         toast(
-            if (title.isNullOrBlank()) "GlassNav: opening Maps…"
+            if (title.isNullOrBlank()) "GlassNav: sharing…"
             else "GlassNav: $title"
         )
 
@@ -162,40 +165,6 @@ class ShareDirectionsActivity : Activity() {
         }
         AppLog.warn(TAG, "BT bridge never came up — DEST not shipped")
         postToast("GlassNav: glass not connected")
-    }
-
-    /** Open Google Maps on the phone with the shared destination so
-     *  the user has turn-by-turn on the phone too. Best-effort: if
-     *  Maps isn't installed or refuses the intent, we just skip. */
-    private fun startMapsNavigation(destination: String?, originalUrl: String) {
-        try {
-            if (!destination.isNullOrBlank()) {
-                val navUri = Uri.parse("google.navigation:q=" + Uri.encode(destination))
-                val navIntent = Intent(Intent.ACTION_VIEW, navUri).apply {
-                    setPackage("com.google.android.apps.maps")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                try {
-                    startActivity(navIntent)
-                    AppLog.log(TAG, "Launched google.navigation:q=$destination")
-                    return
-                } catch (_: Exception) {
-                    AppLog.warn(TAG, "google.navigation: failed — trying ACTION_VIEW")
-                }
-            }
-            val view = Intent(Intent.ACTION_VIEW, Uri.parse(originalUrl)).apply {
-                setPackage("com.google.android.apps.maps")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            try {
-                startActivity(view)
-            } catch (_: Exception) {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(originalUrl))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
-        } catch (e: Exception) {
-            AppLog.warn(TAG, "Maps launch failed: ${e.message}")
-        }
     }
 
     /** LAUNCH_PACKAGE → glassnav plugin foreground on glass. */

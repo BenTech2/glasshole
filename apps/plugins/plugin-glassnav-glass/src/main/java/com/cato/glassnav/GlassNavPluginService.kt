@@ -41,6 +41,50 @@ class GlassNavPluginService : GlassPluginService() {
          *  FIFO order when the listener registers. */
         private val pending = ArrayDeque<ByteArray>()
 
+        /** Live reference to the running service instance — only the
+         *  service can fire plugin messages back to the phone, so
+         *  MainActivity uses this to send REQ_GPS_START/STOP without
+         *  having to bind the service itself. Null when the service
+         *  is unbound (which happens between AIDL teardown and the
+         *  next plugin host reconnect). */
+        @Volatile @JvmStatic private var instance: GlassNavPluginService? = null
+
+        /** Ask the phone to (re-)start GPS streaming over BT. Called
+         *  from MainActivity.onResume so any time the user opens
+         *  GlassNav — by share, app drawer, voice trigger, anything —
+         *  the phone GPS pipeline kicks on. Phone-side
+         *  GlassNavPhonePlugin catches the message + calls
+         *  SpeedTracker.start.
+         *
+         *  Retry: when MainActivity cold-starts the plugin process,
+         *  its onResume fires before the launcher has finished binding
+         *  this service — `instance` is null and a one-shot send would
+         *  silently no-op. We retry every 500 ms for ~5 s; the service
+         *  binding always lands well inside that window. */
+        @JvmStatic
+        fun requestGpsStreamStart() {
+            val h = android.os.Handler(android.os.Looper.getMainLooper())
+            val r = object : Runnable {
+                var attempts = 10
+                override fun run() {
+                    val s = instance
+                    if (s != null) {
+                        try {
+                            s.sendToPhone(GlassPluginMessage("REQ_GPS_START", ""))
+                            Log.i(TAG, "REQ_GPS_START sent")
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "REQ_GPS_START send failed: ${e.message}")
+                        }
+                    } else if (--attempts > 0) {
+                        h.postDelayed(this, 500L)
+                    } else {
+                        Log.w(TAG, "REQ_GPS_START: service never bound, giving up")
+                    }
+                }
+            }
+            r.run()
+        }
+
         /** Called from MainActivity.onCreate (and onDestroy with null
          *  to detach). Drains any buffered messages immediately so
          *  pre-listener DEST/LOC packets actually reach the activity. */
@@ -86,6 +130,15 @@ class GlassNavPluginService : GlassPluginService() {
     }
 
     override val pluginId: String = "glassnav"
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+    }
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        super.onDestroy()
+    }
 
     override fun onMessageFromPhone(message: GlassPluginMessage) {
         // Phone settings UI traffic (SCHEMA_REQ / CONFIG_*) — handled

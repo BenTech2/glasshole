@@ -38,6 +38,27 @@
         { "value": "arrival", "label": "Arrival time (5:30 PM)" },
         { "value": "remaining", "label": "Time remaining (30 min)" }
       ]
+    },
+    {
+      "key": "speedometer_mode",
+      "type": "radio",
+      "label": "Show speedometer",
+      "default": "off",
+      "options": [
+        { "value": "off", "label": "Off" },
+        { "value": "nav_only", "label": "Only while navigating" },
+        { "value": "always", "label": "Always" }
+      ]
+    },
+    {
+      "key": "speedometer_position",
+      "type": "radio",
+      "label": "Speedometer position",
+      "default": "top_right",
+      "options": [
+        { "value": "top_right", "label": "Top-right corner" },
+        { "value": "bottom_right", "label": "Bottom-right corner" }
+      ]
     }
   ],
   "workers": []

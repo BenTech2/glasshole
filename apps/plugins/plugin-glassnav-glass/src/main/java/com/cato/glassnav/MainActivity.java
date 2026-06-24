@@ -112,6 +112,7 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
     TextView primaryInstructionText;
     TextView secondaryInstructionText;
     TextView etaText;
+    TextView speedometerView; // resolved to top_right OR bottom_right based on setting
     ImageView directionImage;
     ImageView modeImage;
     static RouteProgress currentProgress;
@@ -267,6 +268,16 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
         etaText = findViewById(R.id.eta);
         etaText.setVisibility(View.INVISIBLE);
 
+        // Speedometer overlay — pick the corner the user set in plugin
+        // settings; updateSpeedometer() will toggle visibility per the
+        // mode setting (off / nav_only / always) on each location fix.
+        TextView speedTopRight = findViewById(R.id.speedometer_top_right);
+        TextView speedBottomRight = findViewById(R.id.speedometer_bottom_right);
+        String speedPos = getSharedPreferences(
+            GlassNavPluginService.PREFS_NAME, MODE_PRIVATE
+        ).getString("speedometer_position", "top_right");
+        speedometerView = "bottom_right".equals(speedPos) ? speedBottomRight : speedTopRight;
+
         mapView = findViewById(R.id.mapView);
 
         mapView.setSystemUiVisibility(
@@ -328,10 +339,15 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
     private void openMap() {
         try {
             VectorTileLayer tileLayer;
-            File mapFile = new File(Environment.getExternalStorageDirectory().getPath() + "/Map.map");
+            // Multi-map dir: any *.map file dropped in /sdcard/glasshole/maps
+            // is picked up automatically. The picker prefers files whose
+            // bbox contains the user's last known location (smaller bbox
+            // wins — finer detail). Falls back to the legacy
+            // /sdcard/Map.map slot if the new dir is empty.
+            File mapFile = pickBestOfflineMap();
 
-            if (!mapFile.isFile()) {
-                Log.i(TAG, "Map file doesn't exist, falling back to online tile source");
+            if (mapFile == null) {
+                Log.i(TAG, "No offline .map file found, falling back to online tile source");
 
                 OkHttpClient.Builder builder = new OkHttpClient.Builder() //TODO: Add user agent header
                         .sslSocketFactory(CustomTrust.sslSocketFactory, CustomTrust.trustManager);
@@ -351,11 +367,9 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
 
                 theme = mapView.map().setTheme(new AssetsRenderTheme(getAssets(), "", "vtm/openmaptilesdark.xml"));
             } else {
-                Log.i(TAG, "Loading map from local file");
-                Uri mapFileUri = Uri.fromFile(mapFile);
+                Log.i(TAG, "Loading map from local file: " + mapFile.getPath());
                 MapFileTileSource tileSource = new MapFileTileSource();
-                FileInputStream fis = (FileInputStream) getContentResolver().openInputStream(mapFileUri);
-                tileSource.setMapFileInputStream(fis);
+                tileSource.setMapFile(mapFile.getPath());
                 tileLayer = mapView.map().setBaseMap(tileSource);
                 theme = mapView.map().setTheme(VtmThemes.DARK);
             }
@@ -367,7 +381,6 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
             mapView.map().layers().add(new LabelLayer(mapView.map(), tileLayer));
 
             locationTextureLayer = new LocationTextureLayer(mapView.map(), 1f);
-
             locationTextureLayer.locationRenderer.setBitmapArrow(CanvasAdapter.decodeBitmap(getResources().openRawResource(R.raw.location_texture)));
             locationTextureLayer.locationRenderer.setBitmapMarker(CanvasAdapter.decodeBitmap(getResources().openRawResource(R.raw.marker_texture)));
             locationTextureLayer.locationRenderer.setCallback(new LocationCallback() {
@@ -418,7 +431,74 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
         }
     }
 
-
+    /** Pick the best offline .map file for the current location.
+     *
+     *  Scan order:
+     *    1. /sdcard/glasshole/maps/*.map — preferred. If the user has
+     *       a last-known location, score each file by whether its
+     *       bounding box contains the position; smaller bbox wins
+     *       (finer detail). If no GPS fix yet, just take the first
+     *       file alphabetically.
+     *    2. /sdcard/Map.map — legacy single-file slot (upstream
+     *       GlassNav's original spot). Kept for backwards compat
+     *       with users who already had their map file there.
+     *    3. null — caller falls back to the online tile source.
+     */
+    private File pickBestOfflineMap() {
+        File mapsDir = new File(
+            Environment.getExternalStorageDirectory(), "glasshole/maps");
+        File[] files = mapsDir.listFiles((dir, name) -> name.endsWith(".map"));
+        if (files != null && files.length > 0) {
+            Location loc = lastLocation;
+            if (loc != null) {
+                File best = null;
+                double bestArea = Double.POSITIVE_INFINITY;
+                for (File f : files) {
+                    org.oscim.tiling.source.mapfile.MapFileTileSource src =
+                        new org.oscim.tiling.source.mapfile.MapFileTileSource();
+                    try {
+                        src.setMapFile(f.getPath());
+                        org.oscim.tiling.TileSource.OpenResult r = src.open();
+                        if (!r.isSuccess()) continue;
+                        org.oscim.tiling.source.mapfile.MapInfo info = src.getMapInfo();
+                        if (info == null || info.boundingBox == null) continue;
+                        org.oscim.core.BoundingBox bb = info.boundingBox;
+                        if (bb.contains(loc.getLatitude(), loc.getLongitude())) {
+                            double area = (bb.getMaxLatitude() - bb.getMinLatitude())
+                                * (bb.getMaxLongitude() - bb.getMinLongitude());
+                            if (area < bestArea) {
+                                bestArea = area;
+                                best = f;
+                            }
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Skipping unreadable map " + f.getName() + ": " + t.getMessage());
+                    } finally {
+                        try { src.close(); } catch (Throwable ignored) {}
+                    }
+                }
+                if (best != null) {
+                    Log.i(TAG, "Picked " + best.getName() + " (bbox contains current location)");
+                    return best;
+                }
+                Log.i(TAG, "Location " + loc.getLatitude() + "," + loc.getLongitude()
+                    + " not covered by any map in " + mapsDir.getPath()
+                    + " — falling back to first file");
+            }
+            // No location or no covering bbox — alphabetical pick.
+            java.util.Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+            Log.i(TAG, "Picked " + files[0].getName() + " (no GPS / no covering map)");
+            return files[0];
+        }
+        // Legacy fallback for users with the upstream Map.map slot.
+        File legacy = new File(
+            Environment.getExternalStorageDirectory(), "Map.map");
+        if (legacy.isFile()) {
+            Log.i(TAG, "Using legacy /sdcard/Map.map");
+            return legacy;
+        }
+        return null;
+    }
 
     public void startRouteNavigation() {
         Log.i(TAG, "Starting route navigation");
@@ -907,12 +987,7 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
             float magneticHeading = (float) Math.toDegrees(mOrientation[0]);
             mHeading = mod(computeTrueNorth(magneticHeading), 360.0f)
                     - 6;
-            // Always rotate the map to face the user's head heading,
-            // regardless of travel mode. Upstream's behavior of using
-            // routeHeading in CYCLE/DRIVE meant the map locked to the
-            // road bearing instead of where the user was actually
-            // looking — confusing in practice for a head-mounted
-            // display.
+            // Always rotate the map to face the user's head heading.
             mapView.map().viewport().setRotation(-mHeading);
             mapView.map().updateMap(false);
         }
@@ -930,9 +1005,11 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
     private void updateMapPosition(Location location) {
         //Log.i(TAG, "Updating map position to " + location);
         locationTextureLayer.setPosition(location.getLatitude(), location.getLongitude(), location.getAccuracy());
+        updateSpeedometer(location);
         //mapView.map().animator().animateTo(10, new GeoPoint(location.getLatitude(), location.getLongitude()));
         if (lastLocation == null) {
             mapView.map().setMapPosition(location.getLatitude(), location.getLongitude(), 100000.0);
+            mapView.map().updateMap(false);
             return;
         }
         mapView.map().setMapPosition(location.getLatitude(), location.getLongitude(), scale);
@@ -940,6 +1017,47 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
         // never route-up. Head heading reads the user's intent better
         // on a Glass display than the snapped route bearing.
         mapView.map().viewport().setRotation(-mHeading);
+        // Force a repaint. After the sensor-handler heading throttle
+        // (≥2° delta), VTM was only repainting on touch events when
+        // the user held still — `setMapPosition` queues the new
+        // viewport but doesn't ALWAYS trigger a frame. This explicit
+        // updateMap guarantees every GPS fix paints, regardless of
+        // whether head rotation also moved.
+        mapView.map().updateMap(false);
+    }
+
+    /** Update the speedometer overlay text + visibility from the
+     *  user's plugin settings.
+     *
+     *  - speedometer_mode: off / nav_only / always
+     *  - units: imperial → mph; metric → km/h
+     *
+     *  Uses Location.getSpeed() (m/s) which is populated by every
+     *  recent Android version + the binary LOC envelope from phone. */
+    private void updateSpeedometer(Location location) {
+        if (speedometerView == null) return;
+        android.content.SharedPreferences prefs = getSharedPreferences(
+            GlassNavPluginService.PREFS_NAME, MODE_PRIVATE);
+        String mode = prefs.getString("speedometer_mode", "off");
+        boolean show = "always".equals(mode)
+            || ("nav_only".equals(mode) && navigation != null);
+        if (!show) {
+            speedometerView.setVisibility(View.GONE);
+            return;
+        }
+        float speedMps = location.hasSpeed() ? location.getSpeed() : 0f;
+        boolean imperial = "imperial".equals(prefs.getString("units", "imperial"));
+        int displaySpeed;
+        String unit;
+        if (imperial) {
+            displaySpeed = Math.round(speedMps * 2.236936f); // mph
+            unit = "mph";
+        } else {
+            displaySpeed = Math.round(speedMps * 3.6f); // km/h
+            unit = "km/h";
+        }
+        speedometerView.setText(displaySpeed + " " + unit);
+        speedometerView.setVisibility(View.VISIBLE);
     }
 
     @Override
@@ -947,11 +1065,21 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
         Log.i(TAG, "Resuming activity, starting location updates");
         super.onResume();
         mapView.onResume();
+        // Ask the phone to start streaming GPS over BT. Without this,
+        // opening GlassNav directly (vs. via the Maps share) leaves
+        // SpeedTracker idle and no LOC binary packets arrive — the
+        // map sits at no-location-yet forever. Idempotent: phone
+        // ignores REQ_GPS_START if the stream is already running.
+        GlassNavPluginService.requestGpsStreamStart();
         if (locationManager == null) {
             locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
         }
 
-        // Register sensor listeners TODO compass
+        // Register sensor listeners — back at SENSOR_DELAY_UI so the
+        // map rotation actually keeps up with head turns. The slower
+        // SENSOR_DELAY_NORMAL cadence felt sluggish and missed quick
+        // head movements (and didn't actually prevent the freeze
+        // we were trying to avoid).
         sensorManager.registerListener(this,
                 sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR),
                 SensorManager.SENSOR_DELAY_UI);

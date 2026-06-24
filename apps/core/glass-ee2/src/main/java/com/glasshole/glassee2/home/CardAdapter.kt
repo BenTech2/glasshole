@@ -140,6 +140,7 @@ class CardAdapter(
      *  successful package). */
     private fun bindAbout(holder: CardHolder) {
         val versionLine = holder.itemView.findViewById<TextView>(R.id.aboutVersionLine)
+        val network = holder.itemView.findViewById<TextView>(R.id.aboutNetwork)
         val pm = context.packageManager
         val versionName = try {
             pm.getPackageInfo(context.packageName, 0).versionName ?: "?"
@@ -149,6 +150,7 @@ class CardAdapter(
             pm.getPackageInfo(context.packageName, 0).versionCode
         } catch (_: Exception) { 0 }
         versionLine?.text = "v$versionName · build $versionCode"
+        network?.text = com.glasshole.glassee2.NetworkInfo.summary(context)
     }
 
     /** Rebinds only the time card if it's in the current window. */

@@ -119,10 +119,13 @@ class CardAdapter(
         }
     }
 
-    /** Fill in the About card with version + build counter. See EE2
-     *  copy for the design note. */
+    /** Fill in the About card with version + build counter + Wi-Fi MAC,
+     *  Bluetooth MAC and current IP address. Useful when something on
+     *  the BT pipe acts up — you can read the MACs straight off glass
+     *  without ADB. See EE2 copy for the design note. */
     private fun bindAbout(holder: CardHolder) {
         val versionLine = holder.itemView.findViewById<TextView>(R.id.aboutVersionLine)
+        val network = holder.itemView.findViewById<TextView>(R.id.aboutNetwork)
         val pm = context.packageManager
         val versionName = try {
             pm.getPackageInfo(context.packageName, 0).versionName ?: "?"
@@ -132,6 +135,7 @@ class CardAdapter(
             pm.getPackageInfo(context.packageName, 0).versionCode
         } catch (_: Exception) { 0 }
         versionLine?.text = "v$versionName · build $versionCode"
+        network?.text = com.glasshole.glassxe.NetworkInfo.summary(context)
     }
 
     fun refreshTimeCard() {

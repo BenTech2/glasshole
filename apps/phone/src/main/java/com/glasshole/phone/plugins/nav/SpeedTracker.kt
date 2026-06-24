@@ -38,6 +38,7 @@ object SpeedTracker {
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var running = false
     private var lastLocation: Location? = null
+    private var sampleCount = 0
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -62,8 +63,17 @@ object SpeedTracker {
             val b64 = android.util.Base64.encodeToString(
                 buf.array(), android.util.Base64.NO_WRAP
             )
-            com.glasshole.phone.service.BridgeService.instance
-                ?.sendPluginMessage("glassnav", "LOC", b64)
+            val sent = com.glasshole.phone.service.BridgeService.instance
+                ?.sendPluginMessage("glassnav", "LOC", b64) ?: false
+            // Log every N samples so we can verify the pipeline without
+            // drowning logcat. Drop once every ~10 s of streaming.
+            sampleCount++
+            if (sampleCount % 5 == 0) {
+                Log.i(TAG, "LOC #$sampleCount " +
+                    "${"%.5f".format(location.latitude)}," +
+                    "${"%.5f".format(location.longitude)} " +
+                    "speed=${"%.1f".format(speedMps)}m/s sent=$sent")
+            }
             lastLocation = location
         }
         override fun onStatusChanged(p0: String?, p1: Int, p2: Bundle?) {}
@@ -85,7 +95,10 @@ object SpeedTracker {
     }
 
     fun start(context: Context) {
-        if (running) return
+        if (running) {
+            Log.i(TAG, "Speed tracker already running")
+            return
+        }
         val fine = ContextCompat.checkSelfPermission(
             context, Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED

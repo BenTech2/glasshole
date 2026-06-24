@@ -32,6 +32,18 @@
             android:fontFamily="sans-serif"
             android:text="v0.0.0 · build 0" />
 
+        <TextView
+            android:id="@+id/aboutNetwork"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:textColor="#90A4AE"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif"
+            android:gravity="center"
+            android:lineSpacingExtra="1dp"
+            android:text="" />
+
     </LinearLayout>
 
 </FrameLayout>

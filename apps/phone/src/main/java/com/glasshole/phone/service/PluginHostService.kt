@@ -64,6 +64,7 @@ class PluginHostService : Service() {
         DevicePlugin(),
         GalleryPlugin(),
         NavPlugin(),
+        com.glasshole.phone.plugins.nav.GlassNavPhonePlugin(),
         MediaPlugin(),
         com.glasshole.phone.plugins.camera2.Camera2Plugin()
     )
