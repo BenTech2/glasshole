@@ -499,6 +499,9 @@ class TranslateActivity : Activity() {
             return
         }
         Log.i(TAG, "Result: ${parsed.size} block(s)")
+        for ((i, b) in parsed.withIndex()) {
+            Log.i(TAG, "  [$i] bbox=${b.bbox} \"${b.original}\" → \"${b.translated}\"")
+        }
 
         val prefs = getSharedPreferences(TranslatePluginService.PREFS_NAME, MODE_PRIVATE)
         val mode = prefs.getString("display_mode", "overlay") ?: "overlay"
@@ -574,46 +577,72 @@ class TranslateActivity : Activity() {
 
     private fun renderOverlay(blocks: List<ResultBlock>) {
         val src = frozenBitmap ?: return
-        // Paint the translations onto a copy of the frozen frame so
-        // we don't mutate the original (which we still want to be
-        // showable if the user toggles display modes).
+        // Paint on a copy so the source frozen frame stays intact.
         val target = src.copy(Bitmap.Config.ARGB_8888, true) ?: return
         val canvas = Canvas(target)
-        val boxPaint = Paint().apply {
-            color = 0xCC000000.toInt()
+
+        // 1. Cyan outline around each detected source text region —
+        //    a marker, not an opaque mask. Vertical Japanese text has
+        //    super narrow bboxes (~30 px wide × 130 tall); covering
+        //    them up makes the translation unreadable, so we anchor
+        //    instead.
+        val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF00E5FF.toInt()
+            style = Paint.Style.STROKE
+            strokeWidth = dp(1).toFloat().coerceAtLeast(1f)
+        }
+        // 2. Solid label background — sized to fit the English text,
+        //    placed above (or below if no room) the source bbox.
+        val labelBg = Paint().apply {
+            color = 0xE6000000.toInt()
             style = Paint.Style.FILL
         }
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val labelText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             textSize = dp(11).toFloat()
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
+        val fm = labelText.fontMetrics
+        val textH = (fm.descent - fm.ascent).toInt()
+        val padH = dp(4)
+        val padV = dp(2)
+
         for (b in blocks) {
             if (b.translated.isBlank()) continue
-            // Pad the bbox slightly so the text rectangle reads as a
-            // sticky-note overlay, not a hard cutout.
-            val pad = dp(2)
-            val r = Rect(
-                (b.bbox.left - pad).coerceAtLeast(0),
-                (b.bbox.top - pad).coerceAtLeast(0),
-                (b.bbox.right + pad).coerceAtMost(target.width),
-                (b.bbox.bottom + pad).coerceAtMost(target.height),
-            )
-            canvas.drawRect(r, boxPaint)
-            // Auto-shrink the text size if the translation overflows
-            // the bbox width — keeps the overlay readable on signs
-            // with short original text but long translations.
-            val maxW = r.width().toFloat() - dp(4)
-            var size = dp(11).toFloat()
-            textPaint.textSize = size
-            while (textPaint.measureText(b.translated) > maxW && size > dp(7)) {
-                size -= 1f
-                textPaint.textSize = size
+            // Outline the source text bbox.
+            canvas.drawRect(b.bbox, outlinePaint)
+
+            // Size the label by the translation's intrinsic width,
+            // not the source bbox. Clamp to the bitmap width if the
+            // translation is monstrously long.
+            val measured = labelText.measureText(b.translated)
+            val labelW = (measured.toInt() + padH * 2).coerceAtMost(target.width)
+            val labelH = textH + padV * 2
+
+            // Prefer above the source; flip below if it would clip.
+            var labelTop = b.bbox.top - labelH - dp(2)
+            if (labelTop < 0) {
+                labelTop = (b.bbox.bottom + dp(2)).coerceAtMost(target.height - labelH)
             }
-            val fm = textPaint.fontMetrics
-            val baseline = r.top + (r.height() - (fm.ascent + fm.descent)) / 2f
-            canvas.drawText(b.translated, r.left + dp(2).toFloat(), baseline, textPaint)
+            // Anchor the label to the bbox's left, but keep it inside
+            // the bitmap horizontally.
+            val labelLeft = b.bbox.left.coerceIn(0, target.width - labelW)
+            val labelRect = Rect(
+                labelLeft,
+                labelTop,
+                labelLeft + labelW,
+                labelTop + labelH,
+            )
+            canvas.drawRect(labelRect, labelBg)
+            val baseline = labelTop + padV - fm.ascent
+            canvas.drawText(
+                b.translated,
+                (labelLeft + padH).toFloat(),
+                baseline,
+                labelText,
+            )
         }
+
         frozenView.setImageBitmap(target)
         frozenBitmap = target
     }

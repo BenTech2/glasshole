@@ -127,6 +127,7 @@ class TranslateEngine private constructor(
                     Log.w(TAG, "translate failed for \"$original\": ${e.message}")
                     original  // fall back to source
                 }
+                Log.i(TAG, "  block bbox=$rect: \"$original\" → \"$translated\"")
                 out.add(Block(original = original, translated = translated, bbox = rect))
             }
             val txMs = System.currentTimeMillis() - txStart
