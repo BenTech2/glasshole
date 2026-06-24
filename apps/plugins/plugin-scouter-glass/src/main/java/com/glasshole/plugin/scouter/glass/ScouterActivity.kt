@@ -63,15 +63,22 @@ class ScouterActivity : Activity() {
     private enum class State { SCANNING, ANALYZING, LOCKED }
 
     private var camera: Camera? = null
-    /** TextureView instead of SurfaceView so the camera preview
-     *  composites within the activity's window hierarchy — SurfaceView
-     *  punches through its window space to a separate compositor
-     *  layer, and on EE2 that hand-off can race with surface creation
-     *  (we hit a "Failed to find layer in layer parent (no-parent)"
-     *  SurfaceFlinger crash that left the camera with a null surface
-     *  and the viewfinder black). TextureView avoids the punch-through
-     *  entirely. */
-    private lateinit var preview: TextureView
+
+    /** EE1/EE2: a TextureView, attached to the camera via
+     *  setPreviewTexture(textureView.surfaceTexture).
+     *  XE: a CameraGlView, attached via setPreviewTexture(its
+     *  GL-managed SurfaceTexture). Branched in [onCreate]; everything
+     *  downstream uses [previewSurfaceTexture] as the unified handle. */
+    private var preview: TextureView? = null
+    private var glPreview: CameraGlView? = null
+    /** The SurfaceTexture the camera writes into. EE1/EE2 grab it
+     *  from TextureView when its onSurfaceTextureAvailable fires;
+     *  XE gets it from CameraGlView's onSurfaceReady callback. */
+    private var previewSurfaceTexture: SurfaceTexture? = null
+    private val isXE: Boolean by lazy {
+        Build.MODEL?.equals("Glass 1", ignoreCase = true) == true
+    }
+
     private lateinit var overlay: ScannerOverlayView
     private var lastPreviewFrame: ByteArray? = null
     private var state: State = State.SCANNING
@@ -109,28 +116,53 @@ class ScouterActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
-        preview = TextureView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            isOpaque = true
-            // Vegeta-style red scouter filter — collapse green/blue
-            // channels to zero and weight the surviving red on luminance
-            // so dark frames stay dark, bright frames glow red-hot. The
-            // ColorMatrix is applied via the layer paint so the filter
-            // composites the texture as it's drawn rather than touching
-            // each frame in CPU.
-            val redMatrix = ColorMatrix(floatArrayOf(
-                1.1f, 0f,   0f,   0f, 15f,
-                0f,   0.2f, 0f,   0f, 0f,
-                0f,   0f,   0.15f, 0f, 0f,
-                0f,   0f,   0f,   1f, 0f
-            ))
-            val redPaint = Paint().apply {
-                colorFilter = ColorMatrixColorFilter(redMatrix)
+        // Branch the preview surface by edition. XE goes through a
+        // GLSurfaceView with an OES-external sampler shader — the
+        // only working YUV→display path on Adreno 305 KitKat. EE1/EE2
+        // use TextureView with a hardware ColorMatrix layer, which
+        // their newer Adreno drivers handle correctly.
+        if (isXE) {
+            glPreview = CameraGlView(this).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                setRedFilter(true)
+                setOnSurfaceReady { st ->
+                    // Fires on main thread (post() inside the
+                    // renderer). Stash the texture + open the camera
+                    // if we're already resumed.
+                    previewSurfaceTexture = st
+                    Log.i(TAG, "XE: GL SurfaceTexture ready, opening camera")
+                    openCameraIfNeeded()
+                }
             }
-            setLayerType(View.LAYER_TYPE_HARDWARE, redPaint)
+            root.addView(glPreview)
+        } else {
+            preview = TextureView(this).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                isOpaque = true
+                // Vegeta-style red scouter filter — collapse green/blue
+                // channels to zero and weight the surviving red on luminance
+                // so dark frames stay dark, bright frames glow red-hot. The
+                // ColorMatrix is applied via the layer paint so the filter
+                // composites the texture as it's drawn rather than touching
+                // each frame in CPU.
+                val redMatrix = ColorMatrix(floatArrayOf(
+                    1.1f, 0f,   0f,   0f, 15f,
+                    0f,   0.2f, 0f,   0f, 0f,
+                    0f,   0f,   0.15f, 0f, 0f,
+                    0f,   0f,   0f,   1f, 0f
+                ))
+                val redPaint = Paint().apply {
+                    colorFilter = ColorMatrixColorFilter(redMatrix)
+                }
+                setLayerType(View.LAYER_TYPE_HARDWARE, redPaint)
+            }
+            root.addView(preview)
         }
         overlay = ScannerOverlayView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -139,7 +171,6 @@ class ScouterActivity : Activity() {
             )
             setMode(ScannerOverlayView.Mode.SCANNING)
         }
-        root.addView(preview)
         root.addView(overlay)
         setContentView(root)
 
@@ -162,7 +193,10 @@ class ScouterActivity : Activity() {
             }
         })
 
-        preview.surfaceTextureListener = textureListener
+        // Wire surface readiness — TextureView path uses the listener
+        // that already exists; XE's GL view notifies via the
+        // setOnSurfaceReady callback wired above.
+        preview?.surfaceTextureListener = textureListener
 
         if (!hasCameraPermission()) {
             ActivityCompat.requestPermissions(
@@ -173,15 +207,35 @@ class ScouterActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        // Camera bind happens once the texture is available; if it's
-        // already there (e.g. coming back from background), open now.
-        if (preview.isAvailable) openCameraIfNeeded()
+        // GLSurfaceView keeps its own EGL context tied to onResume/
+        // onPause — call it before checking surface readiness so the
+        // renderer thread actually runs.
+        glPreview?.onResume()
+        // Camera bind happens once the surface is ready. For
+        // TextureView (EE1/EE2): check isAvailable. For CameraGlView
+        // (XE): previewSurfaceTexture is non-null once the GL thread
+        // has created the OES texture + fired our onSurfaceReady
+        // callback.
+        val ready = if (isXE) {
+            previewSurfaceTexture != null
+        } else {
+            preview?.isAvailable == true
+        }
+        if (ready) openCameraIfNeeded()
     }
 
     override fun onPause() {
         super.onPause()
         mainHandler.removeCallbacks(revealRunnable)
         releaseCamera()
+        // GL teardown: pause the renderer thread + release the OES
+        // texture / SurfaceTexture. The next onResume will spin a
+        // fresh GL context and re-fire onSurfaceReady. Null the
+        // surface reference so onResume doesn't open the camera with
+        // a stale texture before the new GL context is ready.
+        if (isXE) previewSurfaceTexture = null
+        glPreview?.releaseCamera()
+        glPreview?.onPause()
     }
 
     override fun onRequestPermissionsResult(
@@ -200,6 +254,7 @@ class ScouterActivity : Activity() {
 
     private val textureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) {
+            previewSurfaceTexture = s
             openCameraIfNeeded()
         }
         override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, w: Int, h: Int) {
@@ -208,6 +263,7 @@ class ScouterActivity : Activity() {
             // need to reconfigure here.
         }
         override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean {
+            previewSurfaceTexture = null
             releaseCamera()
             return true  // we own the SurfaceTexture; let TextureView release it
         }
@@ -222,15 +278,34 @@ class ScouterActivity : Activity() {
             val cam = Camera.open()
             camera = cam
             val params = cam.parameters
-            // Pick a preview size near the screen size — Glass display
-            // is 640×360. Camera1 won't necessarily give us exactly
-            // that, so pick the smallest that doesn't downsample
-            // grossly.
-            val target = 640 to 360
-            val best = params.supportedPreviewSizes.minByOrNull { sz ->
-                abs(sz.width - target.first) + abs(sz.height - target.second)
+            if (isXE) {
+                // Glass XE camera HAL (TI OMAP4) only handles
+                // string-based parameter setters correctly — the
+                // typed setPreviewSize(w,h) path triggers a tiled-
+                // YUV output mode that produces unreadable garbage
+                // through every standard consumer. The string API
+                // mirrors what the stock Glass GDK CameraManager
+                // sets and is the canonical correct sequence on XE:
+                params.set("preview-size", "640x360")
+                params.set("picture-size", "2528x1856")
+                params.set("preview-frame-rate", "30")
+                params.set("preview-fps-range", "30000,30000")
+                glPreview?.setCameraPreviewSize(640, 360)
+                Log.i(TAG, "XE: set Glass GDK preview params (string API)")
+            } else {
+                // Pick a preview size near the screen size — Glass
+                // display is 640×360. Camera1 won't necessarily give
+                // us exactly that, so pick the closest. EE1/EE2's
+                // Camera1 HALs handle the typed API correctly.
+                val target = 640 to 360
+                val best = params.supportedPreviewSizes.minByOrNull { sz ->
+                    abs(sz.width - target.first) + abs(sz.height - target.second)
+                }
+                if (best != null) {
+                    params.setPreviewSize(best.width, best.height)
+                    Log.i(TAG, "Picked preview size ${best.width}x${best.height}")
+                }
             }
-            if (best != null) params.setPreviewSize(best.width, best.height)
             // Continuous AF when supported — keeps the reticle sharp
             // as the wearer pans across a scene.
             if (params.supportedFocusModes.contains(Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO)) {
@@ -249,7 +324,16 @@ class ScouterActivity : Activity() {
                 Camera.getCameraInfo(0, info)
                 cam.setDisplayOrientation(info.orientation)
             } catch (_: Exception) {}
-            cam.setPreviewTexture(preview.surfaceTexture)
+            // Attach camera to whichever surface texture is ready —
+            // CameraGlView's OES-backed one on XE, or the
+            // TextureView's on EE1/EE2.
+            val st = previewSurfaceTexture ?: preview?.surfaceTexture
+            if (st == null) {
+                Log.w(TAG, "No SurfaceTexture available; aborting camera open")
+                releaseCamera()
+                return
+            }
+            cam.setPreviewTexture(st)
             cam.setPreviewCallback { data, _ ->
                 // Grab the latest frame for power-level hashing on
                 // capture. Cheap (just a reference swap, the array
@@ -257,6 +341,7 @@ class ScouterActivity : Activity() {
                 lastPreviewFrame = data
             }
             cam.startPreview()
+            Log.i(TAG, "Camera preview started")
         } catch (e: Exception) {
             Log.e(TAG, "Camera open failed: ${e.message}")
             releaseCamera()
@@ -265,12 +350,18 @@ class ScouterActivity : Activity() {
 
     @Suppress("DEPRECATION")
     private fun releaseCamera() {
-        try {
-            camera?.setPreviewCallback(null)
-            camera?.stopPreview()
-        } catch (_: Exception) {}
-        try { camera?.release() } catch (_: Exception) {}
+        // The TI OMAP4 camera HAL on Glass XE wedges if the camera
+        // isn't released in this exact order — callback null,
+        // stopPreview, detach surface, release. Skipping any step
+        // can leave the HAL in a state where the next Camera.open()
+        // returns "Fail to connect to camera service" until reboot.
+        val cam = camera ?: return
         camera = null
+        try { cam.setPreviewCallback(null) } catch (_: Exception) {}
+        try { cam.stopPreview() } catch (_: Exception) {}
+        try { cam.setPreviewTexture(null) } catch (_: Exception) {}
+        try { cam.release() } catch (_: Exception) {}
+        Log.i(TAG, "Camera released")
     }
 
     private fun hasCameraPermission(): Boolean {
