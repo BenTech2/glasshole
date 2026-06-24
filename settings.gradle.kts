@@ -91,6 +91,8 @@ project(":plugin-chat-glass").projectDir = file("apps/plugins/plugin-chat-glass"
 // project(":plugin-nav-glass").projectDir = file("apps/plugins/plugin-nav-glass")
 include(":plugin-compass-glass")
 project(":plugin-compass-glass").projectDir = file("apps/plugins/plugin-compass-glass")
+include(":plugin-skymap-glass")
+project(":plugin-skymap-glass").projectDir = file("apps/plugins/plugin-skymap-glass")
 include(":plugin-scouter-glass")
 project(":plugin-scouter-glass").projectDir = file("apps/plugins/plugin-scouter-glass")
 include(":plugin-translate-glass")
