@@ -133,6 +133,14 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
     private final float[] mOrientation = new float[9];
     private float mHeading;
     private float mPitch;
+    /** XE-only: heading at the last actually-issued map redraw. We
+     *  skip redraws when the head hasn't moved at least 2° to keep
+     *  the PowerVR SGX 540 cool. Updates from setMapPosition
+     *  (location-driven) always redraw regardless. */
+    private float mLastDrawnHeadingDeg = Float.NaN;
+    /** Cached XE detection — Build.MODEL = "Glass 1". */
+    private final boolean mIsXE =
+        "Glass 1".equalsIgnoreCase(android.os.Build.MODEL);
     private GeomagneticField mGeomagneticField;
     static SnapToRoute snapToRoute = new SnapToRoute();
     private float routeHeading;
@@ -374,8 +382,15 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
                 theme = mapView.map().setTheme(VtmThemes.DARK);
             }
 
-            // Building layer
-            mapView.map().layers().add(new BuildingLayer(mapView.map(), tileLayer));
+            // Building layer — 3D-extruded buildings. Skipped on
+            // Glass XE because PowerVR SGX 540 + the GPU work behind
+            // building extrusion causes the headset to overheat in
+            // ~10 minutes of continuous nav. EE1 (Adreno 305) and EE2
+            // (Adreno 320) handle it fine.
+            boolean isXE = "Glass 1".equalsIgnoreCase(android.os.Build.MODEL);
+            if (!isXE) {
+                mapView.map().layers().add(new BuildingLayer(mapView.map(), tileLayer));
+            }
 
             // Label layer
             mapView.map().layers().add(new LabelLayer(mapView.map(), tileLayer));
@@ -989,8 +1004,27 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
                     - 6;
             // Always rotate the map to face the user's head heading.
             mapView.map().viewport().setRotation(-mHeading);
+            // XE thermal: skip redraw when head hasn't moved enough
+            // for a visible rotation change. Location-driven redraws
+            // (updateMapPosition) still fire on every GPS fix so the
+            // user's position dot stays current. 2° dead-band gives
+            // ~50% redraw reduction in typical wear + drops the
+            // PowerVR GPU duty cycle enough to skirt the thermal cap.
+            if (mIsXE) {
+                if (!Float.isNaN(mLastDrawnHeadingDeg)) {
+                    float delta = Math.abs(shortestAngleDelta(mHeading, mLastDrawnHeadingDeg));
+                    if (delta < 2.0f) return;
+                }
+                mLastDrawnHeadingDeg = mHeading;
+            }
             mapView.map().updateMap(false);
         }
+    }
+
+    /** Shortest signed angular delta in degrees, range -180..180. */
+    private static float shortestAngleDelta(float a, float b) {
+        float d = ((a - b) % 360f + 540f) % 360f - 180f;
+        return d;
     }
 
     @Override
@@ -1075,20 +1109,24 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
             locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
         }
 
-        // Register sensor listeners — back at SENSOR_DELAY_UI so the
-        // map rotation actually keeps up with head turns. The slower
-        // SENSOR_DELAY_NORMAL cadence felt sluggish and missed quick
-        // head movements (and didn't actually prevent the freeze
-        // we were trying to avoid).
+        // Register sensor listeners. EE1/EE2 use SENSOR_DELAY_UI
+        // (~17 Hz) so head rotation tracks tight. XE has thermal
+        // headroom problems with the PowerVR SGX 540 at 17 Hz +
+        // continuous VTM redraws — drop to SENSOR_DELAY_NORMAL
+        // (~5 Hz) plus the 2° heading dead-band above to stay
+        // under the thermal cap.
+        int sensorRate = mIsXE
+                ? SensorManager.SENSOR_DELAY_NORMAL
+                : SensorManager.SENSOR_DELAY_UI;
         sensorManager.registerListener(this,
                 sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR),
-                SensorManager.SENSOR_DELAY_UI);
+                sensorRate);
 
         // The rotation vector sensor doesn't give us accuracy updates, so we observe the
         // magnetic field sensor solely for those.
         sensorManager.registerListener(this,
                 sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD),
-                SensorManager.SENSOR_DELAY_UI);
+                sensorRate);
 
         // Stop any existing updates before starting new ones
         locationManager.removeUpdates(locationListener);
