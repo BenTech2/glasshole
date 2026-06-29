@@ -1141,6 +1141,7 @@ class BluetoothListenerService : Service() {
                 if (existing != null) {
                     @Suppress("DEPRECATION")
                     wifi.enableNetwork(existing.networkId, true)
+                    @Suppress("DEPRECATION") wifi.saveConfiguration()
                     sendPluginMessage("base", "WIFI_CONNECT_RESULT",
                         JSONObject().apply {
                             put("ok", true); put("reason", "existing")
@@ -1155,6 +1156,11 @@ class BluetoothListenerService : Service() {
                 @Suppress("DEPRECATION") wifi.disconnect()
                 @Suppress("DEPRECATION") wifi.enableNetwork(netId, true)
                 @Suppress("DEPRECATION") wifi.reconnect()
+                // See XE copy: saveConfiguration() persists the new
+                // network to wpa_supplicant's on-disk config so it
+                // auto-reconnects on reboot. No-op on API 26+ which
+                // handles persistence by UID instead.
+                @Suppress("DEPRECATION") wifi.saveConfiguration()
                 sendPluginMessage("base", "WIFI_CONNECT_RESULT",
                     JSONObject().apply {
                         put("ok", true); put("reason", "added")

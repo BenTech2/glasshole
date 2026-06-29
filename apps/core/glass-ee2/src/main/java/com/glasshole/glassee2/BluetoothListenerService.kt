@@ -785,6 +785,7 @@ class BluetoothListenerService : Service() {
                 if (existing != null) {
                     @Suppress("DEPRECATION")
                     wifi.enableNetwork(existing.networkId, true)
+                    @Suppress("DEPRECATION") wifi.saveConfiguration()
                     sendPluginMessage("base", "WIFI_CONNECT_RESULT",
                         JSONObject().apply {
                             put("ok", true); put("reason", "existing")
@@ -799,6 +800,12 @@ class BluetoothListenerService : Service() {
                 @Suppress("DEPRECATION") wifi.disconnect()
                 @Suppress("DEPRECATION") wifi.enableNetwork(netId, true)
                 @Suppress("DEPRECATION") wifi.reconnect()
+                // saveConfiguration() is a documented no-op on API 26+
+                // (EE2's range) since the framework persists app-added
+                // networks by UID. Kept here so the same code path
+                // works on EE1 / XE where it's required for the
+                // network to survive a reboot.
+                @Suppress("DEPRECATION") wifi.saveConfiguration()
                 sendPluginMessage("base", "WIFI_CONNECT_RESULT",
                     JSONObject().apply {
                         put("ok", true); put("reason", "added")

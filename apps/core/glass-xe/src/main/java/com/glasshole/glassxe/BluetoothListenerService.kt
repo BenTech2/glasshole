@@ -1126,6 +1126,7 @@ class BluetoothListenerService : Service() {
                 if (existing != null) {
                     @Suppress("DEPRECATION")
                     wifi.enableNetwork(existing.networkId, true)
+                    @Suppress("DEPRECATION") wifi.saveConfiguration()
                     sendPluginMessage("base", "WIFI_CONNECT_RESULT",
                         JSONObject().apply {
                             put("ok", true); put("reason", "existing")
@@ -1140,6 +1141,13 @@ class BluetoothListenerService : Service() {
                 @Suppress("DEPRECATION") wifi.disconnect()
                 @Suppress("DEPRECATION") wifi.enableNetwork(netId, true)
                 @Suppress("DEPRECATION") wifi.reconnect()
+                // CRITICAL on KitKat / Marshmallow: addNetwork() only
+                // updates wpa_supplicant's in-memory state. Without
+                // saveConfiguration(), the config is gone on reboot
+                // and the network won't auto-reconnect. On API 26+ this
+                // is a documented no-op (and the system handles
+                // persistence by UID), so safe to call across editions.
+                @Suppress("DEPRECATION") wifi.saveConfiguration()
                 sendPluginMessage("base", "WIFI_CONNECT_RESULT",
                     JSONObject().apply {
                         put("ok", true); put("reason", "added")
