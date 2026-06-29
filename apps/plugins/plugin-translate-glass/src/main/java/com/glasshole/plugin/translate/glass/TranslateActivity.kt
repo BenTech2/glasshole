@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ImageFormat
@@ -90,6 +91,15 @@ class TranslateActivity : Activity() {
     private var previewW = 640
     private var previewH = 360
 
+    /** Camera's natural sensor orientation in degrees — the angle
+     *  setDisplayOrientation was called with to make the preview look
+     *  upright. The raw NV21 buffer from setPreviewCallback comes
+     *  out in the SENSOR's frame (not the display's), so the
+     *  captured still has to be rotated by this angle to match what
+     *  the user saw in the viewfinder. 0 on Glass XE (special case
+     *  — we pass 0 above), typically 90 on EE1/EE2. */
+    private var captureRotationDeg: Int = 0
+
     // UI layers
     private lateinit var root: FrameLayout
     private lateinit var reticle: ReticleView
@@ -172,7 +182,14 @@ class TranslateActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
             visibility = View.GONE
-            scaleType = ImageView.ScaleType.FIT_CENTER
+            // CENTER_CROP makes the frozen bitmap fill the screen the
+            // same way the viewfinder did (scaling to fit width or
+            // height, whichever is larger; the other dim is cropped).
+            // With a portrait-rotated 480×640 bitmap in a 640×360
+            // ImageView, that maps to a horizontally-centered 640×~853
+            // image clipped to the middle 640×360 — same content the
+            // user saw in the live preview, no letter-boxing.
+            scaleType = ImageView.ScaleType.CENTER_CROP
         }
         root.addView(frozenView)
 
@@ -306,14 +323,30 @@ class TranslateActivity : Activity() {
                 previewW = 640; previewH = 360
                 glPreview?.setCameraPreviewSize(previewW, previewH)
             } else {
-                val target = 640 to 360
-                val best = params.supportedPreviewSizes.minByOrNull { sz ->
-                    Math.abs(sz.width - target.first) + Math.abs(sz.height - target.second)
-                }
-                if (best != null) {
-                    params.setPreviewSize(best.width, best.height)
-                    previewW = best.width; previewH = best.height
-                }
+                // EE1's camera is a PORTRAIT-native sensor (it only
+                // offers W×H sizes where height > width, like 360x640,
+                // 480x640, 720x1280…). setDisplayOrientation rotates
+                // the preview render so the user sees landscape, and
+                // we apply the same rotation to the captured bitmap
+                // (see [captureRotationDeg]) — so the rotated frame
+                // becomes (H × W). For a 640×360 screen, the ideal
+                // source is the portrait that rotates to 640×360,
+                // i.e. 360×640. Prefer that exactly; fall back to
+                // any portrait close to a 360×640-rotates-to-screen
+                // shape; finally fall back to anything available.
+                val supported = params.supportedPreviewSizes
+                Log.i(TAG, "Supported preview sizes: " +
+                    supported.joinToString { "${it.width}x${it.height}" })
+                val portrait = supported.filter { it.height > it.width }
+                val pick = portrait.firstOrNull { it.width == 360 && it.height == 640 }
+                    ?: portrait.minByOrNull {
+                        // After rotation the buffer becomes (height × width).
+                        // Score by closeness of that rotated shape to 640×360.
+                        Math.abs(it.height - 640) + Math.abs(it.width - 360)
+                    }
+                    ?: supported.first()
+                params.setPreviewSize(pick.width, pick.height)
+                previewW = pick.width; previewH = pick.height
             }
             // NV21 explicitly — we need to read raw frames out of
             // setPreviewCallback for the freeze + JPEG-encode path.
@@ -329,10 +362,12 @@ class TranslateActivity : Activity() {
             try {
                 if (isXE) {
                     cam.setDisplayOrientation(0)
+                    captureRotationDeg = 0
                 } else {
                     val info = Camera.CameraInfo()
                     Camera.getCameraInfo(0, info)
                     cam.setDisplayOrientation(info.orientation)
+                    captureRotationDeg = info.orientation
                 }
             } catch (_: Exception) {}
             val st = previewSurfaceTexture
@@ -428,12 +463,21 @@ class TranslateActivity : Activity() {
             statusBanner.text = "No frame yet — try again"
             return
         }
+        // NV21 = W*H*1.5 bytes. If this doesn't match, the camera is
+        // delivering a different geometry than we asked for and
+        // YuvImage will mis-render — the artefact looks like
+        // horizontal tiling. Log so we can spot it from logcat.
+        val expectedNv21 = previewW * previewH * 3 / 2
+        if (nv21.size != expectedNv21) {
+            Log.w(TAG, "NV21 buffer mismatch: got ${nv21.size} bytes, " +
+                "expected $expectedNv21 for ${previewW}x${previewH}")
+        }
 
         // YUV → frozen Bitmap for display + JPEG bytes for transport.
         // YuvImage's built-in JPEG codec works fine here because the
         // bytes ARE standard NV21 (we asked for it via params on EE1/
         // EE2; on XE the string-API path produces standard NV21 too).
-        val jpegBytes: ByteArray
+        var jpegBytes: ByteArray
         try {
             val baos = ByteArrayOutputStream(64 * 1024)
             YuvImage(nv21, ImageFormat.NV21, previewW, previewH, null)
@@ -445,8 +489,25 @@ class TranslateActivity : Activity() {
             return
         }
 
-        // Decode back to a Bitmap so we can show + later overlay on it.
-        val bmp = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+        // Decode + rotate so the frozen image matches what the user saw
+        // in the viewfinder. Raw NV21 comes out in the SENSOR's frame
+        // (setDisplayOrientation only rotates the preview render, not
+        // the callback buffer), so on EE1/EE2 we need to apply the
+        // same angle to the captured bitmap. Then we re-encode JPEG
+        // from the rotated bitmap and send THAT to the phone, so ML
+        // Kit OCR also sees an upright image.
+        var bmp = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+        if (bmp != null && captureRotationDeg != 0) {
+            val m = Matrix().apply { postRotate(captureRotationDeg.toFloat()) }
+            val rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+            if (rotated !== bmp) {
+                bmp.recycle()
+                bmp = rotated
+                val baos = ByteArrayOutputStream(64 * 1024)
+                bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, baos)
+                jpegBytes = baos.toByteArray()
+            }
+        }
         if (bmp != null) {
             frozenBitmap?.recycle()
             frozenBitmap = bmp
