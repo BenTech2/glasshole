@@ -58,6 +58,10 @@ class NotificationDisplayActivity : Activity() {
     private var currentIndex = 0
     private var counterText: TextView? = null
 
+    /** See XE copy. */
+    private var cardSwitcher: FrameLayout? = null
+    @Volatile private var swapInFlight: Boolean = false
+
     // Options overlay — shown when the user taps the card. Holds the
     // action list plus an always-present Dismiss at the end.
     private var overlayVisible: Boolean = false
@@ -77,6 +81,9 @@ class NotificationDisplayActivity : Activity() {
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
             WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
+
+        cardSwitcher = FrameLayout(this)
+        setContentView(cardSwitcher)
 
         val parsed = parseIntent()
         dismissMs = intent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
@@ -111,12 +118,49 @@ class NotificationDisplayActivity : Activity() {
         resetAutoDismiss()
     }
 
-    private fun showCurrent() {
+    /** See XE copy for the design note. */
+    private fun showCurrent(slideDir: Int = 0) {
         val parsed = stack.getOrNull(currentIndex) ?: run { finish(); return }
         notifKey = parsed.key
         actions = parsed.actions
         if (overlayVisible) hideOverlay()
-        setContentView(buildCardView(parsed))
+
+        val parent = cardSwitcher ?: run {
+            setContentView(buildCardView(parsed)); return
+        }
+        val newCard = buildCardView(parsed)
+        val oldCard = if (parent.childCount > 0) parent.getChildAt(0) else null
+
+        if (slideDir == 0 || oldCard == null) {
+            parent.removeAllViews()
+            parent.addView(newCard, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ))
+            return
+        }
+        val width = parent.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        parent.addView(newCard, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+        newCard.translationX = (slideDir * width).toFloat()
+        swapInFlight = true
+        newCard.animate()
+            .translationX(0f)
+            .setDuration(220L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+            .start()
+        oldCard.animate()
+            .translationX((-slideDir * width).toFloat())
+            .setDuration(220L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+            .withEndAction {
+                parent.removeView(oldCard)
+                swapInFlight = false
+            }
+            .start()
     }
 
     private fun playSoundFor(parsed: ParsedNotif) {
@@ -147,8 +191,9 @@ class NotificationDisplayActivity : Activity() {
 
     private fun cycleStack(delta: Int) {
         if (stack.size <= 1) return
+        if (swapInFlight) return
         currentIndex = ((currentIndex + delta) % stack.size + stack.size) % stack.size
-        showCurrent()
+        showCurrent(slideDir = delta)
         resetAutoDismiss()
     }
 
@@ -443,10 +488,11 @@ class NotificationDisplayActivity : Activity() {
                 text = "${currentIndex + 1} / ${stack.size}"
                 setTextColor(Color.WHITE)
                 setBackgroundColor(0x99000000.toInt())
-                val padH = (8 * resources.displayMetrics.density).toInt()
-                val padV = (3 * resources.displayMetrics.density).toInt()
+                val padH = (10 * resources.displayMetrics.density).toInt()
+                val padV = (4 * resources.displayMetrics.density).toInt()
                 setPadding(padH, padV, padH, padV)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             }
             val cParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
