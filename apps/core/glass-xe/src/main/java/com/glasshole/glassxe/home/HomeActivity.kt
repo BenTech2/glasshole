@@ -176,7 +176,9 @@ class HomeActivity : Activity() {
                 com.glasshole.glassxe.BaseSettings.KEY_BACKGROUND_FADE -> applyBackgroundFade()
                 com.glasshole.glassxe.BaseSettings.KEY_WALLPAPER_SCALE_MODE -> applyWallpaperScale()
                 com.glasshole.glassxe.BaseSettings.KEY_SHOW_BATTERY_PERCENT,
-                com.glasshole.glassxe.BaseSettings.KEY_SWAP_TOP_BAR -> cardAdapter.refreshTimeCard()
+                com.glasshole.glassxe.BaseSettings.KEY_SWAP_TOP_BAR,
+                com.glasshole.glassxe.BaseSettings.KEY_SHOW_STATS_OVERLAY,
+                com.glasshole.glassxe.BaseSettings.KEY_STATS_TEMP_UNIT -> cardAdapter.refreshTimeCard()
             }
         }
 

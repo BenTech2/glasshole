@@ -809,6 +809,20 @@ class BridgeService : Service() {
         return sendPluginMessage("base", "SET_SWAP_TOP_BAR", json)
     }
 
+    /** Debug stats overlay on the Home time card — CPU / RAM /
+     *  thermal one-liner pinned top-center. Default off. */
+    fun setShowStatsOverlay(enabled: Boolean): Boolean {
+        val json = org.json.JSONObject().put("enabled", enabled).toString()
+        return sendPluginMessage("base", "SET_SHOW_STATS_OVERLAY", json)
+    }
+
+    /** "F" or "C" — temperature unit for the stats overlay. */
+    fun setStatsTempUnit(unit: String): Boolean {
+        val safe = if (unit.equals("C", ignoreCase = true)) "C" else "F"
+        val json = org.json.JSONObject().put("unit", safe).toString()
+        return sendPluginMessage("base", "SET_STATS_TEMP_UNIT", json)
+    }
+
     /** Ask glass to enumerate its launcher activities + ship the list
      *  back via PLUGIN:base:LAUNCHER_APPS_LIST. The phone-side
      *  PinnedAppsActivity listens on onBaseMessage for the reply. */

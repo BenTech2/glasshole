@@ -510,6 +510,22 @@ class BluetoothListenerService : Service() {
                     .edit().putBoolean(BaseSettings.KEY_SHOW_BATTERY_PERCENT, enabled).apply()
                 sendBaseStateToPhone()
             }
+            "SET_SHOW_STATS_OVERLAY" -> {
+                val enabled = try { JSONObject(payload).optBoolean("enabled", false) }
+                    catch (_: Exception) { false }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putBoolean(BaseSettings.KEY_SHOW_STATS_OVERLAY, enabled).apply()
+                sendBaseStateToPhone()
+            }
+            "SET_STATS_TEMP_UNIT" -> {
+                val unit = try {
+                    val raw = JSONObject(payload).optString("unit", "F").uppercase()
+                    if (raw == "C") "C" else "F"
+                } catch (_: Exception) { "F" }
+                getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
+                    .edit().putString(BaseSettings.KEY_STATS_TEMP_UNIT, unit).apply()
+                sendBaseStateToPhone()
+            }
             "SET_SWAP_TOP_BAR" -> {
                 val enabled = try { JSONObject(payload).optBoolean("enabled", false) }
                     catch (_: Exception) { false }
@@ -739,6 +755,8 @@ class BluetoothListenerService : Service() {
             put("backgroundFade", prefs.getInt(BaseSettings.KEY_BACKGROUND_FADE, 0))
             put("wallpaperScaleMode", prefs.getString(BaseSettings.KEY_WALLPAPER_SCALE_MODE, "fit"))
             put("showBatteryPercent", prefs.getBoolean(BaseSettings.KEY_SHOW_BATTERY_PERCENT, true))
+            put("showStatsOverlay", prefs.getBoolean(BaseSettings.KEY_SHOW_STATS_OVERLAY, false))
+            put("statsTempUnit", prefs.getString(BaseSettings.KEY_STATS_TEMP_UNIT, "F"))
             put("swapTopBar", prefs.getBoolean(BaseSettings.KEY_SWAP_TOP_BAR, false))
             put("wallpaperOnSettings", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_SETTINGS, false))
             put("wallpaperOnAppDrawer", prefs.getBoolean(BaseSettings.KEY_WALLPAPER_ON_APP_DRAWER, false))

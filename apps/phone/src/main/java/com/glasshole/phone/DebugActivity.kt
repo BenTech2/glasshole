@@ -67,6 +67,11 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var replaySpinner: Spinner
     private lateinit var replayButton: Button
     private lateinit var replayRefreshButton: Button
+
+    private lateinit var statsOverlaySwitch: MaterialSwitch
+    private lateinit var statsTempUnitGroup: android.widget.RadioGroup
+    private lateinit var statsTempUnitF: android.widget.RadioButton
+    private lateinit var statsTempUnitC: android.widget.RadioButton
     private var replayEntries: List<NotificationReplayStore.Entry> = emptyList()
 
     // Cache-limit dropdown options. -1 maps to UNLIMITED in the store.
@@ -134,6 +139,12 @@ class DebugActivity : AppCompatActivity() {
         replaySpinner = findViewById(R.id.debugReplaySpinner)
         replayButton = findViewById(R.id.debugReplayButton)
         replayRefreshButton = findViewById(R.id.debugReplayRefreshButton)
+
+        statsOverlaySwitch = findViewById(R.id.debugStatsOverlaySwitch)
+        statsTempUnitGroup = findViewById(R.id.debugStatsTempUnitGroup)
+        statsTempUnitF = findViewById(R.id.debugStatsTempUnitF)
+        statsTempUnitC = findViewById(R.id.debugStatsTempUnitC)
+        setupStatsOverlayControls()
 
         sendButton.setOnClickListener { sendVariant(Variant.PLAIN) }
         sendReplyButton.setOnClickListener { sendVariant(Variant.REPLY) }
@@ -818,6 +829,45 @@ class DebugActivity : AppCompatActivity() {
         fileShareUrlText.text = "Not running."
         fileShareToggleButton.text = "Start file server"
         fileShareCopyButton.isEnabled = false
+    }
+
+    // --- Glass stats overlay (debug) ---
+
+    private fun setupStatsOverlayControls() {
+        // Cached on phone for UI continuity, but glass owns the
+        // authoritative copy via the standard SET_* round trip.
+        val prefs = getSharedPreferences("glasshole_prefs", Context.MODE_PRIVATE)
+
+        statsOverlaySwitch.isChecked = prefs.getBoolean("show_stats_overlay", false)
+        statsOverlaySwitch.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("show_stats_overlay", isChecked).apply()
+            val bridge = com.glasshole.phone.service.BridgeService.instance
+            if (bridge == null || !bridge.isConnected) {
+                Toast.makeText(this,
+                    "Glass not connected — will apply on next connect",
+                    Toast.LENGTH_SHORT).show()
+                return@setOnCheckedChangeListener
+            }
+            val sent = bridge.setShowStatsOverlay(isChecked)
+            Toast.makeText(this,
+                if (sent) "Stats overlay ${if (isChecked) "on" else "off"}"
+                else "Send failed",
+                Toast.LENGTH_SHORT).show()
+        }
+
+        // Temperature unit — default Fahrenheit (matches the
+        // BridgeService default + the BaseSettings default).
+        val savedUnit = prefs.getString("stats_temp_unit", "F") ?: "F"
+        if (savedUnit == "C") statsTempUnitC.isChecked = true
+        else statsTempUnitF.isChecked = true
+        statsTempUnitGroup.setOnCheckedChangeListener { _, checkedId ->
+            val unit = if (checkedId == R.id.debugStatsTempUnitC) "C" else "F"
+            prefs.edit().putString("stats_temp_unit", unit).apply()
+            val bridge = com.glasshole.phone.service.BridgeService.instance
+            if (bridge != null && bridge.isConnected) {
+                bridge.setStatsTempUnit(unit)
+            }
+        }
     }
 
     // --- Notification capture / replay (debug) ---

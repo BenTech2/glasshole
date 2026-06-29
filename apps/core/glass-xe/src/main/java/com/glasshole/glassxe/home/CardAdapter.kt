@@ -47,6 +47,44 @@ class CardAdapter(
     var mediaState: MediaState = MediaState.EMPTY
         private set
 
+    /** Debug-mode stats overlay state. The sampler runs only while
+     *  the time card is bound + the user has the overlay toggle on.
+     *  Cached snapshot lets the next bindTime paint immediately
+     *  without waiting for a fresh sample. */
+    private val systemStats = com.glasshole.glassxe.SystemStats()
+    private var statsCachedView: android.widget.TextView? = null
+    private var lastStatsText: String = ""
+    private val statsHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val statsRunnable = object : Runnable {
+        override fun run() {
+            val tv = statsCachedView ?: return
+            val prefs = context.getSharedPreferences(
+                com.glasshole.glassxe.BaseSettings.PREFS, Context.MODE_PRIVATE
+            )
+            if (!prefs.getBoolean(
+                com.glasshole.glassxe.BaseSettings.KEY_SHOW_STATS_OVERLAY, false
+            )) {
+                tv.visibility = View.GONE
+                return  // user turned it off — stop sampling
+            }
+            val useF = prefs.getString(
+                com.glasshole.glassxe.BaseSettings.KEY_STATS_TEMP_UNIT, "F"
+            ) == "F"
+            val text = com.glasshole.glassxe.SystemStats.format(
+                systemStats.sample(), useFahrenheit = useF
+            )
+            if (text.isNotEmpty()) {
+                lastStatsText = text
+                tv.text = text
+                tv.visibility = View.VISIBLE
+            }
+            // 2-second cadence — fast enough that CPU spikes show but
+            // not so fast that the readout is unreadable or burns
+            // measurable battery.
+            statsHandler.postDelayed(this, 2000L)
+        }
+    }
+
     fun setMediaState(state: MediaState) {
         mediaState = state
         val idx = cards.indexOf(CardType.MEDIA)
@@ -222,6 +260,27 @@ class CardAdapter(
         val phone = holder.itemView.findViewById<ImageView>(R.id.phoneStatusIcon)
         wifi?.visibility = if (isWifiConnected()) View.VISIBLE else View.GONE
         phone?.visibility = if (isPhoneConnected()) View.VISIBLE else View.GONE
+
+        // Stats overlay — cache the TextView ref so the periodic
+        // runnable can update without going through bindTime.
+        val statsOverlay = holder.itemView.findViewById<TextView>(R.id.statsOverlay)
+        statsCachedView = statsOverlay
+        val showStats = prefs.getBoolean(
+            com.glasshole.glassxe.BaseSettings.KEY_SHOW_STATS_OVERLAY, false
+        )
+        if (showStats && statsOverlay != null) {
+            // Paint the cached value immediately (no flicker on
+            // re-bind), then kick the sampler if it isn't running.
+            if (lastStatsText.isNotEmpty()) {
+                statsOverlay.text = lastStatsText
+                statsOverlay.visibility = View.VISIBLE
+            }
+            statsHandler.removeCallbacks(statsRunnable)
+            statsHandler.post(statsRunnable)  // immediate first sample
+        } else {
+            statsOverlay?.visibility = View.GONE
+            statsHandler.removeCallbacks(statsRunnable)
+        }
     }
 
     /** See EE2 copy for the design note. */

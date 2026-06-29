@@ -120,6 +120,12 @@ object BaseSettings {
      *  SET_PINNED_APPS; read by AppDrawerActivity on every load. */
     const val KEY_PINNED_APPS = "pinned_apps"
     const val PINNED_APPS_MAX = 4
+    /** Debug-mode stats overlay on the Home time card — CPU / RAM /
+     *  thermal one-liner pinned top-center. Phone-side debug screen
+     *  toggles this on. Default off. */
+    const val KEY_SHOW_STATS_OVERLAY = "show_stats_overlay"
+    /** "F" or "C" — temperature unit for the stats overlay. */
+    const val KEY_STATS_TEMP_UNIT = "stats_temp_unit"
 
     fun isNavInverted(context: android.content.Context): Boolean =
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)

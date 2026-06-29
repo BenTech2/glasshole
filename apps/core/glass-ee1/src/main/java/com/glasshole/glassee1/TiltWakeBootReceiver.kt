@@ -118,6 +118,9 @@ object BaseSettings {
     /** Pinned-apps CSV — see XE copy. */
     const val KEY_PINNED_APPS = "pinned_apps"
     const val PINNED_APPS_MAX = 4
+    /** Debug-mode stats overlay on the Home time card — see XE copy. */
+    const val KEY_SHOW_STATS_OVERLAY = "show_stats_overlay"
+    const val KEY_STATS_TEMP_UNIT = "stats_temp_unit"
 
     fun isNavInverted(context: android.content.Context): Boolean =
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)

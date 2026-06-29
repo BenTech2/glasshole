@@ -4,6 +4,23 @@
     android:layout_height="match_parent"
     android:background="@android:color/transparent">
 
+    <!-- Stats overlay — see XE copy for the design note. -->
+    <TextView
+        android:id="@+id/statsOverlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="14dp"
+        android:textSize="11sp"
+        android:textColor="#CCFFFFFF"
+        android:textStyle="bold"
+        android:fontFamily="sans-serif-medium"
+        android:shadowColor="#80000000"
+        android:shadowDx="0"
+        android:shadowDy="1"
+        android:shadowRadius="3"
+        android:visibility="gone" />
+
     <!-- Top status icons: phone (BT) and Wi-Fi. Each is hidden when
          the corresponding link is down — we intentionally show nothing
          rather than a "disconnected" placeholder. Default position is
