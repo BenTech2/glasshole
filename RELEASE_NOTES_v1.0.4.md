@@ -1,5 +1,30 @@
 # GlassHole v1.0.4
 
+> ⚠️ **Experimental plugins in this release.**
+> Four plugins ship as **experimental** — they work end-to-end but
+> have known rough edges and may have surprising behavior. File
+> issues if anything's broken; expect quality improvements in 1.0.5.
+>
+> - **GlassNav** — turn-by-turn navigation. Route fetches require
+>   data via the phone; offline tiles only after dropping `.map`
+>   files into `/sdcard/glasshole/maps/`. Plugin AIDL bind can drop
+>   (settings page won't load + share doesn't open the activity);
+>   restart the launcher to recover.
+> - **Translate** — tap-to-translate via on-device ML Kit. JP→EN
+>   quality on short/vertical signage is rough (`ポイ捨て禁止` →
+>   "Traveling" was a real test result). First use needs Wi-Fi on
+>   the phone to fetch the OCR + translation models (~55 MB).
+> - **SkyMap** — sensor-driven star / moon / planet overlay. Indoors
+>   without GPS the observer location falls back to a default
+>   mid-US point, so the alignment is fictional until you go
+>   outside with a fix. Magnetic interference (electronics, metal
+>   surfaces) makes the view drift; only ~70 brightest stars in
+>   the bundled catalog.
+> - **AI Assistant** — voice in, AI response on glass. Requires your
+>   own provider API key (OpenAI / Anthropic / Gemini). Response
+>   latency depends on the provider's API; failures show on glass
+>   as toast text rather than a structured retry UI.
+
 Headline change: **GlassNav** is now a fully ported, GPL-3.0-licensed
 plugin based on [CatotheCat11/GlassNav](https://github.com/CatotheCat11/GlassNav).
 Real VTM vector-tile rendering, Valhalla turn-by-turn navigation, head-
