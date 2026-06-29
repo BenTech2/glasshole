@@ -383,10 +383,11 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
             }
 
             // Building layer — 3D-extruded buildings. Skipped on
-            // Glass XE because PowerVR SGX 540 + the GPU work behind
-            // building extrusion causes the headset to overheat in
-            // ~10 minutes of continuous nav. EE1 (Adreno 305) and EE2
-            // (Adreno 320) handle it fine.
+            // Glass XE because the TI OMAP4 + PowerVR SGX 540 +
+            // building-extrusion GPU work causes the headset to
+            // overheat in ~10 minutes of continuous nav. EE1 and EE2
+            // run different SoCs (Snapdragon family) with more
+            // thermal headroom and handle it fine.
             boolean isXE = "Glass 1".equalsIgnoreCase(android.os.Build.MODEL);
             if (!isXE) {
                 mapView.map().layers().add(new BuildingLayer(mapView.map(), tileLayer));
