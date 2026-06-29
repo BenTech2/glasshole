@@ -809,9 +809,79 @@ class BridgeService : Service() {
         return sendPluginMessage("base", "SET_SWAP_TOP_BAR", json)
     }
 
+    /** Debug stats overlay on the Home time card — CPU / RAM /
+     *  thermal one-liner pinned top-center. Default off. */
+    fun setShowStatsOverlay(enabled: Boolean): Boolean {
+        val json = org.json.JSONObject().put("enabled", enabled).toString()
+        return sendPluginMessage("base", "SET_SHOW_STATS_OVERLAY", json)
+    }
+
+    /** "F" or "C" — temperature unit for the stats overlay. */
+    fun setStatsTempUnit(unit: String): Boolean {
+        val safe = if (unit.equals("C", ignoreCase = true)) "C" else "F"
+        val json = org.json.JSONObject().put("unit", safe).toString()
+        return sendPluginMessage("base", "SET_STATS_TEMP_UNIT", json)
+    }
+
+    /** Ask glass to enumerate its launcher activities + ship the list
+     *  back via PLUGIN:base:LAUNCHER_APPS_LIST. The phone-side
+     *  PinnedAppsActivity listens on onBaseMessage for the reply. */
+    fun requestLauncherApps(): Boolean =
+        sendPluginMessage("base", "LIST_LAUNCHER_APPS_REQ", "")
+
+    /** Push the user's pinned package list to glass. Capped at 4 on
+     *  the glass side; extra entries dropped silently. */
+    fun setPinnedApps(pkgs: List<String>): Boolean {
+        val arr = org.json.JSONArray()
+        pkgs.forEach { arr.put(it) }
+        val json = org.json.JSONObject().put("pkgs", arr).toString()
+        return sendPluginMessage("base", "SET_PINNED_APPS", json)
+    }
+
     /** Send a cached / fresh weather payload to glass. Pass null to
      *  tell glass "weather is off, hide the chip" — useful when the
      *  user disables the feature so the stale value doesn't linger. */
+    /** Proxy the AI Assistant plugin's ASK envelope through to the
+     *  selected provider, on a daemon thread (HTTP is blocking and
+     *  the BT read loop must keep moving). Replies with PLUGIN:ai:
+     *  RESPONSE on success or PLUGIN:ai:ERROR on failure so the glass
+     *  activity can render an actionable message. */
+    private fun handleAiAssistantAsk(payload: String) {
+        Thread {
+            val envelope = try { org.json.JSONObject(payload) } catch (e: Exception) {
+                replyAi("ERROR", "Bad envelope: ${e.message}")
+                return@Thread
+            }
+            val result = AiAssistantHttpClient.ask(envelope)
+            if (result.text != null) {
+                val reply = org.json.JSONObject().put("text", result.text).toString()
+                replyAi("RESPONSE", reply)
+            } else {
+                val reply = result.error.orEmpty().ifBlank { "Unknown failure" }
+                replyAi("ERROR", reply)
+            }
+        }.apply { isDaemon = true; name = "AiAssistant" }.start()
+    }
+
+    private fun replyAi(type: String, payload: String) {
+        Handler(Looper.getMainLooper()).post {
+            sendPluginMessage("ai", type, payload)
+        }
+    }
+
+    /** Re-fetch the glass-side plugin directory. Used by the Plugins
+     *  screen's refresh button after a new plugin manifest meta-data
+     *  ships (e.g. SCHEMA newly declared) — without this the phone's
+     *  in-memory PluginDirectory keeps the stale has_schema=false
+     *  flag and the settings gear stays hidden. */
+    fun requestPluginList(): Boolean {
+        if (!btConnected) return false
+        return try {
+            sendRaw(ProtocolCodec.encodePluginListReq())
+            true
+        } catch (_: Exception) { false }
+    }
+
     fun sendWeatherUpdate(result: WeatherFetcher.Result?): Boolean {
         val json = if (result == null) {
             org.json.JSONObject().put("enabled", false).toString()
@@ -1432,6 +1502,16 @@ class BridgeService : Service() {
                     } catch (e: Exception) {
                         Log.w(TAG, "onBaseMessage failed: ${e.message}")
                     }
+                }
+
+                // AI Assistant proxy: glass relies on the phone for the
+                // outbound provider HTTP call. Intercept before the
+                // workers/router dispatch so a registered worker
+                // primitive for "ai" doesn't shadow this and so we
+                // don't double-handle ASK in two places.
+                if (msg.pluginId == "ai" && msg.type == "ASK") {
+                    handleAiAssistantAsk(msg.payload)
+                    return
                 }
 
                 // Dynamic workers get every non-directory PLUGIN message.

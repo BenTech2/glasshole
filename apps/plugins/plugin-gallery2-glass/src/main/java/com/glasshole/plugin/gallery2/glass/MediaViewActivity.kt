@@ -1,10 +1,13 @@
 package com.glasshole.plugin.gallery2.glass
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
@@ -14,6 +17,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.MediaController
+import android.widget.TextView
 import android.widget.VideoView
 import java.io.File
 
@@ -30,6 +34,11 @@ class MediaViewActivity : Activity() {
 
     private var videoView: VideoView? = null
     private lateinit var backGestureDetector: GestureDetector
+    private var currentPath: String = ""
+    private var isVideoPath: Boolean = false
+    private var slideshowPill: TextView? = null
+    private val overlayHandler = Handler(Looper.getMainLooper())
+    private val overlayDismissRunnable = Runnable { hideSlideshowOverlay() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +61,8 @@ class MediaViewActivity : Activity() {
         val path = intent.getStringExtra(EXTRA_PATH)
         val isVideo = intent.getBooleanExtra(EXTRA_IS_VIDEO, false)
         if (path.isNullOrEmpty()) { finish(); return }
+        currentPath = path
+        isVideoPath = isVideo
 
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -87,10 +98,56 @@ class MediaViewActivity : Activity() {
                 )
             }
             root.addView(iv)
+
+            // "▶ Play slideshow" pill — appears on the FIRST tap and
+            // auto-dismisses after 3.5s. Tapping it (second tap)
+            // launches SlideshowActivity. Lets the user discover the
+            // feature without us hijacking single-photo viewing.
+            val pill = TextView(this).apply {
+                text = "▶  Play slideshow"
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                gravity = Gravity.CENTER
+                setBackgroundColor(0xCC212121.toInt())
+                setPadding(dp(18), dp(10), dp(18), dp(10))
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    gravity = Gravity.CENTER
+                }
+                visibility = View.GONE
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { startSlideshow() }
+            }
+            root.addView(pill)
+            slideshowPill = pill
         }
 
         setContentView(root)
     }
+
+    private fun showSlideshowOverlay() {
+        val pill = slideshowPill ?: return
+        pill.visibility = View.VISIBLE
+        overlayHandler.removeCallbacks(overlayDismissRunnable)
+        overlayHandler.postDelayed(overlayDismissRunnable, 3_500L)
+    }
+
+    private fun hideSlideshowOverlay() {
+        slideshowPill?.visibility = View.GONE
+        overlayHandler.removeCallbacks(overlayDismissRunnable)
+    }
+
+    private fun startSlideshow() {
+        hideSlideshowOverlay()
+        startActivity(Intent(this, SlideshowActivity::class.java)
+            .putExtra(SlideshowActivity.EXTRA_START_PATH, currentPath))
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     private fun loadScaled(path: String): android.graphics.Bitmap? {
         return try {
@@ -111,11 +168,6 @@ class MediaViewActivity : Activity() {
         }
     }
 
-    override fun onPause() {
-        videoView?.pause()
-        super.onPause()
-    }
-
     override fun onDestroy() {
         videoView?.stopPlayback()
         super.onDestroy()
@@ -127,12 +179,26 @@ class MediaViewActivity : Activity() {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                 val vv = videoView
                 if (vv != null) {
+                    // Video: keep existing play/pause behaviour.
                     if (vv.isPlaying) vv.pause() else vv.start()
+                } else {
+                    // Photo: toggle the slideshow-entry overlay. Two
+                    // taps in quick succession start playback (first
+                    // shows the pill, second is a click on the pill).
+                    val pill = slideshowPill
+                    if (pill?.visibility == View.VISIBLE) startSlideshow()
+                    else showSlideshowOverlay()
                 }
                 true
             }
             else -> super.onKeyDown(keyCode, event)
         }
+    }
+
+    override fun onPause() {
+        videoView?.pause()
+        overlayHandler.removeCallbacks(overlayDismissRunnable)
+        super.onPause()
     }
 
     @Deprecated("Deprecated in Java")

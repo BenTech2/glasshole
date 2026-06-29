@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">GlassNav</string>
+    <string name="copyright_osm">Map data © OpenStreetMap contributors</string>
+</resources>

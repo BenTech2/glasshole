@@ -54,4 +54,17 @@ dependencies {
     // key. Used by the SSH profile + key stores to protect saved
     // passwords and private keys at rest.
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // ML Kit on-device text recognition + translation — used by the
+    // Translate plugin. All inference runs locally on the phone after
+    // a one-time model download (~25 MB OCR + ~30 MB per translation
+    // language pair). Glass talks to the phone over BT; no network
+    // calls from glass or phone post-download. Multiple recognizers
+    // are pulled in so the user can switch source language without
+    // a re-install (each script is its own model).
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+    implementation("com.google.mlkit:translate:17.0.3")
 }

@@ -53,6 +53,24 @@ class NotificationDisplayActivity : Activity() {
     private var actions: List<NotifAction> = emptyList()
     private var pendingReplyActionId: String? = null
 
+    /** Stack of pending notifications. New arrivals append to the end
+     *  (or replace in place if their key matches an existing entry).
+     *  Swipe forward / back navigates between them; swipe down pops
+     *  the current entry. When the stack empties, the activity finishes. */
+    private val stack = mutableListOf<ParsedNotif>()
+    private var currentIndex = 0
+    private var counterText: TextView? = null
+
+    /** Stable parent the card view lives inside. setContentView happens
+     *  once in onCreate; subsequent showCurrent calls swap the child
+     *  inside this container so we can cross-slide between cards when
+     *  the user pages through the stack. */
+    private var cardSwitcher: FrameLayout? = null
+    /** Guards against re-entering cycleStack while a swap animation is
+     *  still in flight. Two fast swipes either chain cleanly or get
+     *  the second one ignored — never both halfway-animated. */
+    @Volatile private var swapInFlight: Boolean = false
+
     private var overlayVisible: Boolean = false
     private var overlaySelected: Int = 0
     private var optionsOverlay: LinearLayout? = null
@@ -75,13 +93,114 @@ class NotificationDisplayActivity : Activity() {
             WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
 
+        // Persistent container — every card view lives as a child so
+        // we can cross-slide between them when the user swipes through
+        // the stack. setContentView happens once; later showCurrent()
+        // calls add/remove children inside this frame.
+        cardSwitcher = FrameLayout(this)
+        setContentView(cardSwitcher)
+
         val parsed = parseIntent()
-        notifKey = parsed.key
-        actions = parsed.actions
         dismissMs = intent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
             .takeIf { it > 0L } ?: DEFAULT_DISMISS_MS
-        setContentView(buildCardView(parsed))
+        stack.add(parsed)
+        currentIndex = 0
+        showCurrent()
+        playSoundFor(parsed)
+        resetAutoDismiss()
+    }
 
+    /** A second (or third…) PLUGIN:base:NOTIFICATION lands while we're
+     *  already foreground: with `launchMode="singleTop"`, Android
+     *  routes it here instead of restarting us. Stash it on the stack
+     *  and jump the user to the newest one. Same-key updates replace
+     *  in place so a repost (e.g. progress notification) doesn't
+     *  duplicate. */
+    override fun onNewIntent(newIntent: Intent) {
+        super.onNewIntent(newIntent)
+        setIntent(newIntent)
+        val parsed = parseIntent()
+        val existing = stack.indexOfFirst {
+            it.key.isNotEmpty() && it.key == parsed.key
+        }
+        if (existing >= 0) {
+            stack[existing] = parsed
+            currentIndex = existing
+        } else {
+            stack.add(parsed)
+            currentIndex = stack.size - 1
+        }
+        // Honor the new notif's dismissMs only if it shortens the timer —
+        // multi-notif sessions should respect the most-cautious value.
+        val newDismiss = newIntent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
+        if (newDismiss in 1L..dismissMs) dismissMs = newDismiss
+        showCurrent()
+        playSoundFor(parsed)
+        resetAutoDismiss()
+    }
+
+    /** Tear down the current view and rebuild it from stack[currentIndex],
+     *  preserving the overlay state so users mid-action don't lose their
+     *  selection if a new notif lands. The stack counter ("2 / 5") is
+     *  baked into buildCardView, so this picks it up automatically.
+     *
+     *  [slideDir]  0  = instant swap (onCreate / new notif lands / dismiss)
+     *              +1 = forward (new card slides in from the right)
+     *              -1 = backward (new card slides in from the left)
+     *  Mirrors the notification-drawer cover-flow paging feel. */
+    private fun showCurrent(slideDir: Int = 0) {
+        val parsed = stack.getOrNull(currentIndex) ?: run { finish(); return }
+        notifKey = parsed.key
+        actions = parsed.actions
+        // Re-render closes any open overlay; user re-taps to bring it
+        // back. The alternative — preserving overlay across notif
+        // switches — gets confusing fast since actions are per-notif.
+        if (overlayVisible) hideOverlay()
+
+        val parent = cardSwitcher ?: run {
+            setContentView(buildCardView(parsed)); return
+        }
+        val newCard = buildCardView(parsed)
+        val oldCard = if (parent.childCount > 0) parent.getChildAt(0) else null
+
+        if (slideDir == 0 || oldCard == null) {
+            // Instant swap — first load, or stack mutated by something
+            // other than swipe navigation.
+            parent.removeAllViews()
+            parent.addView(newCard, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ))
+            return
+        }
+
+        // Slide-in animation. New card starts at +width (forward) or
+        // -width (backward); old card slides out the opposite way.
+        val width = parent.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        parent.addView(newCard, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+        newCard.translationX = (slideDir * width).toFloat()
+        swapInFlight = true
+        newCard.animate()
+            .translationX(0f)
+            .setDuration(220L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+            .start()
+        oldCard.animate()
+            .translationX((-slideDir * width).toFloat())
+            .setDuration(220L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+            .withEndAction {
+                parent.removeView(oldCard)
+                swapInFlight = false
+            }
+            .start()
+    }
+
+    private fun playSoundFor(parsed: ParsedNotif) {
         // Sound playback follows the EE2 design: global enabled + volume
         // prefs plus an optional per-app override keyed by source pkg.
         val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
@@ -95,8 +214,6 @@ class NotificationDisplayActivity : Activity() {
             } else ""
             NotifSoundPlayer.play(soundId, soundVolume)
         }
-
-        resetAutoDismiss()
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -120,11 +237,19 @@ class NotificationDisplayActivity : Activity() {
                 val dy = event.y - downY
                 val absDx = kotlin.math.abs(dx); val absDy = kotlin.math.abs(dy)
                 if (dy > 120 && absDy > absDx * 1.3f) {
-                    if (overlayVisible) hideOverlay() else finish()
+                    // Swipe down: cancel the overlay if open, otherwise
+                    // pop the current notification. If more are stacked,
+                    // we drop to the next; if we just popped the last,
+                    // finish().
+                    if (overlayVisible) hideOverlay() else dismissCurrent()
                     return true
                 }
                 if (absDx > 60 && absDx > absDy) {
+                    // Horizontal swipe: overlay cycles selection; with
+                    // no overlay AND multiple notifs stacked, paginate
+                    // between them.
                     if (overlayVisible) cycleOverlaySelection(if (dx > 0) 1 else -1)
+                    else if (stack.size > 1) cycleStack(if (dx > 0) 1 else -1)
                     return true
                 }
                 if (absDx < 25 && absDy < 25) {
@@ -136,13 +261,45 @@ class NotificationDisplayActivity : Activity() {
         return false
     }
 
+    /** Drop the current notif from the stack. Auto-advance to the next
+     *  remaining entry; finish() once nothing's left. */
+    private fun dismissCurrent() {
+        if (stack.isEmpty()) { finish(); return }
+        stack.removeAt(currentIndex.coerceIn(0, stack.size - 1))
+        if (stack.isEmpty()) { finish(); return }
+        currentIndex = currentIndex.coerceAtMost(stack.size - 1)
+        showCurrent()
+        resetAutoDismiss()
+    }
+
+    /** Move the cursor through the notif stack with wrap-around.
+     *  Triggers a horizontal slide animation matching the drawer's
+     *  cover-flow feel — drop input while a swap's already running so
+     *  a rapid double-swipe never leaves two cards halfway-animated. */
+    private fun cycleStack(delta: Int) {
+        if (stack.size <= 1) return
+        if (swapInFlight) return
+        currentIndex = ((currentIndex + delta) % stack.size + stack.size) % stack.size
+        showCurrent(slideDir = delta)
+        resetAutoDismiss()
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         resetAutoDismiss()
         if (overlayVisible) return handleOverlayKey(keyCode, event)
 
         return when (keyCode) {
-            KeyEvent.KEYCODE_BACK -> { finish(); true }
+            KeyEvent.KEYCODE_BACK -> { dismissCurrent(); true }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showOverlay(); true }
+            // EE2 maps swipe-forward → TAB and swipe-back → SHIFT+TAB.
+            // Mirror the gesture semantics from handleGesture: if more
+            // than one notif is stacked, navigate the stack.
+            KeyEvent.KEYCODE_TAB -> {
+                if (stack.size > 1) {
+                    cycleStack(if (event?.isShiftPressed == true) -1 else 1)
+                    true
+                } else super.onKeyDown(keyCode, event)
+            }
             else -> super.onKeyDown(keyCode, event)
         }
     }
@@ -299,12 +456,15 @@ class NotificationDisplayActivity : Activity() {
             })
         }
 
-        // XE-tuned text sizes — ~⅔ of EE1 to fit a 360px-tall display.
+        // Sizes match the drawer's page_notification.xml (36sp title /
+        // 28sp body / 22dp icons) so the popup and the drawer look
+        // consistent — the popup used to be ~⅔ those values which felt
+        // small next to the drawer card on the same screen.
         if (hasTitle) {
             val titleText = TextView(this).apply {
                 text = p.title
                 setTextColor(Color.WHITE)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 36f)
                 typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
                 setLineSpacing(0f, 1.02f)
                 maxLines = 2
@@ -316,9 +476,9 @@ class NotificationDisplayActivity : Activity() {
                     gravity = android.view.Gravity.CENTER_VERTICAL
                 }
                 row.addView(ImageView(this).apply {
-                    setImageBitmap(circularBitmap(titleIconBitmap, dp(28)))
-                    layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
-                        rightMargin = dp(8)
+                    setImageBitmap(circularBitmap(titleIconBitmap, dp(32)))
+                    layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+                        rightMargin = dp(10)
                     }
                 })
                 titleText.layoutParams = LinearLayout.LayoutParams(
@@ -336,12 +496,12 @@ class NotificationDisplayActivity : Activity() {
                 text = p.text
                 if (!hasTitle) {
                     setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 36f)
                     typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
                     maxLines = 4
                 } else {
                     setTextColor(0xFFDDDDDD.toInt())
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
                     typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
                     maxLines = if (hasPicture) 2 else 3
                 }
@@ -363,7 +523,7 @@ class NotificationDisplayActivity : Activity() {
         val hint = TextView(this).apply {
             text = "TAP FOR OPTIONS"
             setTextColor(0xFF4FC3F7.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             // letterSpacing is API 21+; on KitKat the label still renders
             // readable without the widened tracking.
@@ -388,6 +548,36 @@ class NotificationDisplayActivity : Activity() {
         overlay.visibility = View.GONE
         root.addView(overlay)
         optionsOverlay = overlay
+
+        // Stack counter ("3 / 7") at the top-right when more than one
+        // notification is queued. Tiny chip so it doesn't compete with
+        // the actual card. Hidden when only the current notif is in
+        // the stack to keep single-notif UX clean.
+        if (stack.size > 1) {
+            val counter = TextView(this).apply {
+                text = "${currentIndex + 1} / ${stack.size}"
+                setTextColor(Color.WHITE)
+                setBackgroundColor(0x99000000.toInt())
+                val padH = (10 * resources.displayMetrics.density).toInt()
+                val padV = (4 * resources.displayMetrics.density).toInt()
+                setPadding(padH, padV, padH, padV)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            }
+            val cParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                val m = (8 * resources.displayMetrics.density).toInt()
+                setMargins(m, m, m, m)
+            }
+            counter.layoutParams = cParams
+            root.addView(counter)
+            counterText = counter
+        } else {
+            counterText = null
+        }
 
         return root
     }
@@ -449,15 +639,15 @@ class NotificationDisplayActivity : Activity() {
         if (iconBitmap != null) {
             footer.addView(ImageView(this).apply {
                 setImageBitmap(iconBitmap)
-                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply {
-                    rightMargin = dp(6)
+                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                    rightMargin = dp(10)
                 }
             })
         }
         footer.addView(TextView(this).apply {
             text = app.uppercase()
             setTextColor(0xFF888888.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             if (Build.VERSION.SDK_INT >= 21) {
                 letterSpacing = 0.08f
@@ -471,7 +661,7 @@ class NotificationDisplayActivity : Activity() {
         footer.addView(TextView(this).apply {
             text = "now"
             setTextColor(0xFFDDDDDD.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
             maxLines = 1
         })

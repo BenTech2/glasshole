@@ -50,6 +50,18 @@ class NotificationDisplayActivity : Activity() {
     private var actions: List<NotifAction> = emptyList()
     private var pendingReplyActionId: String? = null
 
+    /** Stack of pending notifications. New arrivals append (or replace
+     *  in place if their key matches an existing entry); swipe
+     *  forward/back navigates between them; swipe down pops the
+     *  current entry. */
+    private val stack = mutableListOf<ParsedNotif>()
+    private var currentIndex = 0
+    private var counterText: TextView? = null
+
+    /** See XE copy. */
+    private var cardSwitcher: FrameLayout? = null
+    @Volatile private var swapInFlight: Boolean = false
+
     // Options overlay — shown when the user taps the card. Holds the
     // action list plus an always-present Dismiss at the end.
     private var overlayVisible: Boolean = false
@@ -70,22 +82,91 @@ class NotificationDisplayActivity : Activity() {
             WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
 
+        cardSwitcher = FrameLayout(this)
+        setContentView(cardSwitcher)
+
         val parsed = parseIntent()
-        notifKey = parsed.key
-        actions = parsed.actions
         dismissMs = intent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
             .takeIf { it > 0L } ?: DEFAULT_DISMISS_MS
-        setContentView(buildCardView(parsed))
+        stack.add(parsed)
+        currentIndex = 0
+        showCurrent()
+        playSoundFor(parsed)
+        resetAutoDismiss()
+    }
 
-        // Sound playback is gated by:
-        //   KEY_NOTIF_SOUND_ENABLED — master on/off
-        //   KEY_NOTIF_SOUND_VOLUME  — 0..100, applied to whichever
-        //                             sound source plays
-        //   notif_app_sounds[pkg]   — optional per-app override picked
-        //                             from the phone (built-in tone or
-        //                             uploaded file). Empty string or
-        //                             missing key falls back to the
-        //                             global beep.
+    /** singleTop launchMode reuses the existing instance for new
+     *  notifications — queue rather than replace. */
+    override fun onNewIntent(newIntent: Intent) {
+        super.onNewIntent(newIntent)
+        setIntent(newIntent)
+        val parsed = parseIntent()
+        val existing = stack.indexOfFirst {
+            it.key.isNotEmpty() && it.key == parsed.key
+        }
+        if (existing >= 0) {
+            stack[existing] = parsed
+            currentIndex = existing
+        } else {
+            stack.add(parsed)
+            currentIndex = stack.size - 1
+        }
+        val newDismiss = newIntent.getLongExtra("dismissMs", DEFAULT_DISMISS_MS)
+        if (newDismiss in 1L..dismissMs) dismissMs = newDismiss
+        showCurrent()
+        playSoundFor(parsed)
+        resetAutoDismiss()
+    }
+
+    /** See XE copy for the design note. */
+    private fun showCurrent(slideDir: Int = 0) {
+        val parsed = stack.getOrNull(currentIndex) ?: run { finish(); return }
+        notifKey = parsed.key
+        actions = parsed.actions
+        if (overlayVisible) hideOverlay()
+
+        val parent = cardSwitcher ?: run {
+            setContentView(buildCardView(parsed)); return
+        }
+        val newCard = buildCardView(parsed)
+        val oldCard = if (parent.childCount > 0) parent.getChildAt(0) else null
+
+        if (slideDir == 0 || oldCard == null) {
+            parent.removeAllViews()
+            parent.addView(newCard, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ))
+            return
+        }
+        val width = parent.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        parent.addView(newCard, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        ))
+        newCard.translationX = (slideDir * width).toFloat()
+        swapInFlight = true
+        newCard.animate()
+            .translationX(0f)
+            .setDuration(220L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+            .start()
+        oldCard.animate()
+            .translationX((-slideDir * width).toFloat())
+            .setDuration(220L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+            .withEndAction {
+                parent.removeView(oldCard)
+                swapInFlight = false
+            }
+            .start()
+    }
+
+    private fun playSoundFor(parsed: ParsedNotif) {
+        // KEY_NOTIF_SOUND_ENABLED master on/off + KEY_NOTIF_SOUND_VOLUME
+        // 0..100. Per-app override picked from the phone (built-in tone
+        // or uploaded file); empty string falls back to the global beep.
         val prefs = getSharedPreferences(BaseSettings.PREFS, MODE_PRIVATE)
         val soundEnabled = prefs.getBoolean(BaseSettings.KEY_NOTIF_SOUND_ENABLED, true)
         val soundVolume = prefs.getInt(BaseSettings.KEY_NOTIF_SOUND_VOLUME, 100)
@@ -97,7 +178,22 @@ class NotificationDisplayActivity : Activity() {
             } else ""
             NotifSoundPlayer.play(soundId, soundVolume)
         }
+    }
 
+    private fun dismissCurrent() {
+        if (stack.isEmpty()) { finish(); return }
+        stack.removeAt(currentIndex.coerceIn(0, stack.size - 1))
+        if (stack.isEmpty()) { finish(); return }
+        currentIndex = currentIndex.coerceAtMost(stack.size - 1)
+        showCurrent()
+        resetAutoDismiss()
+    }
+
+    private fun cycleStack(delta: Int) {
+        if (stack.size <= 1) return
+        if (swapInFlight) return
+        currentIndex = ((currentIndex + delta) % stack.size + stack.size) % stack.size
+        showCurrent(slideDir = delta)
         resetAutoDismiss()
     }
 
@@ -111,9 +207,19 @@ class NotificationDisplayActivity : Activity() {
         if (overlayVisible) return handleOverlayKey(keyCode, event)
 
         return when (keyCode) {
-            KeyEvent.KEYCODE_BACK -> { finish(); true }
+            // EE2 maps swipe-down → BACK. Pop the current notif off the
+            // stack; if there are more queued, we advance to the next
+            // automatically.
+            KeyEvent.KEYCODE_BACK -> { dismissCurrent(); true }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                 showOverlay(); true
+            }
+            // EE2 swipe-forward → TAB, swipe-back → SHIFT+TAB. When
+            // multiple notifs are queued, navigate the stack.
+            KeyEvent.KEYCODE_TAB -> {
+                if (stack.size > 1) {
+                    cycleStack(if (event?.isShiftPressed == true) -1 else 1); true
+                } else super.onKeyDown(keyCode, event)
             }
             else -> super.onKeyDown(keyCode, event)
         }
@@ -375,6 +481,33 @@ class NotificationDisplayActivity : Activity() {
         overlay.visibility = View.GONE
         root.addView(overlay)
         optionsOverlay = overlay
+
+        // Stack counter chip — only shown when multiple notifs queued.
+        if (stack.size > 1) {
+            val counter = TextView(this).apply {
+                text = "${currentIndex + 1} / ${stack.size}"
+                setTextColor(Color.WHITE)
+                setBackgroundColor(0x99000000.toInt())
+                val padH = (10 * resources.displayMetrics.density).toInt()
+                val padV = (4 * resources.displayMetrics.density).toInt()
+                setPadding(padH, padV, padH, padV)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            }
+            val cParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                val m = (8 * resources.displayMetrics.density).toInt()
+                setMargins(m, m, m, m)
+            }
+            counter.layoutParams = cParams
+            root.addView(counter)
+            counterText = counter
+        } else {
+            counterText = null
+        }
 
         return root
     }

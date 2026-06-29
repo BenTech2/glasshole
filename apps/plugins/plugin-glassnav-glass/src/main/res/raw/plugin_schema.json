@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "keep_screen_on",
+      "type": "checkbox",
+      "label": "Keep glass screen on while GlassNav is open",
+      "default": false
+    },
+    {
+      "key": "units",
+      "type": "radio",
+      "label": "Distance units",
+      "default": "imperial",
+      "options": [
+        { "value": "imperial", "label": "Miles / feet" },
+        { "value": "metric", "label": "Kilometers / meters" }
+      ]
+    },
+    {
+      "key": "default_route_mode",
+      "type": "radio",
+      "label": "Auto-start when route is shared",
+      "default": "ask",
+      "options": [
+        { "value": "ask", "label": "Ask each time on glass" },
+        { "value": "walk", "label": "Always walking" },
+        { "value": "cycle", "label": "Always cycling" },
+        { "value": "drive", "label": "Always driving" }
+      ]
+    },
+    {
+      "key": "eta_format",
+      "type": "radio",
+      "label": "ETA display",
+      "default": "arrival",
+      "options": [
+        { "value": "arrival", "label": "Arrival time (5:30 PM)" },
+        { "value": "remaining", "label": "Time remaining (30 min)" }
+      ]
+    },
+    {
+      "key": "speedometer_mode",
+      "type": "radio",
+      "label": "Show speedometer",
+      "default": "off",
+      "options": [
+        { "value": "off", "label": "Off" },
+        { "value": "nav_only", "label": "Only while navigating" },
+        { "value": "always", "label": "Always" }
+      ]
+    },
+    {
+      "key": "speedometer_position",
+      "type": "radio",
+      "label": "Speedometer position",
+      "default": "top_right",
+      "options": [
+        { "value": "top_right", "label": "Top-right corner" },
+        { "value": "bottom_right", "label": "Bottom-right corner" }
+      ]
+    }
+  ],
+  "workers": []
+}

@@ -1,0 +1,9 @@
+<resources>
+    <!-- Fullscreen, no system action bar — the activities all set
+         their own content (MapView, ListView). The title bar was
+         visible on EE2 because Theme.DeviceDefault has one by
+         default; XE / EE1 didn't show it because the upstream GDK
+         theme suppresses it. NoActionBar.Fullscreen normalizes the
+         look across editions. -->
+    <style name="AppTheme" parent="android:Theme.DeviceDefault.NoActionBar.Fullscreen"/>
+</resources>

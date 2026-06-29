@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "range_km",
+      "type": "radio",
+      "label": "Range — radius around you to track",
+      "default": "50",
+      "options": [
+        { "value": "20", "label": "20 km (~12 mi)" },
+        { "value": "50", "label": "50 km (~30 mi)" },
+        { "value": "100", "label": "100 km (~60 mi)" },
+        { "value": "200", "label": "200 km (~125 mi)" }
+      ]
+    },
+    {
+      "key": "min_altitude_ft",
+      "type": "radio",
+      "label": "Minimum altitude — hides surface vehicles and helicopters when set high",
+      "default": "0",
+      "options": [
+        { "value": "0",     "label": "All (no filter)" },
+        { "value": "1000",  "label": "≥ 1,000 ft" },
+        { "value": "5000",  "label": "≥ 5,000 ft" },
+        { "value": "10000", "label": "≥ 10,000 ft" }
+      ]
+    },
+    {
+      "key": "poll_interval_s",
+      "type": "radio",
+      "label": "Update interval — slower saves battery + OpenSky quota",
+      "default": "30",
+      "options": [
+        { "value": "10", "label": "10 seconds" },
+        { "value": "20", "label": "20 seconds" },
+        { "value": "30", "label": "30 seconds (default)" },
+        { "value": "60", "label": "60 seconds" }
+      ]
+    },
+    {
+      "key": "show_labels",
+      "type": "checkbox",
+      "label": "Show callsign + altitude labels on each aircraft",
+      "default": true
+    }
+  ]
+}

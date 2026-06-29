@@ -192,11 +192,20 @@ object WeatherFetcher {
      *  temperature_unit parameter so we don't need client-side math. */
     fun fetch(lat: Double, lon: Double, units: String): Result? {
         val tempUnit = if (units.equals("F", ignoreCase = true)) "fahrenheit" else "celsius"
+        // Also fetch the next-hour precipitation_probability so we can
+        // sanity-check the "current" weather_code. Open-Meteo's
+        // `current` endpoint can flag a WMO thunderstorm code (95-99)
+        // from any nowcast lightning / cumulonimbus signature, even
+        // when no precipitation is forecast for hours — the phantom-
+        // thunder pattern that bit us on a partly-cloudy day in
+        // Grand Rapids (code 95, precip 0%, Apple/Google both
+        // showed partly cloudy).
         val url = "$ENDPOINT?latitude=${"%.4f".format(lat)}&longitude=${"%.4f".format(lon)}" +
-            "&current=temperature_2m,weather_code,is_day" +
+            "&current=temperature_2m,weather_code,is_day,precipitation,cloud_cover" +
+            "&hourly=precipitation_probability" +
             "&daily=temperature_2m_max,temperature_2m_min" +
             "&temperature_unit=$tempUnit" +
-            "&timezone=auto&forecast_days=1"
+            "&timezone=auto&forecast_days=1&forecast_hours=2"
         val conn: HttpURLConnection = try {
             (URL(url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 8_000
@@ -231,11 +240,43 @@ object WeatherFetcher {
             val current = root.optJSONObject("current") ?: return null
             val daily = root.optJSONObject("daily")
             val temp = current.optDouble("temperature_2m", Double.NaN)
-            val code = current.optInt("weather_code", -1)
+            var code = current.optInt("weather_code", -1)
             val isDay = current.optInt("is_day", 1) == 1
+            val currentPrecip = current.optDouble("precipitation", 0.0)
             if (temp.isNaN() || code < 0) return null
             val high = daily?.optJSONArray("temperature_2m_max")?.optDouble(0, temp) ?: temp
             val low = daily?.optJSONArray("temperature_2m_min")?.optDouble(0, temp) ?: temp
+
+            // Phantom-thunder sanity check. If the WMO code says
+            // thunder (95-99) or showers (80-86) but neither current
+            // precipitation nor the next-hour probability shows any
+            // actual wet weather, downgrade to a plain-cloudy code
+            // so the user doesn't see a storm icon under a clear
+            // sky. Threshold: <30% next-hour probability + 0mm
+            // current precip = "it's not actually storming."
+            val nextHourPrecipProb = root.optJSONObject("hourly")
+                ?.optJSONArray("precipitation_probability")
+                ?.optInt(0, -1) ?: -1
+            val codeFlagsWetWeather = code in 80..99
+            val noPrecipObserved =
+                currentPrecip <= 0.0 &&
+                nextHourPrecipProb in 0..29
+            if (codeFlagsWetWeather && noPrecipObserved) {
+                // Downgrade target tracks cloud_cover (percent) so we
+                // pick a representative icon instead of always going
+                // straight to overcast.
+                val cloud = current.optInt("cloud_cover", 60)
+                val downgraded = when {
+                    cloud < 30 -> 1   // mainly clear → ic_weather_clear
+                    cloud < 70 -> 2   // partly cloudy
+                    else -> 3         // overcast
+                }
+                Log.i(TAG, "Phantom-thunder fix: WMO $code with " +
+                    "precip=${currentPrecip}mm next-hour prob=$nextHourPrecipProb% " +
+                    "cloud=$cloud% → downgrading to $downgraded")
+                code = downgraded
+            }
+
             Result(
                 tempCurrent = temp,
                 tempHigh = high,

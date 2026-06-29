@@ -37,7 +37,9 @@ class PluginsActivity : AppCompatActivity() {
     private val phoneCompanions: Map<String, Class<*>> = mapOf(
         "com.glasshole.plugin.notes.glass" to NotesActivity::class.java,
         "com.glasshole.plugin.calc.glass" to CalcHistoryActivity::class.java,
-        "com.glasshole.plugin.ssh.glass" to com.glasshole.phone.plugins.ssh.SshActivity::class.java
+        "com.glasshole.plugin.ssh.glass" to com.glasshole.phone.plugins.ssh.SshActivity::class.java,
+        "com.glasshole.plugin.glassnav.glass" to
+            com.glasshole.phone.plugins.nav.GlassNavCompanionActivity::class.java
     )
 
     private lateinit var listContainer: LinearLayout
@@ -70,6 +72,23 @@ class PluginsActivity : AppCompatActivity() {
 
         listContainer = findViewById(R.id.pluginsList)
         statusText = findViewById(R.id.pluginsStatus)
+
+        // Inline refresh button (the activity uses a NoActionBar theme,
+        // so an options-menu entry wouldn't render anywhere).
+        findViewById<ImageButton>(R.id.refreshPluginsButton).setOnClickListener {
+            val bridge = bridgeService
+            if (bridge == null || !bridge.isConnected) {
+                android.widget.Toast.makeText(
+                    this, "Glass not connected — connect to refresh",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
+            }
+            bridge.requestPluginList()
+            android.widget.Toast.makeText(
+                this, "Refreshing…", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     override fun onStart() {

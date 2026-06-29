@@ -251,10 +251,17 @@ class AppDrawerActivity : Activity() {
                 )
             )
         }
-        return apps.sortedWith(
+        // Stable order: user-pinned apps first (in pin order), then the
+        // rest sorted GlassHole-plugins-first → alphabetical.
+        val pinned = com.glasshole.glassxe.BaseSettings.getPinnedPackages(this)
+        val pinnedIndex = pinned.withIndex().associate { it.value to it.index }
+        val pinnedHits = apps.filter { it.pkg in pinnedIndex }
+            .sortedBy { pinnedIndex[it.pkg] }
+        val rest = apps.filterNot { it.pkg in pinnedIndex }.sortedWith(
             compareByDescending<AppEntry> { it.isGlassHole }
                 .thenBy { it.label.lowercase() }
         )
+        return pinnedHits + rest
     }
 
     /** Fade the overlay label out, swap its text, then fade it back in.

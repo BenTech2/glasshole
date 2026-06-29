@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Observer position. Coarse is enough — accurate-to-the-city
+         gives RA/Dec → AzAlt errors well under our display precision. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Glass GPS chip is present on all editions; rotation_vector
+         is present too. -->
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:label="SkyMap"
+        android:icon="@mipmap/ic_launcher"
+        android:hardwareAccelerated="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <!-- Glass touchpad gesture support — swipe-down dismisses. -->
+        <meta-data
+            android:name="com.google.android.glass.TouchEnabledApplication"
+            android:value="true" />
+
+        <service
+            android:name=".SkyMapPluginService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
+            </intent-filter>
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="skymap" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="SkyMap" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="Point your head at the sky — see constellations, the moon, and naked-eye planets overlaid in real-time. Offline; uses glass GPS + sensors only." />
+        </service>
+
+        <activity
+            android:name=".SkyMapActivity"
+            android:label="SkyMap"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.google.android.glass.category.DIRECTORY" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

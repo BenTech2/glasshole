@@ -75,9 +75,8 @@ class BroadcastActivity : Activity() {
 
     private val configReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val json = intent.getStringExtra(BroadcastGlassPluginService.EXTRA_CONFIG_JSON)
-                ?: return
-            BroadcastPrefs.save(this@BroadcastActivity, json)
+            // PluginConfigHandler has already persisted the new prefs
+            // before firing this broadcast — just re-read and apply.
             pendingConfig = BroadcastPrefs.load(this@BroadcastActivity)
             tryStart()
         }

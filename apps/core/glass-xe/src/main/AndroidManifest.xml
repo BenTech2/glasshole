@@ -109,6 +109,7 @@
             android:exported="false"
             android:taskAffinity=":notif"
             android:excludeFromRecents="true"
+            android:launchMode="singleTop"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
 
         <activity

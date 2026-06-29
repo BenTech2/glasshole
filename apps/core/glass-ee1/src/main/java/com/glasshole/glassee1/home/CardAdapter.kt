@@ -47,6 +47,38 @@ class CardAdapter(
     var mediaState: MediaState = MediaState.EMPTY
         private set
 
+    /** Debug-mode stats overlay — see XE copy for the design note. */
+    private val systemStats = com.glasshole.glassee1.SystemStats()
+    private var statsCachedView: android.widget.TextView? = null
+    private var lastStatsText: String = ""
+    private val statsHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val statsRunnable = object : Runnable {
+        override fun run() {
+            val tv = statsCachedView ?: return
+            val prefs = context.getSharedPreferences(
+                com.glasshole.glassee1.BaseSettings.PREFS, Context.MODE_PRIVATE
+            )
+            if (!prefs.getBoolean(
+                com.glasshole.glassee1.BaseSettings.KEY_SHOW_STATS_OVERLAY, false
+            )) {
+                tv.visibility = View.GONE
+                return
+            }
+            val useF = prefs.getString(
+                com.glasshole.glassee1.BaseSettings.KEY_STATS_TEMP_UNIT, "F"
+            ) == "F"
+            val text = com.glasshole.glassee1.SystemStats.format(
+                systemStats.sample(), useFahrenheit = useF
+            )
+            if (text.isNotEmpty()) {
+                lastStatsText = text
+                tv.text = text
+                tv.visibility = View.VISIBLE
+            }
+            statsHandler.postDelayed(this, 2000L)
+        }
+    }
+
     fun setMediaState(state: MediaState) {
         mediaState = state
         val idx = cards.indexOf(CardType.MEDIA)
@@ -119,10 +151,11 @@ class CardAdapter(
         }
     }
 
-    /** Fill in the About card with version + build counter. See EE2
-     *  copy for the design note. */
+    /** Fill in the About card with version + build counter + Wi-Fi MAC,
+     *  Bluetooth MAC and current IP address. */
     private fun bindAbout(holder: CardHolder) {
         val versionLine = holder.itemView.findViewById<TextView>(R.id.aboutVersionLine)
+        val network = holder.itemView.findViewById<TextView>(R.id.aboutNetwork)
         val pm = context.packageManager
         val versionName = try {
             pm.getPackageInfo(context.packageName, 0).versionName ?: "?"
@@ -132,6 +165,7 @@ class CardAdapter(
             pm.getPackageInfo(context.packageName, 0).versionCode
         } catch (_: Exception) { 0 }
         versionLine?.text = "v$versionName · build $versionCode"
+        network?.text = com.glasshole.glassee1.NetworkInfo.summary(context)
     }
 
     fun refreshTimeCard() {
@@ -218,6 +252,24 @@ class CardAdapter(
         val phone = holder.itemView.findViewById<ImageView>(R.id.phoneStatusIcon)
         wifi?.visibility = if (isWifiConnected()) View.VISIBLE else View.GONE
         phone?.visibility = if (isPhoneConnected()) View.VISIBLE else View.GONE
+
+        // Stats overlay — see XE copy for the design note.
+        val statsOverlay = holder.itemView.findViewById<TextView>(R.id.statsOverlay)
+        statsCachedView = statsOverlay
+        val showStats = prefs.getBoolean(
+            com.glasshole.glassee1.BaseSettings.KEY_SHOW_STATS_OVERLAY, false
+        )
+        if (showStats && statsOverlay != null) {
+            if (lastStatsText.isNotEmpty()) {
+                statsOverlay.text = lastStatsText
+                statsOverlay.visibility = View.VISIBLE
+            }
+            statsHandler.removeCallbacks(statsRunnable)
+            statsHandler.post(statsRunnable)
+        } else {
+            statsOverlay?.visibility = View.GONE
+            statsHandler.removeCallbacks(statsRunnable)
+        }
     }
 
     /** See EE2 copy for the design note. */
