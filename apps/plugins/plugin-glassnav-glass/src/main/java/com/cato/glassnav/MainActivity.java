@@ -141,6 +141,16 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
     /** Cached XE detection — Build.MODEL = "Glass 1". */
     private final boolean mIsXE =
         "Glass 1".equalsIgnoreCase(android.os.Build.MODEL);
+    /** EE2 detection. The GDK isn't installed (no `Sounds` class)
+     *  and SDK_INT is well past KitKat. Used to pick the
+     *  sensor-coordinate remap: XE/EE1 want (AXIS_X, AXIS_Z) for
+     *  the worn frame; EE2 reports orientation correctly without
+     *  any remap (its natural device frame matches the user-worn
+     *  frame). Using the XE remap on EE2 makes pitch couple into
+     *  azimuth, which manifests as the map rotating when you tilt
+     *  your head up/down. */
+    private final boolean mIsEE2 =
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O;
     private GeomagneticField mGeomagneticField;
     static SnapToRoute snapToRoute = new SnapToRoute();
     private float routeHeading;
@@ -309,7 +319,19 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
             e.printStackTrace();
         }
         tts = new TextToSpeech(this, this);
-        mGestureDetector = createGestureDetector(this);
+        // Glass GDK GestureDetector only exists on XE/EE1 (Android
+        // 4.4 with the Glass framework). On EE2 (8.1+, no GDK) the
+        // class isn't on the classpath and `new GestureDetector(…)`
+        // throws NoClassDefFoundError. Catch + fall through to the
+        // KeyEvent path in [onKeyDown] — EE2 delivers touchpad
+        // gestures as KeyEvents (tap = DPAD_CENTER, swipe-down =
+        // BACK, swipes left/right = SHIFT+TAB / TAB).
+        try {
+            mGestureDetector = createGestureDetector(this);
+        } catch (NoClassDefFoundError e) {
+            android.util.Log.i("GlassNav", "GDK gesture detector unavailable (EE2) — using KeyEvent fallback");
+            mGestureDetector = null;
+        }
         // GlassHole BT bridge: register a listener on our plugin
         // service so phone messages flow into the same handler the
         // upstream RFCOMM ConnectedThread used. Transport is owned by
@@ -990,8 +1012,13 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
             // Get the current heading from the sensor, then notify the listeners of the
             // change.
             SensorManager.getRotationMatrixFromVector(mRotationMatrix, event.values);
-            SensorManager.remapCoordinateSystem(mRotationMatrix, SensorManager.AXIS_X,
-                    SensorManager.AXIS_Z, mRotationMatrix);
+            if (!mIsEE2) {
+                // XE / EE1 need the Glass-worn remap (their natural
+                // device Y axis isn't aligned with the user's up,
+                // so heading "leaks" pitch otherwise).
+                SensorManager.remapCoordinateSystem(mRotationMatrix, SensorManager.AXIS_X,
+                        SensorManager.AXIS_Z, mRotationMatrix);
+            }
             SensorManager.getOrientation(mRotationMatrix, mOrientation);
 
             // Store the pitch (used to display a message indicating that the user's head
@@ -1230,6 +1257,150 @@ public class MainActivity extends Activity implements SensorEventListener, TextT
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
-        return onGenericMotionEvent(event);
+        // XE / EE1 path — feed the GDK detector via the original
+        // onGenericMotionEvent → mGestureDetector chain (the MapView
+        // doesn't get touch events on the older editions because the
+        // touchpad surfaces as SOURCE_TOUCHPAD on onGenericMotionEvent
+        // rather than as a finger on the screen).
+        if (mGestureDetector != null) {
+            return onGenericMotionEvent(event);
+        }
+        // EE2 path. The touchpad behaves like a real touchscreen here
+        // — MapView eats events for pan / pinch-to-zoom (which the
+        // user wants). We peek at the event BEFORE the view hierarchy
+        // sees it to fire tap / swipe-down ourselves, then forward to
+        // super so MapView still handles pan + pinch.
+        peekForEE2Gestures(event);
+        return super.dispatchTouchEvent(event);
+    }
+
+    /** Single-pointer gesture peek for EE2. Tracks DOWN/MOVE/UP
+     *  position + time without consuming the event so MapView still
+     *  gets to do its pan + pinch thing.
+     *
+     *  - Tap (single pointer, no movement, < 250 ms) → open Search
+     *  - Swipe down (dy > 100 px, dominant vertical) → finish
+     *
+     *  Multi-pointer gestures (pinch) reset state so we don't fire
+     *  spurious taps when the user lifts a second finger. */
+    private void peekForEE2Gestures(MotionEvent event) {
+        if (event.getPointerCount() > 1) {
+            mPadSwiped = true; // suppress tap on the eventual UP
+            return;
+        }
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                mDownPadX = event.getX();
+                mDownPadY = event.getY();
+                mPadDownTime = event.getEventTime();
+                mPadSwiped = false;
+                break;
+            case MotionEvent.ACTION_MOVE: {
+                float dx = event.getX() - mDownPadX;
+                float dy = event.getY() - mDownPadY;
+                if (Math.abs(dx) > 20f || Math.abs(dy) > 20f) {
+                    mPadSwiped = true;
+                }
+                break;
+            }
+            case MotionEvent.ACTION_UP:
+                long dt = event.getEventTime() - mPadDownTime;
+                float dx = event.getX() - mDownPadX;
+                float dy = event.getY() - mDownPadY;
+                // Tap = short, no movement.
+                if (!mPadSwiped && dt < 250L) {
+                    openSearch();
+                    break;
+                }
+                // Swipe-down = exit. Glass-style "swipe down" can
+                // either come through as a dominant-vertical drag
+                // OR (on EE2's worn touchpad orientation) as a
+                // mostly-horizontal motion in screen coords. Accept
+                // either — large dominant motion in ONE axis is
+                // enough.
+                float absDx = Math.abs(dx);
+                float absDy = Math.abs(dy);
+                boolean isDownSwipe = dy > 80f && absDy > absDx * 1.3f;
+                boolean isLongFastDrag = (absDx > 120f || absDy > 120f) && dt < 400L;
+                if (isDownSwipe || (isLongFastDrag && dy > absDx)) {
+                    finish();
+                }
+                break;
+        }
+    }
+    private long mPadDownTime = 0L;
+
+    /**
+     * EE2 fallback: when the GDK GestureDetector wasn't installed
+     * (because EE2 doesn't ship the Glass GDK), the touchpad fires
+     * KeyEvents instead of MotionEvents. Map them to the same
+     * actions the GDK detector handles on XE/EE1:
+     *
+     *   DPAD_CENTER (tap)       → open Search
+     *   BACK (swipe-down)       → finish
+     *   TAB (swipe-forward)     → zoom in one step
+     *   SHIFT+TAB (swipe-back)  → zoom out one step
+     *
+     * GDK scroll has variable delta; KeyEvents are discrete, so we
+     * pick a fixed zoom step per swipe (1.25× in / 0.8× out — same
+     * factor on either side so two swipes in opposite directions
+     * round-trip back to the same scale).
+     */
+    @Override
+    public boolean onKeyDown(int keyCode, android.view.KeyEvent event) {
+        if (mGestureDetector != null) {
+            // XE / EE1 path is handled by the GDK detector via
+            // onGenericMotionEvent — don't intercept keys.
+            return super.onKeyDown(keyCode, event);
+        }
+        // EE2 KeyEvent fallback. Same key map every other plugin
+        // (Gallery2 / Notes / Chat …) uses for the EE2 touchpad
+        // mapping.
+        switch (keyCode) {
+            case android.view.KeyEvent.KEYCODE_DPAD_CENTER:
+            case android.view.KeyEvent.KEYCODE_ENTER:
+                openSearch();
+                return true;
+            case android.view.KeyEvent.KEYCODE_BACK:
+                finish();
+                return true;
+            case android.view.KeyEvent.KEYCODE_TAB:
+                if (lastLocation != null) {
+                    boolean shift = event != null && event.isShiftPressed();
+                    applyDiscreteZoom(shift ? 0.8 : 1.25);
+                    return true;
+                }
+                return false;
+            case android.view.KeyEvent.KEYCODE_SHIFT_LEFT:
+            case android.view.KeyEvent.KEYCODE_SHIFT_RIGHT:
+                return true; // swallow the modifier
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    // EE2 touchpad tracking — see peekForEE2Gestures for details.
+    private float mDownPadX = 0f, mDownPadY = 0f;
+    private boolean mPadSwiped = false;
+
+    private void openSearch() {
+        if (lastLocation == null) return;
+        AudioManager am = (AudioManager) getApplicationContext()
+            .getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) am.playSoundEffect(AudioManager.FX_KEY_CLICK);
+        startActivity(new Intent(MainActivity.this, SearchActivity.class));
+    }
+
+    /** Apply a single-step zoom (forward swipe = bigger scale =
+     *  zoom in). Mirrors the math in the GDK ScrollListener but
+     *  with a fixed per-step factor instead of velocity-based. */
+    private void applyDiscreteZoom(double factor) {
+        scale = Math.max(0.1, scale * factor);
+        if (lastLocation == null || mapView == null) return;
+        mapView.map().setMapPosition(
+                lastLocation.getLatitude(),
+                lastLocation.getLongitude(),
+                scale
+        );
+        mapView.map().viewport().setRotation(-mHeading);
     }
 }
