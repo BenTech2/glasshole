@@ -238,6 +238,20 @@ class LicensesActivity : AppCompatActivity() {
                 "BSD-2-Clause / Public Domain",
                 "© OpenStreetMap contributors",
                 "https://nominatim.org/"
+            ),
+            License(
+                "OpenSky Network ADS-B feed",
+                "REST API v1",
+                "Custom (non-commercial)",
+                "© The OpenSky Network — data contributed by community ground receivers",
+                "https://opensky-network.org/"
+            ),
+            License(
+                "cpaczek/skylight (design inspiration for SkyTrack)",
+                "—",
+                "MIT (origin project)",
+                "© Caleb Paczek — SkyTrack is a from-scratch port of the AR aircraft-tracker concept",
+                "https://github.com/cpaczek/skylight"
             )
         )
     }

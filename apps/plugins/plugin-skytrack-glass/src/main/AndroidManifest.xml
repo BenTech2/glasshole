@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Observer position used to compute aircraft Az/Alt relative to
+         the user. Coarse is plenty — sub-km accuracy gives <0.1°
+         bearing error for aircraft at 5+ km horizontal distance. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:label="SkyTrack"
+        android:icon="@mipmap/ic_launcher"
+        android:hardwareAccelerated="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <meta-data
+            android:name="com.google.android.glass.TouchEnabledApplication"
+            android:value="true" />
+
+        <service
+            android:name=".SkyTrackPluginService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.glasshole.plugin.GLASS_PLUGIN" />
+            </intent-filter>
+            <meta-data android:name="com.glasshole.plugin.ID" android:value="skytrack" />
+            <meta-data android:name="com.glasshole.plugin.NAME" android:value="SkyTrack" />
+            <meta-data android:name="com.glasshole.plugin.DESCRIPTION"
+                android:value="AR overhead aircraft tracker — point your head, see real flights nearby. Inspired by cpaczek/skylight. Uses OpenSky public ADS-B feed via the phone (needs internet)." />
+            <meta-data android:name="com.glasshole.plugin.SCHEMA" android:resource="@raw/plugin_schema" />
+        </service>
+
+        <activity
+            android:name=".SkyTrackActivity"
+            android:label="SkyTrack"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.google.android.glass.category.DIRECTORY" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
