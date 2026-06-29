@@ -109,6 +109,14 @@ AR overhead-aircraft tracker. Inspired by the original idea behind [cpaczek/skyl
   source licenses. cpaczek/skylight is credited there too as design
   inspiration.
 
+## Notifications: stacking + swipe-to-navigate + bigger text
+
+The popup notification card got two related upgrades.
+
+- **Stacking.** When multiple notifications arrive close together, they queue up on a stack instead of overwriting each other. A `2 / 5` counter chip appears in the top-right corner whenever more than one notification is queued. Swipe **forward** / **back** to cycle through them. Swipe **down** still dismisses the current notification (the rest of the stack remains queued). The auto-dismiss timer resets on each interaction so you don't lose your place while reading.
+- **Slide-through animation.** Cycling between notifications now slides the new card in from the gesture-natural side while the old one exits the opposite way (220 ms decelerate ease) — same feel as the cover-flow paging in the notification drawer. A re-entry guard drops a second swipe while an animation is still running so the screen never shows two cards mid-flight.
+- **Drawer-matching text sizes (XE).** XE's popup card was sized about ⅔ as small as EE1/EE2 (and as the XE drawer card showing the same content). Bumped XE up to match — 36 sp title, 28 sp body, 32 dp title icon, 22 dp footer icon, 20 sp footer text. The `N / M` stack counter is 16 sp with a slightly heavier font weight on all three editions.
+
 ## Other changes
 
 - **About card** on the home carousel now shows the glass's Wi-Fi MAC,
@@ -126,3 +134,36 @@ AR overhead-aircraft tracker. Inspired by the original idea behind [cpaczek/skyl
 ## Install
 
 Standard release flow — install the matching launcher APK for each of your editions, plus the phone APK and any plugin APKs you want. The GlassNav plugin APK is ~12 MB (includes VTM native libs for four ABIs).
+
+## Commits since v1.0.3
+
+```
+2ac34ed Bump build counters for v1.0.4 release artifacts
+42b8020 GlassNav: full EE2 support — GDK fallbacks, gestures, no-remap sensor
+fbca374 Weather: defuse phantom-thunder icon on the main time card
+3f63166 Translate: fix capture orientation + aspect on EE1/EE2
+db42c43 v1.0.4 release notes: add SkyTrack plugin section + experimental note
+5abc411 SkyTrack plugin: overhead aircraft AR via OpenSky ADS-B
+7abe0bb v1.0.4 release notes: call out experimental plugins
+adbb749 SkyMap: fix orientation tracking on Glass — pitch axis was wrong
+54a51d9 Notification popup: match drawer text sizes + slide-through animation
+9577d0d GlassNav: correct stale EE1 GPU attribution in BuildingLayer comment
+77369db Wi-Fi: persist phone-driven network adds via saveConfiguration()
+dbbcfa2 Debug stats overlay: bump text to 15sp, drop the dark pill
+665b59e Debug: glass-side stats overlay (CPU / RAM / temp) on time card
+490b4a1 GlassNav: XE thermal mitigations (sensor + redraw + buildings)
+05c93fd SkyMap plugin — sensor-driven stars / Moon / planets overlay
+8243df7 Translate: render labels next to source text, not inside the bbox
+71d8238 Translate plugin — tap-to-translate with on-device ML Kit
+0d86cfa Scouter: fix Glass XE camera preview via GL OES sampler + string params
+1750762 Notification popup: stack multiple notifs + swipe to navigate
+16f29dd App Drawer pinned apps + open-source license refresh
+8a4a593 GlassNav polish + multi-region offline maps + network info on About card
+731c6df GlassNav plugin: faithful port of CatotheCat11/GlassNav (GPL-3.0)
+f7087b2 AI Assistant plugin + broadcast-legacy settings + Plugins refresh
+9ce3ee5 Gallery2: slideshow on glass + always-fresh phone schema
+e4bb5a2 Glass plugins: density fix for XE via SDK auto-merge
+6de25c8 Bump glassholeVersion to 1.0.4
+```
+
+[Full diff on GitHub](https://github.com/BenTech2/glasshole/compare/v1.0.3...v1.0.4)
