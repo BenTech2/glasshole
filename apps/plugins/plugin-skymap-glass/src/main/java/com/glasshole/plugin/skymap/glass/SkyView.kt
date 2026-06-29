@@ -35,6 +35,11 @@ class SkyView(context: Context) : View(context) {
     private var azCenter: Double = 0.0
     private var altCenter: Double = 0.0
     private var hasFix: Boolean = false
+    /** Raw + smoothed sensor readings so the on-screen debug HUD can
+     *  show us what's happening when the calibration feels off. */
+    private var debugRawAz: Float = 0f
+    private var debugRawPitch: Float = 0f
+    private var debugStarsAboveHorizon: Int = 0
 
     private val starPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -79,6 +84,7 @@ class SkyView(context: Context) : View(context) {
         utcMillis: Long,
         azCenterDeg: Double, altCenterDeg: Double,
         hasFix: Boolean,
+        rawAz: Float = 0f, rawPitch: Float = 0f,
     ) {
         this.latDeg = latDeg
         this.lonDeg = lonDeg
@@ -86,8 +92,15 @@ class SkyView(context: Context) : View(context) {
         this.azCenter = azCenterDeg
         this.altCenter = altCenterDeg
         this.hasFix = hasFix
+        this.debugRawAz = rawAz
+        this.debugRawPitch = rawPitch
         invalidate()
     }
+
+    /** When true, paint a small overlay listing raw + smoothed sensor
+     *  readings + above-horizon star count. Used to calibrate the
+     *  pitch sign / coordinate remap. */
+    var debugOverlay: Boolean = false
 
     /** Project a sky point (Az, Alt) to screen pixels (cx + sx, cy - sy).
      *  Returns null if it's off-screen. */
@@ -119,11 +132,13 @@ class SkyView(context: Context) : View(context) {
         // Stars from the catalog. Skip below-horizon stars to save
         // draw calls.
         val starScreen = HashMap<String, FloatArray>(StarCatalog.stars.size)
+        var aboveHorizon = 0
         for (star in StarCatalog.stars) {
             val (az, alt) = AstroMath.raDecToAzAlt(
                 star.raHours, star.decDeg, latDeg, lonDeg, jd
             ).let { it[0] to it[1] }
             if (alt < -2.0) continue  // below horizon
+            aboveHorizon++
             val pt = toScreen(az, alt, w, h) ?: continue
             // Size by magnitude. Brightest ~3.5 px radius, dimmest ~0.8 px.
             val mag = star.magnitude.coerceIn(-2.0, 5.0)
@@ -155,10 +170,43 @@ class SkyView(context: Context) : View(context) {
             drawBody(canvas, p, w, h, isMoon = false)
         }
 
+        debugStarsAboveHorizon = aboveHorizon
+
         // HUD overlays.
         drawCompassStrip(canvas, w, h)
         drawAltitudeTick(canvas, w, h)
         drawStatusBanner(canvas, w, h)
+        if (debugOverlay) drawDebugHud(canvas, w, h)
+    }
+
+    /** Center-screen debug HUD — shows what the sensors say + what
+     *  the activity is feeding the projection. Toggle via tap. */
+    private fun drawDebugHud(canvas: Canvas, w: Int, h: Int) {
+        val lines = listOf(
+            "rawAz   = ${"%6.1f".format(debugRawAz.toDouble())}°",
+            "rawPitch= ${"%6.1f".format(debugRawPitch.toDouble())}°",
+            "azCtr   = ${"%6.1f".format(azCenter)}°",
+            "altCtr  = ${"%6.1f".format(altCenter)}°",
+            "stars↑h = $debugStarsAboveHorizon",
+        )
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFFFFF00.toInt()
+            textSize = 16f
+            typeface = Typeface.MONOSPACE
+        }
+        val bg = Paint().apply {
+            color = 0xCC000000.toInt()
+        }
+        val padding = 8f
+        val lineH = 20f
+        val boxW = 200f
+        val boxH = lines.size * lineH + padding * 2f
+        canvas.drawRect(8f, h / 2f - boxH / 2f, 8f + boxW, h / 2f + boxH / 2f, bg)
+        var y = h / 2f - boxH / 2f + padding + 14f
+        for (line in lines) {
+            canvas.drawText(line, 14f, y, paint)
+            y += lineH
+        }
     }
 
     private fun drawBody(

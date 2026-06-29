@@ -50,8 +50,13 @@ class SkyMapActivity : Activity(), SensorEventListener {
     companion object {
         private const val TAG = "SkyMapActivity"
         private const val LOC_PERM_REQUEST = 3001
-        private const val HEADING_SMOOTH = 0.18f
-        private const val PITCH_SMOOTH = 0.20f
+        // Higher = snappier head tracking, more jitter. 0.35 is the
+        // sweet spot we found by feel — low enough to mask sensor
+        // noise (especially indoors with magnetic interference)
+        // without making the view feel like it's dragging behind
+        // the user's head movement.
+        private const val HEADING_SMOOTH = 0.35f
+        private const val PITCH_SMOOTH = 0.35f
 
         /** Default observer location if the glass has no GPS fix
          *  yet — center of the continental US, so the constellations
@@ -71,6 +76,8 @@ class SkyMapActivity : Activity(), SensorEventListener {
 
     @Volatile private var lastAz: Float = 0f
     @Volatile private var lastAlt: Float = 0f
+    @Volatile private var lastRawAz: Float = 0f
+    @Volatile private var lastRawPitch: Float = 0f
     @Volatile private var smoothedAz: Float = Float.NaN
     @Volatile private var smoothedAlt: Float = Float.NaN
 
@@ -160,6 +167,13 @@ class SkyMapActivity : Activity(), SensorEventListener {
                 }
                 return false
             }
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                // Toggle debug HUD on every tap. Useful for live
+                // calibration of pitch sign / sensor remap.
+                skyView.debugOverlay = !skyView.debugOverlay
+                skyView.invalidate()
+                return true
+            }
         })
 
         if (!hasLocationPermission()) {
@@ -235,16 +249,20 @@ class SkyMapActivity : Activity(), SensorEventListener {
         } catch (_: IllegalArgumentException) {
             return
         }
-        // Glass is landscape — remap so getOrientation returns
-        // sensible axes. Same mapping the Compass plugin uses.
-        val rotation = windowManager.defaultDisplay.rotation
-        val (axisX, axisY) = when (rotation) {
-            Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
-            Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
-            Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
-            else -> SensorManager.AXIS_X to SensorManager.AXIS_Y
-        }
-        SensorManager.remapCoordinateSystem(rotationMatrix, axisX, axisY, remappedMatrix)
+        // Remap to a coordinate frame aligned with the user's head
+        // when Glass is worn — not the phone-landscape frame that
+        // Compass uses. AXIS_X, AXIS_Z is the canonical Glass-worn
+        // mapping (same one GlassNav uses for head-up map rotation):
+        //   - X axis stays "right of user"
+        //   - The remap puts Z = "up of user" (was Y before)
+        // After this, orientation[1] is the user's actual pitch
+        // (looking up/down) rather than the device's natural-frame
+        // pitch which traces 0→90→0 across a head-tilt arc.
+        SensorManager.remapCoordinateSystem(
+            rotationMatrix,
+            SensorManager.AXIS_X, SensorManager.AXIS_Z,
+            remappedMatrix,
+        )
         SensorManager.getOrientation(remappedMatrix, orientation)
 
         // azimuth: orientation[0] — radians, 0 = pointing at magnetic
@@ -254,12 +272,21 @@ class SkyMapActivity : Activity(), SensorEventListener {
         //          at sky); negative = looking at the ground.
         val rawAz = Math.toDegrees(orientation[0].toDouble()).toFloat()
         val rawPitch = Math.toDegrees(orientation[1].toDouble()).toFloat()
+        lastRawAz = rawAz
+        lastRawPitch = rawPitch
         // Apply declination so azimuth is TRUE north (what the sky
         // math expects).
         val trueAz = ((rawAz + declination.toFloat() + 360f) % 360f)
-        // The remap conventions on landscape Glass make rawPitch
-        // negative when looking up. Flip so altitude grows with
-        // looking-up.
+        // With the Glass-worn remap, rawPitch is canonical: -90° at
+        // the floor, 0° at the horizon, +90° at the zenith.
+        //
+        // But we negate it before feeding altCenter to the projection
+        // because Glass XE's prism reflects the display through a
+        // lens that flips the framebuffer vertically against the
+        // user's eye. The math-correct mapping (altitude = rawPitch)
+        // produces a frame that's optically inverted; negating
+        // restores the AR overlay feel — look up, see the upward
+        // sky; look down, see nothing (below-horizon).
         val altitude = -rawPitch
 
         // Low-pass smoothing with shortest-angle wrap for azimuth.
@@ -288,6 +315,8 @@ class SkyMapActivity : Activity(), SensorEventListener {
             azCenterDeg = lastAz.toDouble(),
             altCenterDeg = lastAlt.toDouble(),
             hasFix = hasFix,
+            rawAz = lastRawAz,
+            rawPitch = lastRawPitch,
         )
     }
 
